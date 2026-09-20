@@ -2290,7 +2290,9 @@
         return range_bindings.size() < maximum_live_ranges;
     }
 
-    v8::MaybeLocal<v8::Object> construct_range(v8::Local<v8::Context> local_context)
+    v8::MaybeLocal<v8::Object> construct_range(
+        v8::Local<v8::Context> local_context,
+        dom_node* creating_document_root = nullptr)
     {
         if (!reserve_range_binding()) {
             throw_dom_exception(isolate, "Too many live Range objects", "QuotaExceededError");
@@ -2300,7 +2302,19 @@
         if (!local_context->Global()->Get(
                 local_context, js_string(isolate, "Range")).ToLocal(&constructor_value)
             || !constructor_value->IsFunction()) return {};
-        return constructor_value.As<v8::Function>()->NewInstance(local_context, 0, nullptr);
+        v8::Local<v8::Object> result;
+        if (!constructor_value.As<v8::Function>()
+                ->NewInstance(local_context, 0, nullptr).ToLocal(&result)) return {};
+        if (creating_document_root != nullptr) {
+            if (auto* binding = unwrap_range(result); binding != nullptr) {
+                binding->root_id = creating_document_root->id;
+                binding->start_node_id = creating_document_root->id;
+                binding->end_node_id = creating_document_root->id;
+                binding->start_offset = 0U;
+                binding->end_offset = 0U;
+            }
+        }
+        return result;
     }
 
     static void range_constructor(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -2354,8 +2368,21 @@
     {
         auto* self = current(info.GetIsolate());
         if (self == nullptr) return;
+        // Document.createRange() belongs to the receiver's document. The
+        // current V8 context can instead be the caller's realm when a
+        // same-origin parent calls child.contentDocument.createRange().
+        // Deriving ownership from that context makes a valid child node look
+        // cross-document and is the sequence Monaco reaches while measuring
+        // editor text in a nested surface.
+        auto* creating_document_root = unwrap_node(info.This());
+        if (creating_document_root == nullptr) {
+            creating_document_root = self->range_root_for_context(
+                info.GetIsolate()->GetCurrentContext());
+        }
         v8::Local<v8::Object> range;
-        if (self->construct_range(info.GetIsolate()->GetCurrentContext()).ToLocal(&range))
+        if (self->construct_range(
+                info.GetIsolate()->GetCurrentContext(),
+                creating_document_root).ToLocal(&range))
             info.GetReturnValue().Set(range);
     }
 

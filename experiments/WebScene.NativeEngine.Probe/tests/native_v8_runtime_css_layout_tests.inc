@@ -2176,12 +2176,56 @@ void test_live_range_boundary_contract(webscene_engine* engine)
             && range.endOffset === 1 && range.collapsed;
           let invalid = '';
           try { range.setStart(a, 99); } catch (error) { invalid = error.name; }
-          return JSON.stringify({cross, marker, selected, collapsedForward, collapsedBackward, invalid});
+          const parsed = new DOMParser().parseFromString(
+            '<main id="parsed-root">nested document</main>', 'text/html');
+          const parsedTarget = parsed.getElementById('parsed-root');
+          const parsedText = parsedTarget.firstChild;
+          const parsedRange = parsed.createRange();
+          parsedRange.setStart(parsedText, 1);
+          parsedRange.setEnd(parsedText, 7);
+          const parsedBefore = [
+            parsedRange.startContainer === parsedText,
+            parsedRange.startOffset,
+            parsedRange.endContainer === parsedText,
+            parsedRange.endOffset
+          ];
+          let wrongDocument = '';
+          try { parsedRange.selectNodeContents(root); }
+          catch (error) { wrongDocument = error.name; }
+          const parsedAtomic = parsedRange.startContainer === parsedText
+            && parsedRange.startOffset === 1
+            && parsedRange.endContainer === parsedText
+            && parsedRange.endOffset === 7;
+          parsedRange.selectNodeContents(parsedTarget);
+          const parsedSelected = [
+            parsedRange.startContainer === parsedTarget,
+            parsedRange.startOffset,
+            parsedRange.endContainer === parsedTarget,
+            parsedRange.endOffset
+          ];
+          const reuseStarted = performance.now();
+          for (let cycle = 0; cycle < 10000; ++cycle) {
+            parsedRange.setStart(parsedText, cycle % 4);
+            parsedRange.setEnd(parsedText, 7 + cycle % 4);
+            parsedRange.selectNodeContents(parsedTarget);
+          }
+          const reuseDuration = performance.now() - reuseStarted;
+          globalThis.__rangeDocumentOwnerReuseDuration = reuseDuration;
+          return {
+            cross, marker, selected, collapsedForward, collapsedBackward,
+            invalid, parsedBefore, wrongDocument, parsedAtomic, parsedSelected,
+            reuseCycles: 10000,
+            reuseWithinBudget: reuseDuration <= 2000
+          };
         })()
     )JS", "native-live-range-boundaries.js");
     require(
-        result == R"({"cross":[true,true,1,true,3,true,false],"marker":[true,2,true,3],"selected":[0,5,false],"collapsedForward":true,"collapsedBackward":true,"invalid":"IndexSizeError"})",
+        result == R"({"cross":[true,true,1,true,3,true,false],"marker":[true,2,true,3],"selected":[0,5,false],"collapsedForward":true,"collapsedBackward":true,"invalid":"IndexSizeError","parsedBefore":[true,1,true,7],"wrongDocument":"WrongDocumentError","parsedAtomic":true,"parsedSelected":[true,0,true,1],"reuseCycles":10000,"reuseWithinBudget":true})",
         "live Range boundary contract regressed: " + result);
+    std::cout << "Range document-owner reuse gate: cycles=10000 durationMs="
+              << evaluate(engine, "__rangeDocumentOwnerReuseDuration",
+                     "range-document-owner-reuse-duration.js")
+              << '\n';
 }
 
 void test_custom_highlight_registry_contract(webscene_engine* engine)

@@ -192,6 +192,14 @@ int main()
             test_query_iframe_worker_extension_host_bootstrap();
             return 0;
         }
+        if (selected == "range-document-owner") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "Range document-owner focused engine creation failed");
+            test_live_range_boundary_contract(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "window-find-selection") {
           test_nested_window_find_selection();
           return 0;

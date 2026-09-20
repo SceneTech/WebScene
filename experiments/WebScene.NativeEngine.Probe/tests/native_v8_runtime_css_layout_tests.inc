@@ -712,7 +712,7 @@ void test_details_content_keyword_size_transition(webscene_engine* engine)
     require(webscene_engine_requires_animation_frame(engine)!=0U,
         "details-content transition did not request a host frame");
     animation_frame_and_wait(engine,90.0,7541U);
-    const auto midpoint=execute(engine,R"JS(
+    const auto midpoint=evaluate(engine,R"JS(
       (()=>{
         const height=animatedDetails.getBoundingClientRect().height;
         return `${animatedClosedHeight},${height}`;
@@ -724,14 +724,14 @@ void test_details_content_keyword_size_transition(webscene_engine* engine)
         fail("details-content keyword-size midpoint was not interpolated: "+midpoint);
     }
     animation_frame_and_wait(engine,200.0,7542U);
-    const auto opened=execute(engine,
+    const auto opened=evaluate(engine,
         "animatedDetails.getBoundingClientRect().height-animatedClosedHeight",
         "details-content-transition-opened.js");
     if(std::abs(std::strtof(opened.c_str(),nullptr)-60.0F)>0.1F)
         fail("details-content keyword-size transition did not reach auto size: "+opened);
     execute(engine,"animatedDetails.open=false;","details-content-transition-close.js");
     animation_frame_and_wait(engine,290.0,7543U);
-    const auto closing=execute(engine,
+    const auto closing=evaluate(engine,
         "animatedDetails.getBoundingClientRect().height-animatedClosedHeight",
         "details-content-transition-closing.js");
     const auto closing_height=std::strtof(closing.c_str(),nullptr);

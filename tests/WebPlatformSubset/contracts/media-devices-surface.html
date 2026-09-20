@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8">
+<script>
+window.__webSceneWptState={complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+const contracts=[];function promise_test(test,name){contracts.push({test,name});}
+function assert_true(v,m='Expected true'){if(!v)throw Error(m)}
+function assert_equals(a,b){if(!Object.is(a,b))throw Error(`Expected ${b}, got ${a}`)}
+async function promise_rejects_dom(name,p){try{await p}catch(e){assert_equals(e.name,name);return}throw Error(`Expected ${name}`)}
+setTimeout(async()=>{for(const {test,name} of contracts){try{await test();__webSceneWptState.results.push({name,status:'PASS',message:null,stack:null})}catch(e){__webSceneWptState.results.push({name,status:'FAIL',message:String(e),stack:e.stack})}}__webSceneWptState.harness={status:__webSceneWptState.results.some(r=>r.status!=='PASS')?1:0,message:null,stack:null};__webSceneWptState.complete=true},0);
+</script>
+<script>
+promise_test(async()=>{
+ assert_true(isSecureContext);assert_true(navigator.mediaDevices instanceof MediaDevices);
+ assert_true(navigator.mediaDevices===navigator.mediaDevices);
+ assert_equals(Object.prototype.toString.call(navigator.mediaDevices),'[object MediaDevices]');
+ const supported=navigator.mediaDevices.getSupportedConstraints();
+ for(const name of ['deviceId','groupId','channelCount','sampleRate','sampleSize','echoCancellation','noiseSuppression','autoGainControl'])assert_true(supported[name]===true,`${name} missing`);
+ await promise_rejects_dom('NotSupportedError',navigator.mediaDevices.getUserMedia({audio:true}));
+ await promise_rejects_dom('NotSupportedError',navigator.mediaDevices.getDisplayMedia({audio:true}));
+},'MediaDevices exposes secure branded constraints and fails closed before capture integration');
+</script>

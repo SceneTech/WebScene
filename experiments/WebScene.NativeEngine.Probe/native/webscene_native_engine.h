@@ -2892,7 +2892,12 @@ enum {
     WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1 = 6,
     WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1 = 7,
     WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1 = 8,
-    WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1 = 9
+    WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1 = 9,
+    /* Enumerates privacy-scoped media devices for the requesting security
+     * origin. The host completes with
+     * application/vnd.webscene.media-devices+json and the bounded v1 schema
+     * documented by the media runtime. This request never grants capture. */
+    WEBSCENE_HOST_REQUEST_MEDIA_ENUMERATE_DEVICES_V1 = 10
 };
 enum {
     WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U,

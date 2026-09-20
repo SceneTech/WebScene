@@ -57,6 +57,13 @@ Production Avalonia 11 remains supported; Frameforge can opt into Avalonia 12.
 - `decodeAudioData` detaches input, decodes off-thread, resamples to the context
   rate and returns actual planar PCM. The original Frameforge waveform worker
   transfers and reduces these arrays without application changes.
+- Secure top-level realms expose bounded `MediaDevices` enumeration through the
+  typed native host queue. The host receives only the requesting security
+  origin and returns privacy-scoped audio-input records using the versioned
+  `application/vnd.webscene.media-devices+json` schema. WebScene admits at most
+  64 devices and 256 KiB, validates unique opaque IDs and string bounds, and
+  retires pending promises on navigation. Capture methods reject explicitly
+  until the native input-track/audio-graph slice is connected.
 
 ## Dependency decision and platform scope
 

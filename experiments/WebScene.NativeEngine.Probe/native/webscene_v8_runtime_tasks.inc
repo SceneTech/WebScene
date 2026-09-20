@@ -835,6 +835,13 @@
         // IndexedDB persistence work, then expose every terminal request.
         if (!pending_terminal_host_requests.empty()
             && !has_terminal_handoff_persistence_work()) {
+            if (terminal_pagehide_pending) {
+                if (!dispatch_pending_terminal_pagehide_task()) {
+                    cancel_pending_terminal_host_requests();
+                    return false;
+                }
+                return true;
+            }
             return drain_terminal_host_request_task();
         }
         const auto timer_due = has_due_timer();

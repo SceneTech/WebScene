@@ -639,7 +639,8 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
         "terminal IndexedDB navigation engine creation failed");
     execute_and_wait(engine, R"JS(
       globalThis.terminalIndexedDb = {
-        ready: false, committed: false, continuation: false, error: null
+        ready: false, committed: false, continuation: false, error: null,
+        order: []
       };
       (async () => {
         const database = await new Promise((resolve, reject) => {
@@ -648,12 +649,15 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
           request.onerror = () => reject(request.error);
           request.onsuccess = () => resolve(request.result);
         });
+        let pendingFlushTimer = 0;
         addEventListener('beforeunload', () => {
+          terminalIndexedDb.order.push('beforeunload');
           // An unrelated interval and future timer must not hold navigation.
           setInterval(() => {}, 60000);
           setTimeout(() => {}, 60000);
           // Browser storage commonly enters IndexedDB from a lifecycle task.
-          setTimeout(() => {
+          pendingFlushTimer = setTimeout(() => {
+            terminalIndexedDb.order.push('flush-timer');
             const transaction = database.transaction('state', 'readwrite');
             transaction.objectStore('state').put('durable', 'mcpInputs');
             transaction.onerror = transaction.onabort = () => {
@@ -661,13 +665,20 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
             };
             transaction.oncomplete = () => {
               terminalIndexedDb.committed = true;
+              terminalIndexedDb.order.push('commit');
               // Promise/timer work descended from the native completion also
               // remains ahead of the terminal host handoff.
               Promise.resolve().then(() => setTimeout(() => {
                 terminalIndexedDb.continuation = true;
+                terminalIndexedDb.order.push('continuation');
               }, 0));
             };
           }, 0);
+        });
+        addEventListener('pagehide', () => {
+          terminalIndexedDb.order.push('pagehide');
+          // Model VS Code disposing its delayed storage flush during pagehide.
+          clearTimeout(pendingFlushTimer);
         });
         terminalIndexedDb.ready = true;
       })().catch(error => {
@@ -697,6 +708,8 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
             "terminalIndexedDb.ready===true"
             "&&terminalIndexedDb.committed===true"
             "&&terminalIndexedDb.continuation===true"
+            "&&terminalIndexedDb.order.join(',')==="
+                "'beforeunload,flush-timer,commit,continuation,pagehide'"
             "&&terminalIndexedDb.error===null",
             "terminal-indexeddb-before-handoff-result.js") == "true",
         "terminal reload preceded IndexedDB completion: " + terminal_state);

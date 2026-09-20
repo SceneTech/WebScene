@@ -370,6 +370,7 @@
         frame_dom_content_loaded_listeners.clear();
         frame_beforeunload_dispatches.clear();
         frame_pagehide_dispatched.clear();
+        terminal_pagehide_pending = false;
         frame_unload_dispatches.clear();
         frame_unload_dispatched.clear();
         hidden_frame_document_roots.clear();

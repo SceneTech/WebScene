@@ -212,6 +212,40 @@ int main() {
                 "Live microphone graph gate exceeded two seconds");
             gate.close();
         }
+        {
+            audio_graph worklet(false, 16000);
+            auto source = std::make_shared<audio_capture>(16000);
+            auto track = std::make_shared<audio_track>(source);
+            const auto input = worklet.create(audio_graph::kind::track);
+            const auto processor = worklet.create(audio_graph::kind::worklet);
+            worklet.set_track(input, track);
+            worklet.connect(input, processor);
+            worklet.connect(processor, 0U);
+            auto captured = worklet.capture_worklet(processor);
+            std::atomic<uint32_t> wakes{};
+            worklet.set_worklet_available([&wakes] { ++wakes; });
+            worklet.resume();
+            std::array<float, 128> mono{};
+            mono.fill(.3F);
+            source->write_interleaved(mono.data(), mono.size(), 1U);
+            std::array<float, 256> output{};
+            worklet.render(output.data(), 128U);
+            for (const auto sample : output)
+                check(sample == 0.F, "PCM worklet input echoed to destination");
+            std::array<float, 256> quantum{};
+            const auto packet = captured->read(quantum);
+            check(packet.frames == 128U && wakes.load() == 1U,
+                "PCM worklet did not publish one fixed quantum and one wake");
+            for (const auto sample : quantum)
+                check(std::abs(sample - .3F) < 1e-6F,
+                    "PCM worklet capture changed input samples");
+            worklet.begin_worklet_drain();
+            source->write_interleaved(mono.data(), mono.size(), 1U);
+            worklet.render(output.data(), 128U);
+            check(wakes.load() == 2U,
+                "PCM worklet wake did not rearm after owner-thread drain");
+            worklet.close();
+        }
         for (size_t cycle = 0U; cycle < 100U; ++cycle) {
             audio_graph graph_cycle(false, 48000);
             auto source = std::make_shared<audio_capture>(48000);

@@ -98,6 +98,7 @@ struct audio_graph::implementation {
     std::atomic<uint32_t> head{}, tail{};
     std::atomic<uint64_t> frames{};
     std::atomic<bool> running{};
+    std::atomic<bool> worklet_notified{};
     bool use_device, initialized{}, closed{};
     ma_device device{};
     std::vector<std::shared_ptr<const audio_buffer>> keep_pcm;
@@ -105,6 +106,7 @@ struct audio_graph::implementation {
     std::vector<std::unique_ptr<live_track_state>> keep_live_tracks;
     std::array<live_track_state*, nodes> owner_live_tracks{};
     uint64_t pcm_bytes{};
+    std::function<void()> worklet_available;
     implementation(bool output, uint32_t sample_rate) : rate(sample_rate), use_device(output) {
         graph[0].type = kind::destination;
         owner_types[0] = kind::destination;
@@ -286,8 +288,15 @@ struct audio_graph::implementation {
                 if (n.tau)
                     n.gain = n.target + (n.gain - n.target) * n.pole;
             }
-        if (n.capture)
+        if (n.capture) {
             n.capture->write(std::span<const float>(n.data.data(), size * 2));
+            if (n.type == kind::worklet) {
+                std::fill_n(n.data.data(), size * 2, 0.F);
+                if (!worklet_notified.exchange(true, std::memory_order_acq_rel)
+                    && worklet_available)
+                    worklet_available();
+            }
+        }
         if (n.type == kind::analyser || n.type == kind::stream) {
             auto written = n.written.load(std::memory_order_relaxed);
             for (uint32_t i = 0; i < size; ++i)
@@ -307,7 +316,7 @@ uint32_t audio_graph::create(kind type) {
     if (p.count >= nodes)
         throw std::length_error("Audio node limit reached");
     auto id = p.count;
-    if (type == kind::stream)
+    if (type == kind::stream || type == kind::worklet)
         p.graph[id].capture = std::make_shared<audio_capture>(p.rate);
     p.push({command::operation::create, id, static_cast<uint32_t>(type)});
     p.owner_types[id] = type;
@@ -493,6 +502,19 @@ std::shared_ptr<audio_track> audio_graph::capture(uint32_t id) {
     if (p.owner_types[id] != kind::stream || p.closed)
         throw std::invalid_argument("Invalid capture destination");
     return std::make_shared<audio_track>(p.graph[id].capture);
+}
+std::shared_ptr<audio_track> audio_graph::capture_worklet(uint32_t id) {
+    auto &p = *impl_;
+    p.check(id);
+    if (p.owner_types[id] != kind::worklet || p.closed)
+        throw std::invalid_argument("Invalid audio worklet node");
+    return std::make_shared<audio_track>(p.graph[id].capture);
+}
+void audio_graph::set_worklet_available(std::function<void()> callback) {
+    impl_->worklet_available = std::move(callback);
+}
+void audio_graph::begin_worklet_drain() noexcept {
+    impl_->worklet_notified.store(false, std::memory_order_release);
 }
 void audio_graph::render(float *out, uint32_t frames) noexcept { render_at(out, frames, now()); }
 void audio_graph::render_at(float *out, uint32_t frames, double steady_time) noexcept {

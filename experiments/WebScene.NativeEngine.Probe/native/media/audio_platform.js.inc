@@ -1,7 +1,7 @@
 R"AUDIOJS(
 (()=>{
 'use strict';const native=globalThis.__websceneAudio;delete globalThis.__websceneAudio;
-const contexts=new WeakMap(),nodes=new WeakMap(),params=new WeakMap(),buffers=new WeakMap();
+const contexts=new WeakMap(),nodes=new WeakMap(),params=new WeakMap(),buffers=new WeakMap(),workletNodes=new WeakMap();
 const nodeToken={};
 const invalid=message=>new DOMException(message,'InvalidStateError');
 function ctx(context){const c=contexts.get(context);if(!c)throw new TypeError('Illegal AudioContext receiver');if(c.state==='closed')throw invalid('AudioContext is closed');return c;}
@@ -63,6 +63,22 @@ class MediaStreamAudioSourceNode extends AudioNode {
  constructor(context,options){if(!(options?.mediaStream instanceof MediaStream))throw new TypeError('MediaStream required');const track=options.mediaStream.getAudioTracks().slice().sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)[0];if(!track||track.readyState==='ended')throw invalid('MediaStream has no live audio track');super(context,5,undefined,nodeToken);this.mediaStream=options.mediaStream;native('trackSource',ctx(context).id,nodes.get(this).id,track);}
  get numberOfInputs(){return 0;}
 }
+const audioWorkletToken={},processorToken={};let currentProcessorPort=null;
+class AudioWorkletProcessor {
+ constructor(token){if(token!==processorToken||!currentProcessorPort)throw new TypeError('Illegal constructor');this.port=currentProcessorPort;}
+}
+class PcmCaptureProcessor extends AudioWorkletProcessor {
+ constructor(chunkSize){super(processorToken);this._chunkSize=chunkSize;this._buffer=new Float32Array(chunkSize);this._offset=0;this.port.onmessage=event=>{if(event.data?.type==='vscode-pcm-flush'){this._flush();this.port.postMessage({type:'vscode-pcm-flushed'});}};}
+ _flush(){if(this._offset>0){const chunk=this._buffer.slice(0,this._offset);this.port.postMessage(chunk,[chunk.buffer]);this._offset=0;}}
+ process(inputs){const channel=inputs[0]?.[0];if(channel)for(let i=0;i<channel.length;i++){this._buffer[this._offset++]=channel[i];if(this._offset===this._chunkSize){const chunk=this._buffer;this.port.postMessage(chunk,[chunk.buffer]);this._buffer=new Float32Array(this._chunkSize);this._offset=0;}}return true;}
+}
+class AudioWorklet {
+ constructor(context,token){if(token!==audioWorkletToken)throw new TypeError('Illegal constructor');this._context=context;}
+ async addModule(url,options={}){const c=ctx(this._context);if(options&&Object.keys(options).some(key=>key!=='credentials'))throw new TypeError('Unsupported AudioWorklet option');const response=await fetch(String(url));if(!response.ok)throw new DOMException('AudioWorklet module could not be loaded','AbortError');const source=await response.text();let chunkSize;try{chunkSize=native('workletModule',c.id,source);}catch(error){throw new DOMException(error.message,'NotSupportedError');}c.modules.set('vscode-pcm-capture',chunkSize);}
+}
+class AudioWorkletNode extends AudioNode {
+ constructor(context,name,options={}){const c=ctx(context),chunkSize=c.modules.get(String(name));if(!chunkSize)throw new DOMException('AudioWorklet processor is not registered','NotSupportedError');if(Object.keys(options).some(key=>!['numberOfInputs','numberOfOutputs','channelCount'].includes(key)))throw new DOMException('Unsupported AudioWorkletNode option','NotSupportedError');for(const [key,value] of Object.entries({numberOfInputs:options.numberOfInputs??1,numberOfOutputs:options.numberOfOutputs??1,channelCount:options.channelCount??1}))if(value!==1)throw new DOMException('Unsupported '+key,'NotSupportedError');super(context,6,undefined,nodeToken);this.channelCount=1;const channel=new MessageChannel();currentProcessorPort=channel.port1;let processor;try{processor=new PcmCaptureProcessor(chunkSize);}finally{currentProcessorPort=null;}this.port=channel.port2;const state={context,processor,nodePort:channel.port2,processorPort:channel.port1};try{native('workletBind',c.id,nodes.get(this).id,processor);}catch(error){channel.port1.close();channel.port2.close();throw error;}workletNodes.set(this,state);c.worklets.add(state);}
+}
 const mediaDeviceToken={};
 class MediaDeviceInfo {
  constructor(token,record){if(token!==mediaDeviceToken)throw new TypeError('Illegal constructor');Object.defineProperties(this,{deviceId:{value:record.deviceId,enumerable:true},kind:{value:record.kind,enumerable:true},label:{value:record.label,enumerable:true},groupId:{value:record.groupId,enumerable:true}});}
@@ -118,11 +134,11 @@ if(globalThis.isSecureContext&&globalThis.navigator&&globalThis.top===globalThis
  Object.defineProperty(owner,'mediaDevices',{configurable:true,enumerable:true,get(){if(this!==navigator&&owner!==navigator)throw new TypeError('Illegal invocation');return mediaDevices;}});
 }
 class AudioContext extends EventTarget {
- constructor(options={}){super();const rate=Number(options.sampleRate??48000);contexts.set(this,{id:native('create',rate),state:'suspended',rate});this.destination=new AudioNode(this,0,0,nodeToken);}
+ constructor(options={}){super();const rate=Number(options.sampleRate??48000),state={id:native('create',rate),state:'suspended',rate,modules:new Map(),worklets:new Set()};contexts.set(this,state);this.destination=new AudioNode(this,0,0,nodeToken);this.audioWorklet=new AudioWorklet(this,audioWorkletToken);}
  get sampleRate(){return contexts.get(this).rate;}get currentTime(){const c=contexts.get(this);return c.state==='closed'?(c.closedTime||0):native('time',c.id);}get state(){return contexts.get(this).state;}
  async resume(){const c=ctx(this);native('resume',c.id);if(c.state!=='running'){c.state='running';this.dispatchEvent(new Event('statechange'));}}
  async suspend(){const c=ctx(this);native('suspend',c.id);if(c.state!=='suspended'){c.state='suspended';this.dispatchEvent(new Event('statechange'));}}
- async close(){const c=ctx(this);c.closedTime=this.currentTime;native('close',c.id);c.state='closed';this.dispatchEvent(new Event('statechange'));}
+ async close(){const c=ctx(this);c.closedTime=this.currentTime;for(const worklet of c.worklets){worklet.nodePort.close();worklet.processorPort.close();}c.worklets.clear();native('close',c.id);c.state='closed';this.dispatchEvent(new Event('statechange'));}
  createGain(){return new GainNode(this);}createAnalyser(){return new AnalyserNode(this);}
  createMediaElementSource(element){return new MediaElementAudioSourceNode(this,{mediaElement:element});}
  createMediaStreamSource(stream){return new MediaStreamAudioSourceNode(this,{mediaStream:stream});}
@@ -130,7 +146,8 @@ class AudioContext extends EventTarget {
  createBuffer(channels,length,rate){return new AudioBuffer({numberOfChannels:channels,length,sampleRate:rate});}
  decodeAudioData(data,success,error){ctx(this);let pending;try{pending=native('decode',data,this.sampleRate);}catch(e){pending=Promise.reject(e);}const promise=pending.catch(error=>{if(error instanceof TypeError)throw error;throw new DOMException(error.message,'EncodingError');}).then(result=>{const buffer=Object.create(AudioBuffer.prototype);buffers.set(buffer,{channels:result.channels,rate:result.sampleRate,length:result.channels[0].length});return buffer;});if(typeof success==='function'||typeof error==='function')promise.then(success,error);return promise;}
 }
-for(const ctor of [AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStreamAudioSourceNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices])Object.defineProperty(ctor.prototype,Symbol.toStringTag,{value:ctor.name,configurable:true});
-Object.assign(globalThis,{AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStreamAudioSourceNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices});
+Object.defineProperty(AudioWorkletProcessor.prototype,Symbol.toStringTag,{value:'AudioWorkletProcessor',configurable:true});
+for(const ctor of [AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStreamAudioSourceNode,AudioWorklet,AudioWorkletNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices])Object.defineProperty(ctor.prototype,Symbol.toStringTag,{value:ctor.name,configurable:true});
+Object.assign(globalThis,{AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStreamAudioSourceNode,AudioWorklet,AudioWorkletNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices});
 })();
 )AUDIOJS"

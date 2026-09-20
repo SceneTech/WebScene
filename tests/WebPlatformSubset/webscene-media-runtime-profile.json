@@ -15,7 +15,8 @@
       "capabilities": [
         "html-media-elements",
         "audio-context",
-        "audio-decoding"
+        "audio-decoding",
+        "audio-worklet-pcm"
       ],
       "reason": "Project-owned native media/WPT harness contract; not full standards conformance."
     },

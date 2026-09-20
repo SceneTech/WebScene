@@ -2,6 +2,7 @@
 #include "audio_capture.h"
 #include "media_decode.h"
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <span>
 namespace webscene::media {
@@ -18,7 +19,7 @@ struct playback_control {
 };
 class audio_graph {
   public:
-    enum class kind { destination, gain, analyser, source, stream, track };
+    enum class kind { destination, gain, analyser, source, stream, track, worklet };
     struct source_metrics {
         uint64_t rendered_frames{}, dropped_frames{};
         bool ended{};
@@ -40,6 +41,9 @@ class audio_graph {
     uint32_t sample_rate() const noexcept;
     void analyser(uint32_t, std::span<float>) const;
     std::shared_ptr<audio_track> capture(uint32_t);
+    std::shared_ptr<audio_track> capture_worklet(uint32_t);
+    void set_worklet_available(std::function<void()> callback);
+    void begin_worklet_drain() noexcept;
     // Same quantum renderer used by the device callback and numeric tests.
     // No allocation, locks, JS callbacks or disk I/O on this path.
     void render(float *stereo, uint32_t frames) noexcept;

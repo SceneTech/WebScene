@@ -72,7 +72,12 @@ Production Avalonia 11 remains supported; Frameforge can opt into Avalonia 12.
   existing audio graph. It linearly converts the negotiated input rate to the
   context rate, exposes samples to analysers without an implicit destination
   connection, silences disabled/muted/ended tracks immediately, and counts ring
-  overruns. Display/video capture remains explicitly unsupported.
+  overruns. The bounded AudioWorklet profile recognizes the unchanged Code OSS
+  `vscode-pcm-capture` module, captures one-input/one-output 128-frame quanta,
+  runs its fixed PCM chunker on the V8 owner thread, and uses the existing
+  MessagePort lifecycle for chunks and flush acknowledgment. The device callback
+  only writes the fixed ring and coalesces a worker wake. Arbitrary worklet
+  modules/options are rejected. Display/video capture remains unsupported.
 
 ## Dependency decision and platform scope
 

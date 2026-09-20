@@ -53,6 +53,8 @@ public sealed class CssPropertyCatalogTests
     [InlineData("wordWrap")]
     [InlineData("objectFit")]
     [InlineData("object-position")]
+    [InlineData("userSelect")]
+    [InlineData("webkitUserSelect")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -110,6 +112,9 @@ public sealed class CssPropertyCatalogTests
     [InlineData("object-position", "left right", false)]
     [InlineData("object-position", "top bottom", false)]
     [InlineData("object-position", "left middle", false)]
+    [InlineData("user-select", "none", true)]
+    [InlineData("-webkit-user-select", "text", true)]
+    [InlineData("user-select", "toggle", false)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

@@ -115,11 +115,13 @@ internal static class CssGeneratedPropertyMetadata
         "aspect-ratio",
         "object-fit",
         "object-position",
+        "user-select",
     ];
 
     internal static readonly string[] SupportedNames =
     [
         "-moz-transform",
+        "-ms-user-select",
         "-webkit-font-smoothing",
         "-webkit-mask",
         "-webkit-mask-composite",
@@ -128,6 +130,7 @@ internal static class CssGeneratedPropertyMetadata
         "-webkit-mask-repeat",
         "-webkit-mask-size",
         "-webkit-transform",
+        "-webkit-user-select",
         "accent-color",
         "align-content",
         "align-items",
@@ -300,6 +303,7 @@ internal static class CssGeneratedPropertyMetadata
         "min-height",
         "min-width",
         "moz-transform",
+        "ms-user-select",
         "object-fit",
         "object-position",
         "opacity",
@@ -351,10 +355,12 @@ internal static class CssGeneratedPropertyMetadata
         "transition-duration",
         "transition-property",
         "transition-timing-function",
+        "user-select",
         "vertical-align",
         "visibility",
         "webkit-font-smoothing",
         "webkit-transform",
+        "webkit-user-select",
         "white-space",
         "widows",
         "width",
@@ -479,6 +485,7 @@ internal static class CssGeneratedPropertyMetadata
             "aspect-ratio" => 107,
             "object-fit" => 108,
             "object-position" => 109,
+            "user-select" => 110,
             _ => -1,
         };
         return id >= 0;

@@ -84,6 +84,9 @@ public static class CssPropertyCatalog
                 or "-webkit-sticky",
             "object-fit" => normalizedValue is "fill" or "contain" or "cover" or "none" or "scale-down",
             "object-position" => IsObjectPosition(normalizedValue),
+            "user-select" or "-webkit-user-select" or "webkit-user-select"
+                or "-ms-user-select" or "ms-user-select"
+                => normalizedValue is "auto" or "text" or "none" or "all",
             "font-size" => IsFontSize(normalizedValue),
             "color-scheme" => normalizedValue is "normal" or "light" or "dark"
                 or "light dark" or "dark light" or "only light" or "only dark",

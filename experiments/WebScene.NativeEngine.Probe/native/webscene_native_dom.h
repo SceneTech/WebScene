@@ -793,6 +793,9 @@ struct node_style final {
         // `fill` and `50% 50%` values without enlarging the hot node record.
         std::string object_fit;
         std::string object_position;
+        // Empty is `auto`; used-value resolution walks ancestors only during
+        // the uncommon native text-selection default action.
+        std::string user_select;
         std::string contain_value;
         std::string container_type{"normal"};
         std::string container_name{"none"};

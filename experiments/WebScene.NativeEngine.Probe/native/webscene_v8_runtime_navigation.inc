@@ -259,6 +259,8 @@
         frame_reload_reflected_sources.clear();
         frame_event_listeners.clear();
         window_selections.clear();
+        pointer_text_selection_active = false;
+        pointer_selection_root_id = 0U;
         clear_highlight_bindings();
         for (auto& binding : range_bindings) {
             if (binding != nullptr) binding->wrapper.Reset();

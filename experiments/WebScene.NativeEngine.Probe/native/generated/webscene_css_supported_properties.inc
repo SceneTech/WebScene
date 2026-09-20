@@ -6,6 +6,7 @@ struct cssom_supported_property_metadata final {
 
 inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"-moz-transform", "MozTransform"},
+    cssom_supported_property_metadata{"-ms-user-select", "MsUserSelect"},
     cssom_supported_property_metadata{"-webkit-font-smoothing", "WebkitFontSmoothing"},
     cssom_supported_property_metadata{"-webkit-mask", "WebkitMask"},
     cssom_supported_property_metadata{"-webkit-mask-composite", "WebkitMaskComposite"},
@@ -14,6 +15,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"-webkit-mask-repeat", "WebkitMaskRepeat"},
     cssom_supported_property_metadata{"-webkit-mask-size", "WebkitMaskSize"},
     cssom_supported_property_metadata{"-webkit-transform", "WebkitTransform"},
+    cssom_supported_property_metadata{"-webkit-user-select", "WebkitUserSelect"},
     cssom_supported_property_metadata{"accent-color", "accentColor"},
     cssom_supported_property_metadata{"align-content", "alignContent"},
     cssom_supported_property_metadata{"align-items", "alignItems"},
@@ -186,6 +188,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"min-height", "minHeight"},
     cssom_supported_property_metadata{"min-width", "minWidth"},
     cssom_supported_property_metadata{"moz-transform", "mozTransform"},
+    cssom_supported_property_metadata{"ms-user-select", "msUserSelect"},
     cssom_supported_property_metadata{"object-fit", "objectFit"},
     cssom_supported_property_metadata{"object-position", "objectPosition"},
     cssom_supported_property_metadata{"opacity", "opacity"},
@@ -237,10 +240,12 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"transition-duration", "transitionDuration"},
     cssom_supported_property_metadata{"transition-property", "transitionProperty"},
     cssom_supported_property_metadata{"transition-timing-function", "transitionTimingFunction"},
+    cssom_supported_property_metadata{"user-select", "userSelect"},
     cssom_supported_property_metadata{"vertical-align", "verticalAlign"},
     cssom_supported_property_metadata{"visibility", "visibility"},
     cssom_supported_property_metadata{"webkit-font-smoothing", "webkitFontSmoothing"},
     cssom_supported_property_metadata{"webkit-transform", "webkitTransform"},
+    cssom_supported_property_metadata{"webkit-user-select", "webkitUserSelect"},
     cssom_supported_property_metadata{"white-space", "whiteSpace"},
     cssom_supported_property_metadata{"widows", "widows"},
     cssom_supported_property_metadata{"width", "width"},
@@ -251,4 +256,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 445U;
+inline constexpr auto cssom_style_template_property_accessor_count = 455U;

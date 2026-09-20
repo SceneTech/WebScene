@@ -397,6 +397,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "user-select-performance") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "user-select performance engine creation failed");
+            test_user_select_performance_gate(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if(selected=="placeholder-pseudo") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"placeholder pseudo engine creation failed");
@@ -1485,6 +1493,7 @@ int main()
     test_appending_child_invalidates_empty_selector(engine);
     test_inline_block_preserves_vertical_padding(engine);
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
+    test_user_select_pointer_default_action(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
     test_nested_drag_drop_routing_and_retirement();
     test_outbound_drag_browser_contract_and_retirement(engine);

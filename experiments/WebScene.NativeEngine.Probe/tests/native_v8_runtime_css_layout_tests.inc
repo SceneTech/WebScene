@@ -154,6 +154,48 @@ void test_object_fit_scene_performance_gate(webscene_engine* engine)
             + std::to_string(elapsed) + " ms");
 }
 
+void test_user_select_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      document.body.innerHTML = `<style>
+        #selection-grid.none span { user-select:none; }
+        #selection-grid.text span { user-select:text; }
+      </style><div id="selection-grid"></div>`;
+      globalThis.selectionGrid = document.getElementById('selection-grid');
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < 4096; ++index) {
+        const span = document.createElement('span');
+        span.textContent = `item-${index} `;
+        fragment.appendChild(span);
+      }
+      selectionGrid.appendChild(fragment);
+    )JS", "native-user-select-performance-setup.js");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        let checksum = '';
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          selectionGrid.className = cycle % 2 === 0 ? 'none' : 'text';
+          checksum += getComputedStyle(selectionGrid.lastElementChild).userSelect[0];
+        }
+        return [selectionGrid.children.length, checksum.length];
+      })()
+    )JS", "native-user-select-performance-gate.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(result == "[4096,10]", "user-select performance fixture regressed: " + result);
+    require(after.layout_passes == before.layout_passes,
+        "paint-only user-select transitions performed layout");
+    require(elapsed < 5000.0,
+        "4,096-node user-select transition gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);

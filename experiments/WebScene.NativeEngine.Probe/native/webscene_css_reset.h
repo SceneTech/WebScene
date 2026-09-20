@@ -239,6 +239,9 @@ inline void apply_all_unset(
         reset.mutable_textual().object_position =
             previous.textual().object_position;
     }
+    if (has_inline({"user-select", "-webkit-user-select", "-ms-user-select"})) {
+        reset.mutable_textual().user_select = previous.textual().user_select;
+    }
 
     // These modeled properties do not yet have dedicated inline-mask
     // bits, so preserve their applied values by authored declaration.

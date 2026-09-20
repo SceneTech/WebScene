@@ -217,6 +217,14 @@ inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"objectfit", css_property_id::object_fit},
     native_typed_property_identity{"object-position", css_property_id::object_position},
     native_typed_property_identity{"objectposition", css_property_id::object_position},
+    native_typed_property_identity{"user-select", css_property_id::user_select},
+    native_typed_property_identity{"userselect", css_property_id::user_select},
+    native_typed_property_identity{"-webkit-user-select", css_property_id::user_select},
+    native_typed_property_identity{"webkit-user-select", css_property_id::user_select},
+    native_typed_property_identity{"webkituserselect", css_property_id::user_select},
+    native_typed_property_identity{"-ms-user-select", css_property_id::user_select},
+    native_typed_property_identity{"ms-user-select", css_property_id::user_select},
+    native_typed_property_identity{"msuserselect", css_property_id::user_select},
 };
 
 inline constexpr std::array<std::string_view, 62> native_storage_only_property_catalog{
@@ -436,6 +444,7 @@ inline constexpr std::array native_modeled_property_mask_catalog{
     false,
     false,
     false,
+    false,
 };
 
 inline constexpr bool generated_property_has_modeled_mask(
@@ -634,6 +643,7 @@ inline constexpr std::array native_property_grammar_catalog{
     native_property_grammar::complex,
     native_property_grammar::keyword,
     native_property_grammar::component_list,
+    native_property_grammar::keyword,
 };
 
 inline constexpr native_property_grammar generated_property_grammar(
@@ -859,5 +869,13 @@ inline css_property_id generated_property_id_lowercase(std::string_view name) no
     if (name == "objectfit") return css_property_id::object_fit;
     if (name == "object-position") return css_property_id::object_position;
     if (name == "objectposition") return css_property_id::object_position;
+    if (name == "user-select") return css_property_id::user_select;
+    if (name == "userselect") return css_property_id::user_select;
+    if (name == "-webkit-user-select") return css_property_id::user_select;
+    if (name == "webkit-user-select") return css_property_id::user_select;
+    if (name == "webkituserselect") return css_property_id::user_select;
+    if (name == "-ms-user-select") return css_property_id::user_select;
+    if (name == "ms-user-select") return css_property_id::user_select;
+    if (name == "msuserselect") return css_property_id::user_select;
     return css_property_id::unknown;
 }

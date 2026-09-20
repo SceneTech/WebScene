@@ -357,15 +357,16 @@
       "state": "blocked",
       "issues": [
         "WebScene#770",
+        "WebScene#773",
         "AppScene#289",
         "WebScene#261"
       ],
       "evidence": [],
       "limits": [
-        "WebScene does not expose MediaDevices microphone/display capture, MediaStreamAudioSourceNode, or the AudioWorklet PCM path reached by unchanged Code OSS.",
-        "AppScene does not yet provide a typed permission, private device-enumeration, and bounded native PCM capture contract."
+        "WebScene exposes bounded secure-context MediaDevices enumeration and exact audio constraint names, but MediaStreamAudioSourceNode and the AudioWorklet PCM path remain unavailable.",
+        "AppScene provides the bounded transport and macOS provider; Windows/Linux providers and physical-device evidence remain open."
       ],
-      "reason": "Unchanged Code OSS has 43 statically reachable media-capture references across 10 files. Microphone enumeration/capture, PCM worklet delivery, display screenshots, permissions, device loss, and exact-package Chat/host acceptance remain unimplemented or unqualified.",
+      "reason": "Unchanged Code OSS has 43 statically reachable media-capture references across 10 files. The enumeration surface is implemented with authored but unexecuted gates; microphone tracks, PCM graph/worklet delivery, display capture, device loss, and exact-package Chat/host acceptance remain incomplete or unqualified.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

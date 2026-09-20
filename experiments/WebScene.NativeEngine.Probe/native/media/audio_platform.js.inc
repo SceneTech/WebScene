@@ -59,6 +59,41 @@ class MediaStreamAudioDestinationNode extends AudioNode {
  constructor(context){super(context,4,undefined,nodeToken);this.stream=new MediaStream([new MediaStreamTrack(trackToken,native('capture',ctx(context).id,nodes.get(this).id))]);}
  get numberOfOutputs(){return 0;}
 }
+const mediaDeviceToken={};
+class MediaDeviceInfo {
+ constructor(token,record){if(token!==mediaDeviceToken)throw new TypeError('Illegal constructor');Object.defineProperties(this,{deviceId:{value:record.deviceId,enumerable:true},kind:{value:record.kind,enumerable:true},label:{value:record.label,enumerable:true},groupId:{value:record.groupId,enumerable:true}});}
+ toJSON(){return {deviceId:this.deviceId,kind:this.kind,label:this.label,groupId:this.groupId};}
+}
+class InputDeviceInfo extends MediaDeviceInfo {
+ constructor(token,record){super(token,record);}
+ getCapabilities(){return {};}
+}
+const mediaDevicesToken={};
+class MediaDevices extends EventTarget {
+ constructor(token){super();if(token!==mediaDevicesToken)throw new TypeError('Illegal constructor');}
+ getSupportedConstraints(){return {autoGainControl:true,channelCount:true,deviceId:true,echoCancellation:true,groupId:true,noiseSuppression:true,sampleRate:true,sampleSize:true};}
+ async enumerateDevices(){
+  const response=await native('enumerateDevices');
+  const malformed=()=>new DOMException('The native media-device response is invalid','DataError');
+  if(!response||response.type!=='application/vnd.webscene.media-devices+json'||!(response.bytes instanceof Uint8Array)||response.bytes.byteLength>262144)throw malformed();
+  let payload;try{payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(response.bytes));}catch{throw malformed();}
+  if(!payload||payload.version!==1||!Array.isArray(payload.devices)||payload.devices.length>64)throw malformed();
+  const ids=new Set(),records=[];
+  for(const value of payload.devices){
+   if(!value||value.kind!=='audioinput'||typeof value.deviceId!=='string'||!value.deviceId||value.deviceId.length>4096||typeof value.groupId!=='string'||value.groupId.length>4096||typeof value.label!=='string'||value.label.length>4096||ids.has(value.deviceId))throw malformed();
+   ids.add(value.deviceId);records.push({deviceId:value.deviceId,kind:value.kind,groupId:value.groupId,label:value.label,isDefault:value.isDefault===true});
+  }
+  records.sort((a,b)=>Number(b.isDefault)-Number(a.isDefault));
+  return records.map(record=>new InputDeviceInfo(mediaDeviceToken,record));
+ }
+ getUserMedia(){return Promise.reject(new DOMException('Native media capture is not connected','NotSupportedError'));}
+ getDisplayMedia(){return Promise.reject(new DOMException('Native display capture is not connected','NotSupportedError'));}
+}
+const mediaDevices=new MediaDevices(mediaDevicesToken);
+if(globalThis.isSecureContext&&globalThis.navigator&&globalThis.top===globalThis){
+ const owner=globalThis.Navigator?.prototype??navigator;
+ Object.defineProperty(owner,'mediaDevices',{configurable:true,enumerable:true,get(){if(this!==navigator&&owner!==navigator)throw new TypeError('Illegal invocation');return mediaDevices;}});
+}
 class AudioContext extends EventTarget {
  constructor(options={}){super();const rate=Number(options.sampleRate??48000);contexts.set(this,{id:native('create',rate),state:'suspended',rate});this.destination=new AudioNode(this,0,0,nodeToken);}
  get sampleRate(){return contexts.get(this).rate;}get currentTime(){const c=contexts.get(this);return c.state==='closed'?(c.closedTime||0):native('time',c.id);}get state(){return contexts.get(this).state;}
@@ -71,7 +106,7 @@ class AudioContext extends EventTarget {
  createBuffer(channels,length,rate){return new AudioBuffer({numberOfChannels:channels,length,sampleRate:rate});}
  decodeAudioData(data,success,error){ctx(this);let pending;try{pending=native('decode',data,this.sampleRate);}catch(e){pending=Promise.reject(e);}const promise=pending.catch(error=>{if(error instanceof TypeError)throw error;throw new DOMException(error.message,'EncodingError');}).then(result=>{const buffer=Object.create(AudioBuffer.prototype);buffers.set(buffer,{channels:result.channels,rate:result.sampleRate,length:result.channels[0].length});return buffer;});if(typeof success==='function'||typeof error==='function')promise.then(success,error);return promise;}
 }
-for(const ctor of [AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStream,MediaStreamTrack])Object.defineProperty(ctor.prototype,Symbol.toStringTag,{value:ctor.name,configurable:true});
-Object.assign(globalThis,{AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStream,MediaStreamTrack});
+for(const ctor of [AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices])Object.defineProperty(ctor.prototype,Symbol.toStringTag,{value:ctor.name,configurable:true});
+Object.assign(globalThis,{AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices});
 })();
 )AUDIOJS"

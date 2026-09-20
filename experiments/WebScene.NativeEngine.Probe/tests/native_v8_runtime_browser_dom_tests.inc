@@ -5785,6 +5785,74 @@ void test_clipboard_write_text_host_handoff(webscene_engine* engine)
         "Clipboard.writeText promise did not fulfill after native completion");
 }
 
+void test_media_devices_enumeration_host_handoff()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "media-device engine creation failed");
+    execute(engine, R"JS(
+        globalThis.__mediaDevicesState = 'pending';
+        globalThis.__mediaConstraints = navigator.mediaDevices.getSupportedConstraints();
+        globalThis.__sameMediaDevices = navigator.mediaDevices === navigator.mediaDevices;
+        navigator.mediaDevices.enumerateDevices().then(devices => {
+          __mediaDevicesState = JSON.stringify(devices.map(device => ({
+            brand: Object.prototype.toString.call(device),
+            ctor: device.constructor.name,
+            deviceId: device.deviceId,
+            kind: device.kind,
+            label: device.label,
+            groupId: device.groupId,
+            json: device.toJSON()
+          })));
+        }, error => { __mediaDevicesState = error.name; });
+        navigator.mediaDevices.getUserMedia({audio:true}).catch(
+          error => { globalThis.__mediaCaptureState = error.name; });
+    )JS", "native-media-devices-enumeration.js");
+    require(evaluate(engine, "true", "native-media-devices-barrier.js") == "true",
+        "MediaDevices enumeration did not drain to the host queue");
+    const auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_MEDIA_ENUMERATE_DEVICES_V1
+                && request.flags == 0U && request.id != 0U
+                && request.content_type
+                    == "application/vnd.webscene.media-devices+json"
+                && request.bytes.empty() && !request.url.empty(),
+        "MediaDevices enumeration did not preserve its scoped typed request");
+    constexpr std::string_view payload = R"JSON({"version":1,"devices":[{"kind":"audioinput","deviceId":"secondary","groupId":"group-b","label":"Desk Mic"},{"kind":"audioinput","deviceId":"default-private","groupId":"group-a","label":"Built-in Mic","isDefault":true}]})JSON";
+    require(webscene_engine_complete_host_request_v1(engine, request.id, 0U,
+                "application/vnd.webscene.media-devices+json",
+                reinterpret_cast<const uint8_t*>(payload.data()), payload.size(),
+                nullptr) != 0,
+        "MediaDevices host completion was rejected");
+    const auto result = evaluate(engine,
+        "({state:__mediaDevicesState,same:__sameMediaDevices,constraints:__mediaConstraints,capture:__mediaCaptureState})",
+        "native-media-devices-result.js");
+    require(result.find(R"(\"same\":true)") != std::string::npos
+                && result.find(R"(\"capture\":\"NotSupportedError\")") != std::string::npos
+                && result.find(R"(\"deviceId\":\"default-private\")")
+                    < result.find(R"(\"deviceId\":\"secondary\")")
+                && result.find(R"(\"brand\":\"[object InputDeviceInfo]\")")
+                    != std::string::npos
+                && result.find(R"(\"echoCancellation\":true)")
+                    != std::string::npos,
+        "MediaDevices enumeration shape or ordering was inconsistent: " + result);
+
+    execute(engine, R"JS(
+        globalThis.__malformedMediaState = 'pending';
+        navigator.mediaDevices.enumerateDevices().catch(
+          error => { __malformedMediaState = error.name; });
+    )JS", "native-media-devices-malformed.js");
+    evaluate(engine, "true", "native-media-devices-malformed-barrier.js");
+    const auto malformed = take_typed_host_request(engine);
+    constexpr uint8_t invalid[] = {'{'};
+    require(webscene_engine_complete_host_request_v1(engine, malformed.id, 0U,
+                "application/vnd.webscene.media-devices+json",
+                invalid, sizeof(invalid), nullptr) != 0,
+        "Malformed MediaDevices completion was rejected before delivery");
+    require(evaluate(engine, "__malformedMediaState",
+                "native-media-devices-malformed-result.js") == R"("DataError")",
+        "Malformed MediaDevices payload did not fail closed");
+    webscene_engine_destroy(engine);
+}
+
 void test_clipboard_read_host_completion(webscene_engine* engine)
 {
     auto* inactive_engine = webscene_engine_create(0);

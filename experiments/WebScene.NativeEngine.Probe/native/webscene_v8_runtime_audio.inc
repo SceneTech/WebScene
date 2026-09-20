@@ -122,6 +122,46 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
         if (info.Length() < 1)
             throw std::invalid_argument("Audio operation required");
         auto op = to_utf8(info.GetIsolate(), info[0]);
+        if (op == "enumerateDevices") {
+            auto resolver = v8::Promise::Resolver::New(realm).ToLocalChecked();
+            info.GetReturnValue().Set(resolver->GetPromise());
+            const auto reject = [&](const char* message, const char* name) {
+                auto error = v8::Exception::Error(js_string(info.GetIsolate(), message));
+                if (error->IsObject())
+                    error.As<v8::Object>()->Set(realm, js_string(info.GetIsolate(), "name"),
+                                                js_string(info.GetIsolate(), name)).Check();
+                resolver->Reject(realm, error).Check();
+            };
+            v8::Local<v8::Value> secure;
+            if (realm != self->context.Get(info.GetIsolate())
+                || !realm->Global()->Get(realm, js_string(info.GetIsolate(), "isSecureContext")).ToLocal(&secure)
+                || !secure->IsTrue()) {
+                reject("Media-device enumeration requires a secure top-level context", "SecurityError");
+                return;
+            }
+            constexpr size_t maximum_pending_media_requests = 16U;
+            if (self->host_promise_targets.size()
+                >= maximum_pending_media_requests) {
+                reject("Too many pending media-device requests", "QuotaExceededError");
+                return;
+            }
+            const auto request_id = ++self->next_host_request_id;
+            auto request = std::make_unique<native_host_request>();
+            request->view.request_id = request_id;
+            request->view.kind = WEBSCENE_HOST_REQUEST_MEDIA_ENUMERATE_DEVICES_V1;
+            request->content_type = "application/vnd.webscene.media-devices+json";
+            request->url = self->current_security_origin();
+            host_promise_target target;
+            target.operation = "enumerateMediaDevices";
+            target.context.Reset(info.GetIsolate(), realm);
+            target.resolver.Reset(info.GetIsolate(), resolver);
+            self->host_promise_targets.emplace(request_id, std::move(target));
+            if (!self->enqueue_typed_host_request(std::move(request))) {
+                self->host_promise_targets.erase(request_id);
+                reject("The host request queue is full", "QuotaExceededError");
+            }
+            return;
+        }
         if (op == "trackBind" || op == "trackClone" || op == "trackStop" || op == "trackEnded" ||
             op == "trackEnabled") {
             auto id = info[1]->Uint32Value(realm).FromMaybe(0);

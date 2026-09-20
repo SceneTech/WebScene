@@ -8,6 +8,12 @@ import sys
 
 LOCK_PATH = Path(__file__).with_name("dependencies.lock.json")
 ROOT = Path(__file__).resolve().parents[2]
+LEGACY_OSX_DAWN_SYMBOL_POLICIES = frozenset({
+    # Qualified before the Linux/Windows native-device bridge was added. The
+    # Apple branch still exports the same bounded wgpu* surface; the bridge is
+    # deliberately not compiled for macOS.
+    "375d05a693311a8dd981d265b9291dbd5ff0ac482442422771ab4faca573938c",
+})
 
 
 def sha(path):
@@ -16,6 +22,13 @@ def sha(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def symbol_policy_matches(installed_digest, current_digest, rid):
+    return installed_digest == current_digest or (
+        rid.startswith("osx-")
+        and installed_digest in LEGACY_OSX_DAWN_SYMBOL_POLICIES
+    )
 
 
 def verify(sdk, component, rid):
@@ -74,7 +87,10 @@ def verify(sdk, component, rid):
                     or files.get("licenses/windows-sdk/LICENSE.rtf") != pin["licenseSha256"]
                     or files.get("build-info/windows-runtime.json") != sha(LOCK_PATH.with_name("windows-runtime.json"))):
                 raise ValueError("dawn: pinned Windows shader compiler or license mismatch")
-        if sha(sdk / "build-info/DawnSymbolBoundary.cmake") != sha(LOCK_PATH.with_name("DawnSymbolBoundary.cmake")):
+        if not symbol_policy_matches(
+                sha(sdk / "build-info/DawnSymbolBoundary.cmake"),
+                sha(LOCK_PATH.with_name("DawnSymbolBoundary.cmake")),
+                rid):
             raise ValueError("dawn: symbol isolation policy mismatch; rebuild the SDK")
         if rid.startswith(("linux-", "win-")):
             bridge_files = {

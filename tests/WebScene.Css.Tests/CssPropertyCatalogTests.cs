@@ -62,6 +62,7 @@ public sealed class CssPropertyCatalogTests
     [InlineData("willChange")]
     [InlineData("textWrap")]
     [InlineData("caretColor")]
+    [InlineData("touchAction")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -135,6 +136,9 @@ public sealed class CssPropertyCatalogTests
     [InlineData("caret-color", "#123456", true)]
     [InlineData("caret-color", "currentColor", true)]
     [InlineData("caret-color", "not-a-color", false)]
+    [InlineData("touch-action", "manipulation", true)]
+    [InlineData("touch-action", "pan-x pan-y", true)]
+    [InlineData("touch-action", "pinch-zoom", false)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

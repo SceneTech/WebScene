@@ -1938,8 +1938,16 @@
                     ? v8::Local<v8::Value>(v8::Null(isolate))
                     : v8::Local<v8::Value>(wrap_node(*submitter))).Check();
         }
-        event->Set(local_context, js_string(isolate, "pointerType"), js_string(isolate, "mouse")).Check();
-        event->Set(local_context, js_string(isolate, "isPrimary"), v8::True(isolate)).Check();
+        const auto pointer_metadata = decode_pointer_input_metadata(input.flags)
+            .value_or(pointer_input_metadata{});
+        event->Set(
+            local_context,
+            js_string(isolate, "pointerType"),
+            js_string(isolate, pointer_device_name(pointer_metadata.device))).Check();
+        event->Set(
+            local_context,
+            js_string(isolate, "isPrimary"),
+            v8::Boolean::New(isolate, pointer_metadata.primary)).Check();
         event->Set(
             local_context,
             js_string(isolate, "relatedTarget"),
@@ -1954,6 +1962,7 @@
             || input.kind == WEBSCENE_INPUT_POINTER_DOWN
             || input.kind == WEBSCENE_INPUT_POINTER_UP
             || input.kind == WEBSCENE_INPUT_POINTER_LEAVE
+            || input.kind == WEBSCENE_INPUT_POINTER_CANCEL
             || input.kind == WEBSCENE_INPUT_WHEEL;
         if (pointer_input) {
             // The native host reports coordinates in the top-level viewport.
@@ -2026,7 +2035,7 @@
         const auto buttons = static_cast<int>(input.flags & 0x1fU);
         set_number("button", changed_button);
         set_number("buttons", buttons);
-        set_number("pointerId", 1);
+        set_number("pointerId", pointer_metadata.pointer_id);
         const auto mouse_click_sequence_event = std::string_view(type) == "mousedown"
             || std::string_view(type) == "mouseup"
             || std::string_view(type) == "click"
@@ -3888,6 +3897,92 @@
         selection_paint_changed();
     }
 
+    void begin_touch_pan_gesture(
+        const pointer_input_metadata& metadata,
+        const webscene_input_event& input,
+        dom_node& hit)
+    {
+        if (!is_contact_pointer(metadata.device)
+            || metadata.pointer_id >= touch_pan_gestures.size()) return;
+        auto& gesture = touch_pan_gestures[metadata.pointer_id];
+        gesture = {};
+        gesture.active = true;
+        gesture.last_x = input.x;
+        gesture.last_y = input.y;
+        bool seek_horizontal = true;
+        bool seek_vertical = true;
+        for (auto* node = &hit; node != nullptr
+             && (seek_horizontal || seek_vertical); node = node->parent) {
+            const auto axes = css::touch_action_axes(
+                node->style.textual().touch_action_value);
+            if (seek_horizontal && (axes & 1U) == 0U) seek_horizontal = false;
+            if (seek_vertical && (axes & 2U) == 0U) seek_vertical = false;
+            const auto maximum_x = std::max(
+                0.0F,
+                node->scroll_content_width - node->scroll_viewport_width);
+            const auto maximum_y = std::max(
+                0.0F,
+                node->scroll_content_height - node->scroll_viewport_height);
+            const auto root = node == &document.body();
+            if (seek_horizontal && maximum_x > 0.01F
+                && (node->style.scroll_x_enabled || root)) {
+                gesture.horizontal_target_id = node->id;
+                seek_horizontal = false;
+            }
+            if (seek_vertical && maximum_y > 0.01F
+                && (node->style.scroll_y_enabled || root)) {
+                gesture.vertical_target_id = node->id;
+                seek_vertical = false;
+            }
+        }
+    }
+
+    bool advance_touch_pan_gesture(
+        const pointer_input_metadata& metadata,
+        const webscene_input_event& input)
+    {
+        if (!is_contact_pointer(metadata.device)
+            || metadata.pointer_id >= touch_pan_gestures.size()) return true;
+        auto& gesture = touch_pan_gestures[metadata.pointer_id];
+        if (!gesture.active) return true;
+        const auto delta_x = static_cast<float>(input.x - gesture.last_x);
+        const auto delta_y = static_cast<float>(input.y - gesture.last_y);
+        gesture.last_x = input.x;
+        gesture.last_y = input.y;
+        const auto apply = [&](uint32_t target_id, float x, float y) {
+            auto* target = document.find_by_native_id(target_id);
+            if (target == nullptr) return true;
+            const auto maximum_x = std::max(
+                0.0F,
+                target->scroll_content_width - target->scroll_viewport_width);
+            const auto maximum_y = std::max(
+                0.0F,
+                target->scroll_content_height - target->scroll_viewport_height);
+            const auto next_x = std::clamp(
+                target->scroll_left - x, 0.0F, maximum_x);
+            const auto next_y = std::clamp(
+                target->scroll_top - y, 0.0F, maximum_y);
+            if (std::abs(next_x - target->scroll_left) <= 0.01F
+                && std::abs(next_y - target->scroll_top) <= 0.01F) return true;
+            document.set_scroll_offset(*target, next_x, next_y);
+            return dispatch_input_event_type(input, "scroll", *target);
+        };
+        if (gesture.horizontal_target_id != 0U
+            && gesture.horizontal_target_id == gesture.vertical_target_id) {
+            return apply(gesture.horizontal_target_id, delta_x, delta_y);
+        }
+        if (gesture.horizontal_target_id != 0U
+            && !apply(gesture.horizontal_target_id, delta_x, 0.0F)) return false;
+        return gesture.vertical_target_id == 0U
+            || apply(gesture.vertical_target_id, 0.0F, delta_y);
+    }
+
+    void end_touch_pan_gesture(const pointer_input_metadata& metadata)
+    {
+        if (metadata.pointer_id < touch_pan_gestures.size())
+            touch_pan_gestures[metadata.pointer_id] = {};
+    }
+
     bool dispatch_input(const webscene_input_event& input, bool defer_cursor_update = false)
     {
         struct user_input_dispatch_scope {
@@ -3898,6 +3993,20 @@
             ~user_input_dispatch_scope() { active = previous; }
         } dispatch_scope{dispatching_user_input};
         current_input_sequence = input.sequence;
+        const auto pointing_input = input.kind == WEBSCENE_INPUT_POINTER_MOVE
+            || input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            || input.kind == WEBSCENE_INPUT_POINTER_UP
+            || input.kind == WEBSCENE_INPUT_POINTER_LEAVE
+            || input.kind == WEBSCENE_INPUT_POINTER_CANCEL
+            || input.kind == WEBSCENE_INPUT_WHEEL;
+        auto pointer_metadata = pointer_input_metadata{};
+        if (pointing_input) {
+            const auto decoded = decode_pointer_input_metadata(input.flags);
+            if (!decoded.has_value()) return true;
+            pointer_metadata = *decoded;
+        }
+        const auto mouse_pointer =
+            pointer_metadata.device == WEBSCENE_POINTER_DEVICE_MOUSE;
         if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
             || input.kind == WEBSCENE_INPUT_KEY_DOWN) {
             last_user_activation = std::chrono::steady_clock::now();
@@ -3917,8 +4026,10 @@
             || input.kind == WEBSCENE_INPUT_KEY_UP || input.kind == WEBSCENE_INPUT_TEXT;
         auto* initial_hit_target = keyboard ? nullptr : document.hit_test(
             document.body(), static_cast<float>(input.x), static_cast<float>(input.y));
+        auto* captured_target = pointer_capture_id == pointer_metadata.pointer_id
+            ? pointer_capture_target : nullptr;
         auto* input_owner = keyboard ? active_element
-            : pointer_capture_target != nullptr ? pointer_capture_target : initial_hit_target;
+            : captured_target != nullptr ? captured_target : initial_hit_target;
         if (input_owner != nullptr) {
             local_context = context_for_node(*input_owner);
         } else if (keyboard && focused_document_owner_id != 0U) {
@@ -3961,11 +4072,15 @@
             }
         }
         const auto leave_host = [&]() -> bool {
+            if (!mouse_pointer) {
+                end_touch_pan_gesture(pointer_metadata);
+                return true;
+            }
             // OS/control exits need not have a final mousemove. Clear :hover
             // before dispatch, with no destination element (relatedTarget=null).
             // Capture keeps its boundary until release; a host exit is not up
             // or cancel and must not interrupt a chart/scrollbar drag.
-            if (pointer_capture_target != nullptr || scrollbar_drag_target != nullptr) {
+            if (captured_target != nullptr || scrollbar_drag_target != nullptr) {
                 return true;
             }
             update_scrollbar_thumb_interaction(nullptr, nullptr);
@@ -4026,7 +4141,8 @@
             return hit_test_scrollbar_thumb(
                 *start, static_cast<float>(input.x), static_cast<float>(input.y));
         };
-        auto current_scrollbar_hit = scrollbar_hit_at_pointer();
+        auto current_scrollbar_hit = mouse_pointer
+            ? scrollbar_hit_at_pointer() : std::optional<scrollbar_thumb_hit>{};
         if (scrollbar_drag_target == nullptr
             && input.kind == WEBSCENE_INPUT_POINTER_MOVE) {
             update_scrollbar_thumb_interaction(
@@ -4070,7 +4186,7 @@
             }
             return true;
         }
-        if (pointer_outside && pointer_capture_target == nullptr
+        if (pointer_outside && captured_target == nullptr
             && (input.kind == WEBSCENE_INPUT_POINTER_MOVE
                 || input.kind == WEBSCENE_INPUT_POINTER_DOWN
                 || input.kind == WEBSCENE_INPUT_POINTER_UP)) {
@@ -4083,8 +4199,8 @@
         auto* hit_target = initial_hit_target;
         if (hit_target == nullptr) hit_target = &document.body();
         if (pointer_outside) {
-            hit_target = pointer_capture_target != nullptr
-                ? pointer_capture_target : &active_root();
+            hit_target = captured_target != nullptr
+                ? captured_target : &active_root();
         }
         if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
             && ((input.flags >> 8U) & 0xffU) <= 1U) {
@@ -4112,9 +4228,9 @@
                 current_scrollbar_hit.has_value() ? current_scrollbar_hit->target : nullptr,
                 nullptr);
         }
-        auto* target = pointer_capture_target != nullptr
+        auto* target = captured_target != nullptr
             && input.kind != WEBSCENE_INPUT_POINTER_DOWN
-            ? pointer_capture_target
+            ? captured_target
             : hit_target;
         current_movement_x = has_pointer_position ? input.x - last_pointer_x : 0;
         current_movement_y = has_pointer_position ? input.y - last_pointer_y : 0;
@@ -4123,9 +4239,10 @@
             last_pointer_y = input.y;
             has_pointer_position = true;
         }
-        if ((input.kind == WEBSCENE_INPUT_POINTER_MOVE
+        if (mouse_pointer
+            && (input.kind == WEBSCENE_INPUT_POINTER_MOVE
                 || input.kind == WEBSCENE_INPUT_POINTER_DOWN)
-            && (!pointer_outside || pointer_capture_target != nullptr)
+            && (!pointer_outside || captured_target != nullptr)
             && hit_target != hover_target) {
             auto* previous_hover_target = hover_target;
             // Browsers update :hover before dispatching the boundary events.
@@ -4231,7 +4348,7 @@
                 static_cast<float>(input.x),
                 static_cast<float>(input.y));
             if (hit_target == nullptr) hit_target = &active_root();
-            if (pointer_capture_target == nullptr
+            if (captured_target == nullptr
                 || input.kind == WEBSCENE_INPUT_POINTER_DOWN) {
                 target = hit_target;
             }
@@ -4243,6 +4360,10 @@
                     hover_target,
                     "hover-target-replaced");
             }
+        }
+        if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            && is_contact_pointer(pointer_metadata.device)) {
+            begin_touch_pan_gesture(pointer_metadata, input, *hit_target);
         }
         const char* types[3]{};
         size_t type_count = 0;
@@ -4266,8 +4387,8 @@
                 << ", hit=" << hit_target->id
                 << ", target=" << target->id
                 << ", capture-target="
-                << (pointer_capture_target == nullptr
-                    ? 0U : pointer_capture_target->id)
+                << (captured_target == nullptr
+                    ? 0U : captured_target->id)
                 << ", flags=" << input.flags
                 << ", x=" << input.x
                 << ", y=" << input.y
@@ -4279,7 +4400,7 @@
         switch (input.kind) {
         case WEBSCENE_INPUT_POINTER_MOVE:
             types[type_count++] = "pointermove";
-            types[type_count++] = "mousemove";
+            if (mouse_pointer) types[type_count++] = "mousemove";
             break;
         case WEBSCENE_INPUT_POINTER_DOWN:
             {
@@ -4298,7 +4419,7 @@
             pointer_down_x = input.x;
             pointer_down_y = input.y;
             types[type_count++] = "pointerdown";
-            types[type_count++] = "mousedown";
+            if (mouse_pointer) types[type_count++] = "mousedown";
             if (changed_button == 2) context_menu_target = target;
             break;
         case WEBSCENE_INPUT_POINTER_UP:
@@ -4312,7 +4433,7 @@
                     "active-pointer-up");
             }
             types[type_count++] = "pointerup";
-            types[type_count++] = "mouseup";
+            if (mouse_pointer) types[type_count++] = "mouseup";
             if (pointer_down_target != nullptr
                 && std::hypot(input.x - pointer_down_x, input.y - pointer_down_y) <= 4.0) {
                 // UI Events targets click at the nearest common inclusive
@@ -4353,6 +4474,17 @@
                 }
             }
             break;
+        case WEBSCENE_INPUT_POINTER_CANCEL:
+            {
+                auto* previous_active_target = active_pointer_target;
+                active_pointer_target = nullptr;
+                recascade_active_transition(
+                    previous_active_target,
+                    nullptr,
+                    "active-pointer-cancel");
+            }
+            types[type_count++] = "pointercancel";
+            break;
         case WEBSCENE_INPUT_WHEEL:
             types[type_count++] = "wheel";
             break;
@@ -4387,22 +4519,31 @@
                 }
             }
         }
-        if (!maybe_begin_outbound_drag(input)) {
+        if (mouse_pointer && !maybe_begin_outbound_drag(input)) {
             last_error = "Native outbound drag initiation failed: "
                 + describe_reported_exception(try_catch, local_context);
             report_input_exception();
             return false;
         }
         if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
-            && changed_button == 0 && !pointer_focus_default_prevented
+            && mouse_pointer && changed_button == 0
+            && !pointer_focus_default_prevented
             && !begin_pointer_text_selection(input, *target)) {
             last_error = "Native selectstart dispatch failed";
             return false;
         }
         if ((input.kind == WEBSCENE_INPUT_POINTER_MOVE
                 || input.kind == WEBSCENE_INPUT_POINTER_UP)
-            && pointer_text_selection_active) {
+            && mouse_pointer && pointer_text_selection_active) {
             update_pointer_text_selection(input, *hit_target);
+        }
+        if (input.kind == WEBSCENE_INPUT_POINTER_MOVE
+            && is_contact_pointer(pointer_metadata.device)
+            && !advance_touch_pan_gesture(pointer_metadata, input)) {
+            last_error = "Native touch-action scroll dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            report_input_exception();
+            return false;
         }
         if (input.kind == WEBSCENE_INPUT_WHEEL && !wheel_default_prevented) {
             const auto discrete_wheel =
@@ -4678,18 +4819,24 @@
                 return false;
             }
         }
-        if (input.kind == WEBSCENE_INPUT_POINTER_UP) {
+        if (input.kind == WEBSCENE_INPUT_POINTER_UP
+            || input.kind == WEBSCENE_INPUT_POINTER_CANCEL) {
+            end_touch_pan_gesture(pointer_metadata);
             pointer_text_selection_active = false;
             pointer_selection_root_id = 0U;
-            pointer_capture_target = nullptr;
+            if (pointer_capture_id == pointer_metadata.pointer_id) {
+                pointer_capture_target = nullptr;
+                pointer_capture_id = 0U;
+            }
             pointer_down_target = nullptr;
             middle_paste_target_id = 0U;
             outbound_drag_threshold_crossed = false;
             if (pointer_outside) return leave_host();
         }
-        if (input.kind == WEBSCENE_INPUT_POINTER_MOVE
+        if (mouse_pointer
+            && (input.kind == WEBSCENE_INPUT_POINTER_MOVE
             || input.kind == WEBSCENE_INPUT_POINTER_DOWN
-            || input.kind == WEBSCENE_INPUT_POINTER_UP) {
+            || input.kind == WEBSCENE_INPUT_POINTER_UP)) {
             if (defer_cursor_update && input.kind == WEBSCENE_INPUT_POINTER_MOVE) {
                 pointer_cursor_update_pending = true;
                 return true;

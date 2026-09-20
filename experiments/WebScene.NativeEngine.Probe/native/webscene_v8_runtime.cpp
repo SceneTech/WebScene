@@ -12,6 +12,7 @@
 #include "graphics/v8_webgpu_canvas_context.h"
 #endif
 #include "webscene_v8_runtime.h"
+#include "webscene_pointer_input.h"
 #include "webscene_precompiled_javascript.h"
 #include "webscene_frame_trace.h"
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)

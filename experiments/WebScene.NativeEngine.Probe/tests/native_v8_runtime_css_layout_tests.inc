@@ -406,6 +406,64 @@ void test_css_caret_color_performance_gate(webscene_engine* engine)
             + std::to_string(elapsed) + " ms");
 }
 
+void test_css_touch_action_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      document.body.innerHTML = `<div id="touch-action-grid"></div>
+        <div id="touch-scroll" style="width:100px;height:100px;overflow:scroll;touch-action:pan-y">
+          <div style="width:300px;height:300px"></div>
+        </div>`;
+      globalThis.touchActionGrid = document.getElementById('touch-action-grid');
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < 4096; ++index) {
+        fragment.appendChild(document.createElement('div'));
+      }
+      touchActionGrid.appendChild(fragment);
+    )JS", "native-css-touch-action-performance-setup.js");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          const value = cycle % 2 === 0 ? 'pan-x' : 'none';
+          for (const node of touchActionGrid.children) node.style.touchAction = value;
+        }
+        return [touchActionGrid.children.length,
+          touchActionGrid.lastElementChild.style.touchAction];
+      })()
+    )JS", "native-css-touch-action-performance-mutation.js");
+    webscene_engine_metrics after_mutation{};
+    webscene_engine_get_metrics(engine, &after_mutation);
+    require(result == R"JSON([4096,"none"])JSON",
+        "CSS touch-action performance fixture regressed: " + result);
+    require(after_mutation.layout_passes == before.layout_passes,
+        "CSS touch-action transitions performed layout");
+    require(after_mutation.published_scenes <= before.published_scenes + 1U,
+        "CSS touch-action transitions published unbounded scenes");
+
+    const auto consumed_before = consumed_input_count(engine);
+    for (uint32_t gesture = 0; gesture < 1000U; ++gesture) {
+        const auto sequence = 10000U + static_cast<uint64_t>(gesture) * 3U;
+        contact_pointer(engine, WEBSCENE_INPUT_POINTER_DOWN,
+            WEBSCENE_POINTER_DEVICE_TOUCH, 1U, 80, 80, sequence, true);
+        contact_pointer(engine, WEBSCENE_INPUT_POINTER_MOVE,
+            WEBSCENE_POINTER_DEVICE_TOUCH, 1U, 70, 70, sequence + 1U, true);
+        contact_pointer(engine, WEBSCENE_INPUT_POINTER_UP,
+            WEBSCENE_POINTER_DEVICE_TOUCH, 1U, 70, 70, sequence + 2U, false);
+    }
+    wait_for_consumed_inputs(engine, consumed_before + 3000U,
+        "1,000 touch-action gestures did not retire");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    require(webscene_engine_requires_animation_frame(engine) == 0,
+        "touch-action gestures leaked animation-frame demand");
+    require(elapsed < 5000.0,
+        "4,096-node/1,000-gesture touch-action gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);

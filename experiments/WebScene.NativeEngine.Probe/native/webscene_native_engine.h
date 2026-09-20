@@ -68,7 +68,10 @@ typedef enum webscene_input_kind {
     WEBSCENE_INPUT_TEXT = 9,
     // A discrete host-surface exit, not a mousemove. Coordinates may still be
     // the last known position inside the surface. Does not cancel capture.
-    WEBSCENE_INPUT_POINTER_LEAVE = 10
+    WEBSCENE_INPUT_POINTER_LEAVE = 10,
+    // Terminal contact cancellation. Older consumers ignore this additive
+    // kind; current consumers retire capture and gesture state without click.
+    WEBSCENE_INPUT_POINTER_CANCEL = 17
 } webscene_input_kind;
 
 typedef enum webscene_cursor_kind {
@@ -478,8 +481,25 @@ enum {
     // target-offset animator. Unclassified legacy input remains immediate.
     WEBSCENE_INPUT_WHEEL_PRECISE = 1U << 20U,
     WEBSCENE_INPUT_WHEEL_NATIVE_MOMENTUM = 1U << 21U,
-    WEBSCENE_INPUT_WHEEL_DISCRETE = 1U << 22U
+    WEBSCENE_INPUT_WHEEL_DISCRETE = 1U << 22U,
+    // Binary-compatible pointer metadata. Version zero is a legacy primary
+    // mouse at ID 1. Version one occupies bits 23..31; consumers must reject
+    // unknown nonzero versions rather than reinterpret their payload.
+    WEBSCENE_INPUT_POINTER_METADATA_VERSION_SHIFT = 23U,
+    WEBSCENE_INPUT_POINTER_METADATA_VERSION_MASK = 3U << 23U,
+    WEBSCENE_INPUT_POINTER_METADATA_VERSION_1 = 1U << 23U,
+    WEBSCENE_INPUT_POINTER_DEVICE_SHIFT = 25U,
+    WEBSCENE_INPUT_POINTER_DEVICE_MASK = 3U << 25U,
+    WEBSCENE_INPUT_POINTER_PRIMARY = 1U << 27U,
+    WEBSCENE_INPUT_POINTER_ID_SHIFT = 28U,
+    WEBSCENE_INPUT_POINTER_ID_MASK = 15U << 28U
 };
+
+typedef enum webscene_pointer_device_kind {
+    WEBSCENE_POINTER_DEVICE_MOUSE = 0,
+    WEBSCENE_POINTER_DEVICE_TOUCH = 1,
+    WEBSCENE_POINTER_DEVICE_PEN = 2
+} webscene_pointer_device_kind;
 
 typedef struct webscene_input_event {
     uint32_t kind;

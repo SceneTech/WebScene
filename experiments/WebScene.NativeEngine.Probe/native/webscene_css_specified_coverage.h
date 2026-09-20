@@ -15,6 +15,7 @@ inline constexpr auto specified_property_samples = std::to_array<specified_prope
         {"will-change","transform, opacity"},
         {"text-wrap","nowrap"},
         {"caret-color","#123456"},
+        {"touch-action","pan-y"},
     {"width","12px"},{"height","20%"},{"min-width","1rem"},{"min-height","2px"},
     {"max-width","none"},{"max-height","fit-content"},
     {"left","1px"},{"top","2px"},{"right","3px"},{"bottom","4px"},{"inset","1px 2px 3px 4px"},

@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Touch action CSSOM and non-inheritance</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #parent { touch-action: pan-y; }
+</style>
+<div id="parent"><div id="target"></div></div>
+<script>
+  test(() => {
+    assert_equals(getComputedStyle(parent).touchAction, 'pan-y');
+    assert_equals(getComputedStyle(target).touchAction, 'auto',
+      'touch-action is not inherited');
+
+    target.style.touchAction = 'none';
+    assert_equals(target.style.touchAction, 'none');
+    assert_equals(getComputedStyle(target).touchAction, 'none');
+
+    target.style.touchAction = 'manipulation';
+    assert_equals(getComputedStyle(target).touchAction, 'manipulation');
+    target.style.touchAction = 'pan-y pan-x';
+    assert_equals(getComputedStyle(target).touchAction, 'pan-x pan-y');
+
+    target.style.touchAction = 'pinch-zoom';
+    assert_equals(getComputedStyle(target).touchAction, 'pan-x pan-y',
+      'invalid writes preserve the preceding declaration');
+
+    target.style.touchAction = 'inherit';
+    assert_equals(getComputedStyle(target).touchAction, 'pan-y');
+    target.style.removeProperty('touch-action');
+    assert_equals(getComputedStyle(target).touchAction, 'auto');
+  }, 'touch-action exposes the Code OSS CSSOM slice');
+</script>

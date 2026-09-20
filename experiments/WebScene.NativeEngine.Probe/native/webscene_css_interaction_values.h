@@ -5,6 +5,66 @@
 #include <utility>
 
 namespace webscene_native::css {
+inline std::string_view serialize_touch_action(touch_action value) noexcept
+{
+    switch (value) {
+    case touch_action::none: return "none";
+    case touch_action::manipulation: return "manipulation";
+    case touch_action::pan_x: return "pan-x";
+    case touch_action::pan_y: return "pan-y";
+    case touch_action::pan_x_y: return "pan-x pan-y";
+    default: return "auto";
+    }
+}
+
+inline uint8_t touch_action_axes(touch_action value) noexcept
+{
+    switch (value) {
+    case touch_action::none: return 0U;
+    case touch_action::pan_x: return 1U;
+    case touch_action::pan_y: return 2U;
+    default: return 3U;
+    }
+}
+
+inline std::optional<touch_action> parse_touch_action(
+    std::string_view value) noexcept
+{
+    if (value == "auto") return touch_action::automatic;
+    if (value == "none") return touch_action::none;
+    if (value == "manipulation") return touch_action::manipulation;
+    if (value == "pan-x") return touch_action::pan_x;
+    if (value == "pan-y") return touch_action::pan_y;
+    if (value == "pan-x pan-y" || value == "pan-y pan-x")
+        return touch_action::pan_x_y;
+    return std::nullopt;
+}
+
+template<typename Decision>
+bool apply_touch_action_value(dom_node& node,const std::string& name,
+    const std::string& raw_value,Decision& decision)
+{
+    if (canonical_property_name(name) != "touch-action") return false;
+    auto value = ascii_lower(trim_value(raw_value));
+    if (value == "inherit") {
+        node.style.mutable_textual().touch_action_value = node.parent == nullptr
+            ? touch_action::automatic
+            : node.parent->style.textual().touch_action_value;
+        return true;
+    }
+    if (value == "initial" || value == "unset" || value == "revert"
+        || value == "revert-layer") value = "auto";
+    const auto parsed = parse_touch_action(value);
+    if (!parsed.has_value()) {
+        decision.classification = "invalid-authoring";
+        return true;
+    }
+    if (*parsed == touch_action::automatic && !node.style.has_textual_data())
+        return true;
+    node.style.mutable_textual().touch_action_value = *parsed;
+    return true;
+}
+
 template<typename Decision>
 bool apply_user_select_value(dom_node& node,const std::string& name,
     const std::string& raw_value,Decision& decision)

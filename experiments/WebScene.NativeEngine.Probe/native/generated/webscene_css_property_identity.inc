@@ -238,6 +238,8 @@ inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"textwrap", css_property_id::text_wrap},
     native_typed_property_identity{"caret-color", css_property_id::caret_color},
     native_typed_property_identity{"caretcolor", css_property_id::caret_color},
+    native_typed_property_identity{"touch-action", css_property_id::touch_action},
+    native_typed_property_identity{"touchaction", css_property_id::touch_action},
 };
 
 inline constexpr std::array<std::string_view, 62> native_storage_only_property_catalog{
@@ -465,6 +467,7 @@ inline constexpr std::array native_modeled_property_mask_catalog{
     false,
     false,
     false,
+    false,
 };
 
 inline constexpr bool generated_property_has_modeled_mask(
@@ -673,6 +676,7 @@ inline constexpr std::array native_property_grammar_catalog{
     native_property_grammar::keyword,
     native_property_grammar::keyword,
     native_property_grammar::complex,
+    native_property_grammar::keyword,
 };
 
 inline constexpr native_property_grammar generated_property_grammar(
@@ -919,5 +923,7 @@ inline css_property_id generated_property_id_lowercase(std::string_view name) no
     if (name == "textwrap") return css_property_id::text_wrap;
     if (name == "caret-color") return css_property_id::caret_color;
     if (name == "caretcolor") return css_property_id::caret_color;
+    if (name == "touch-action") return css_property_id::touch_action;
+    if (name == "touchaction") return css_property_id::touch_action;
     return css_property_id::unknown;
 }

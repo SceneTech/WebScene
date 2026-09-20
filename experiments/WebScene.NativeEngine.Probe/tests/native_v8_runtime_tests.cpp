@@ -445,6 +445,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "css-touch-action-performance") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "CSS touch-action performance engine creation failed");
+            test_css_touch_action_performance_gate(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if(selected=="placeholder-pseudo") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"placeholder pseudo engine creation failed");
@@ -1534,6 +1542,7 @@ int main()
     test_inline_block_preserves_vertical_padding(engine);
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
     test_user_select_pointer_default_action(engine);
+    test_touch_action_pointer_device_and_pan(engine);
     test_overscroll_behavior_wheel_chaining(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
     test_nested_drag_drop_routing_and_retirement();

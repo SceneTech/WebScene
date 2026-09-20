@@ -5,6 +5,14 @@ include(CTest)
 include(FetchContent)
 
 if(BUILD_TESTING)
+    add_executable(webscene_pointer_input_metadata_tests
+        tests/pointer_input_metadata_tests.cpp)
+    target_compile_features(webscene_pointer_input_metadata_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_pointer_input_metadata_tests PRIVATE native)
+    add_test(NAME webscene_pointer_input_metadata_tests
+        COMMAND webscene_pointer_input_metadata_tests)
+    set_tests_properties(webscene_pointer_input_metadata_tests PROPERTIES
+        LABELS "native;input;pointer;abi;performance" TIMEOUT 10)
     add_executable(webscene_semantic_delta_header_tests
         tests/semantic_delta_header_tests.c)
     target_compile_features(webscene_semantic_delta_header_tests PRIVATE c_std_11)

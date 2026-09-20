@@ -84,6 +84,38 @@ void pointer_button(
     require(webscene_engine_enqueue(engine, &input) != 0, "pointer button was rejected");
 }
 
+uint32_t pointer_metadata_flags(
+    webscene_pointer_device_kind device,
+    uint32_t pointer_id,
+    bool primary = true)
+{
+    return WEBSCENE_INPUT_POINTER_METADATA_VERSION_1
+        | (static_cast<uint32_t>(device)
+            << WEBSCENE_INPUT_POINTER_DEVICE_SHIFT)
+        | (primary ? WEBSCENE_INPUT_POINTER_PRIMARY : 0U)
+        | (pointer_id << WEBSCENE_INPUT_POINTER_ID_SHIFT);
+}
+
+void contact_pointer(
+    webscene_engine* engine,
+    uint32_t kind,
+    webscene_pointer_device_kind device,
+    uint32_t pointer_id,
+    double x,
+    double y,
+    uint64_t sequence,
+    bool pressed,
+    bool primary = true)
+{
+    auto flags = pointer_metadata_flags(device, pointer_id, primary);
+    if (pressed) flags |= 1U;
+    if (kind == WEBSCENE_INPUT_POINTER_DOWN
+        || kind == WEBSCENE_INPUT_POINTER_UP) flags |= 1U << 8U;
+    const webscene_input_event input{kind, flags, sequence, x, y, 0, 0};
+    require(webscene_engine_enqueue(engine, &input) != 0,
+        "contact pointer input was rejected");
+}
+
 void animation_frame(webscene_engine* engine, double timestamp, uint64_t sequence)
 {
     const webscene_input_event input{
@@ -152,6 +184,64 @@ void test_user_select_pointer_default_action(webscene_engine* engine)
     require(evaluate(engine, "getSelection().toString()",
             "native-user-select-cancel.js").empty(),
         "canceled selectstart still created a pointer selection");
+}
+
+void test_touch_action_pointer_device_and_pan(webscene_engine* engine)
+{
+    resize(engine, 320, 220, 7920U);
+    execute(engine, R"JS(
+      document.body.innerHTML = `<style>
+        body { margin:0; }
+        #scroller { width:100px; height:100px; overflow:scroll;
+                    touch-action:pan-y; }
+        #content { width:300px; height:300px; }
+      </style><div id="scroller"><div id="content"></div></div>`;
+      globalThis.pointerRecords = [];
+      globalThis.mouseCompatibility = 0;
+      for (const type of ['pointerdown','pointermove','pointerup','pointercancel']) {
+        content.addEventListener(type, event => {
+          pointerRecords.push([
+            type, event.pointerType, event.pointerId,
+            event.isPrimary, event.buttons
+          ]);
+          if (type === 'pointerdown') content.setPointerCapture(event.pointerId);
+        });
+      }
+      content.addEventListener('mousedown', () => ++mouseCompatibility);
+      content.addEventListener('mouseup', () => ++mouseCompatibility);
+    )JS", "native-touch-action-setup.js");
+
+    contact_pointer(engine, WEBSCENE_INPUT_POINTER_DOWN,
+        WEBSCENE_POINTER_DEVICE_TOUCH, 7U, 80, 80, 7921U, true);
+    // The used policy is frozen at gesture start. A mutation after pointerdown
+    // affects only the next contact.
+    execute(engine, "scroller.style.touchAction='none'",
+        "native-touch-action-mutate-after-start.js");
+    contact_pointer(engine, WEBSCENE_INPUT_POINTER_MOVE,
+        WEBSCENE_POINTER_DEVICE_TOUCH, 7U, 45, 45, 7922U, true);
+    contact_pointer(engine, WEBSCENE_INPUT_POINTER_UP,
+        WEBSCENE_POINTER_DEVICE_TOUCH, 7U, 45, 45, 7923U, false);
+    require(evaluate(engine, R"JS(JSON.stringify([
+        scroller.scrollLeft, scroller.scrollTop, pointerRecords,
+        mouseCompatibility, content.hasPointerCapture(7)
+      ]))JS", "native-touch-action-first-result.js")
+        == R"JSON([0,35,[["pointerdown","touch",7,true,1],["pointermove","touch",7,true,1],["pointerup","touch",7,true,0]],0,false])JSON",
+        "pan-y did not freeze its axis policy or preserve touch identity");
+
+    execute(engine, "scroller.scrollTop=0; pointerRecords=[];",
+        "native-touch-action-none-reset.js");
+    contact_pointer(engine, WEBSCENE_INPUT_POINTER_DOWN,
+        WEBSCENE_POINTER_DEVICE_PEN, 2U, 80, 80, 7924U, true);
+    contact_pointer(engine, WEBSCENE_INPUT_POINTER_MOVE,
+        WEBSCENE_POINTER_DEVICE_PEN, 2U, 40, 40, 7925U, true);
+    contact_pointer(engine, WEBSCENE_INPUT_POINTER_CANCEL,
+        WEBSCENE_POINTER_DEVICE_PEN, 2U, 40, 40, 7926U, false);
+    require(evaluate(engine, R"JS(JSON.stringify([
+        scroller.scrollLeft, scroller.scrollTop, pointerRecords,
+        content.hasPointerCapture(2)
+      ]))JS", "native-touch-action-none-result.js")
+        == R"JSON([0,0,[["pointerdown","pen",2,true,1],["pointermove","pen",2,true,1],["pointercancel","pen",2,true,0]],false])JSON",
+        "touch-action:none admitted retained panning or leaked cancellation state");
 }
 
 void animation_frame_and_wait(

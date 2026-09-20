@@ -93,6 +93,9 @@ public static class CssPropertyCatalog
             "isolation" => normalizedValue is "auto" or "isolate",
             "will-change" => IsWillChange(normalizedValue),
             "text-wrap" => normalizedValue is "wrap" or "nowrap",
+            "touch-action" => normalizedValue is "auto" or "none"
+                or "manipulation" or "pan-x" or "pan-y"
+                or "pan-x pan-y" or "pan-y pan-x",
             "caret-color" => normalizedValue is "auto" or "currentcolor"
                 || CssColorParser.TryParseColor(trimmed, out _),
             "font-size" => IsFontSize(normalizedValue),

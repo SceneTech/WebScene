@@ -688,6 +688,9 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
     if (canonical_name == "text-wrap") {
         return normalized_value == "wrap" || normalized_value == "nowrap";
     }
+    if (canonical_name == "touch-action") {
+        return css::parse_touch_action(normalized_value).has_value();
+    }
     if (canonical_name == "caret-color") {
         const auto compiled = css::compile_specified_value(
             css_property_id::caret_color, trimmed);

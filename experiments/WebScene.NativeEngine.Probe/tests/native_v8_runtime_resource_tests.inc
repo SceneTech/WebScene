@@ -3706,8 +3706,11 @@ void test_navigation_replaces_top_level_realm()
             "Replacement reload realm document load #"
                 + std::to_string(load + 1U) + " was rejected: "
                 + last_error(engine));
-        require(evaluate(engine, "true", "reload-realm-barrier.js") == "true",
-            "Replacement reload realm document did not finish");
+        const auto barrier_name = "reload-realm-barrier-"
+            + std::to_string(load + 1U) + ".js";
+        require(evaluate(engine, "true", barrier_name) == "true",
+            "Replacement reload realm document #"
+                + std::to_string(load + 1U) + " did not finish");
         if (load == 1U) {
             const auto replacement_elapsed = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - replacement_started).count();

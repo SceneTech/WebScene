@@ -1322,11 +1322,15 @@
             local_context,
             "The frame navigated before the native host completed the request");
         cancel_crypto_tasks_for_context(local_context);
-        std::erase_if(pending_fetches, [&](auto& fetch) {
-            if (fetch.context.Get(isolate) != local_context) return false;
+        for (auto& fetch : pending_fetches) {
+            if (fetch.context.Get(isolate) != local_context) continue;
             if (fetch.cancel) fetch.cancel();
-            return true;
-        });
+            // Futures returned by std::async wait in their destructor. Keep a
+            // cancelled host load alive until the ordinary ready-task drain
+            // can reap it without blocking the isolate during navigation.
+            fetch.context.Reset();
+            fetch.resolver.Reset();
+        }
         uint64_t cancelled_animation_frames = 0;
         const auto cancelled_timers = std::erase_if(
             timers,
@@ -1802,7 +1806,7 @@
         }
     }
 
-    void detach_all_children(dom_node& parent)
+    void detach_all_children(dom_node& parent, bool weaken_wrappers = true)
     {
         auto children = parent.children;
         auto stylesheets_changed = false;
@@ -1818,8 +1822,15 @@
         document.remove_all_children(parent);
         for (auto* child : children) {
             if (child == nullptr) continue;
-            update_live_form_collection_structure(parent, nullptr, child);
-            weaken_detached_subtree_wrappers(*child);
+            if (weaken_wrappers) {
+                update_live_form_collection_structure(parent, nullptr, child);
+                weaken_detached_subtree_wrappers(*child);
+            } else {
+                // Full-realm retirement clears every wrapper cache before
+                // reclaiming these registered roots. Avoid building a weak
+                // wrapper graph that cannot outlive the retired context.
+                register_detached_subtree(*child);
+            }
         }
         synchronize_textarea_value_from_children(parent);
         if (stylesheets_changed) recascade_after_stylesheet_change();

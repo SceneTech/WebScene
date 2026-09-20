@@ -46,8 +46,7 @@ The remaining core pseudo-element inventory is:
   discrete transition behavior remain open;
 - two functional `::highlight()` rules, which require named Highlight ranges,
   functional pseudo parsing, range paint, mutation, and teardown;
-- two `::-webkit-details-marker` rules and six internal form-control part
-  rules (`::-webkit-inner-spin-button`, `::-webkit-outer-spin-button`,
+- six internal form-control part rules (`::-webkit-inner-spin-button`, `::-webkit-outer-spin-button`,
   `::-ms-clear`, and `::-webkit-search-cancel-button`), which require bounded
   native control-part ownership before their declarations can have an
   observable effect.
@@ -62,6 +61,12 @@ existing placeholder record. Extension-bundled CSS additionally uses named
 highlights and one `::marker`; shadow-only `::part`/`::slotted`, complete marker
 styling, first-line/first-letter layout, and cumulative browser/package/
 performance evidence remain outside this slice. No Code OSS source changes.
+
+The two Code OSS `::-webkit-details-marker { display:none }` rules are now a
+separate bounded follow-up. They reuse the retained list marker and store one
+hidden bit only when the pseudo matches; internal form-control parts remain the
+only reachable vendor pseudo inventory without an observable WebScene control
+part to style.
 
 The remaining parser-recognized but runtime-unmaterialized pseudo-elements are
 `::first-letter`, `::first-line`, `::marker`, `::file-selector-button`, `::cue`,

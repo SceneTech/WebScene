@@ -503,6 +503,12 @@
                     node,node.style.mutable_details_content_pseudo(),declaration);
                 return;
             }
+            if (pseudo_kind == 10) {
+                css::property_result result;
+                css::apply_details_marker_declaration(
+                    node,declaration,css_variables,result);
+                return;
+            }
             if (pseudo_kind >= 3 && pseudo_kind <= 6) {
                 apply_scrollbar_css_declaration(node, pseudo_kind, declaration);
                 return;
@@ -732,6 +738,12 @@
             if (pseudo_kind == 9) {
                 apply_details_content_css_declaration(
                     node,node.style.mutable_details_content_pseudo(),declaration);
+                return;
+            }
+            if (pseudo_kind == 10) {
+                css::property_result result;
+                css::apply_details_marker_declaration(
+                    node,declaration,css_variables,result);
                 return;
             }
             if (pseudo_kind >= 3 && pseudo_kind <= 6) {

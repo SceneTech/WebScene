@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebKit details marker display none hides the retained disclosure marker</title>
+<link rel="match" href="css-webkit-details-marker-display-ref.html">
+<style>
+  body { margin: 0; background: white; color: #202124; }
+  details { width: 260px; margin: 20px; font: 16px/24px sans-serif; }
+  summary { padding: 4px 8px; border: 1px solid #7b8190; }
+  summary::-webkit-details-marker { display: none; }
+</style>
+<details open>
+  <summary>Completed response</summary>
+  <div>Retained details content</div>
+</details>

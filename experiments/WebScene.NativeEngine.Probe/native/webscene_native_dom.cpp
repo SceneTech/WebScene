@@ -73,6 +73,7 @@ std::string list_marker_text(const dom_node& node)
     if (node.tag != "li" && node.style.display != display_mode::list_item) {
         return {};
     }
+    if (node.tag == "summary" && node.style.details_marker_hidden()) return {};
     const auto type = resolved_list_style(node, false);
     if (type == "none") return {};
     if (type != "decimal" && type != "decimal-leading-zero") {

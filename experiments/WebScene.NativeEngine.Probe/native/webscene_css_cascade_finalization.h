@@ -196,6 +196,7 @@ inline bool computed_layout_style_equal(
                 right_table.border_spacing_vertical)
             && left_table.border_collapsed == right_table.border_collapsed
             && grid_layout_equal(left.grid(), right.grid())
+            && left.details_marker_hidden() == right.details_marker_hidden()
             && pseudo_layout_equal(left.before_pseudo(), right.before_pseudo())
             && pseudo_layout_equal(left.after_pseudo(), right.after_pseudo());
     }

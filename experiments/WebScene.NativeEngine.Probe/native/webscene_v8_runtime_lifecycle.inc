@@ -300,6 +300,9 @@
         pending_dialog_close_events.clear();
         pending_details_toggle_events.clear();
         pending_programmatic_scroll_events.clear();
+        discrete_wheel_scroll.reset();
+        active_drag_session.reset();
+        active_outbound_drag.reset();
         pending_interop_promises.clear();
         pending_callback_promises.clear();
         {
@@ -441,6 +444,9 @@
         html_button_element_template.Reset();
         html_input_element_template.Reset();
         html_text_area_element_template.Reset();
+        html_meter_element_template.Reset();
+        html_output_element_template.Reset();
+        html_progress_element_template.Reset();
         html_form_element_template.Reset();
         html_field_set_element_template.Reset();
         html_select_element_template.Reset();

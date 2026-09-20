@@ -433,6 +433,8 @@
     using css_rule_payload = webscene_native::css::css_rule_payload;
     using css_rule = webscene_native::css::css_rule;
     using css_opacity_keyframes = webscene_native::css::css_opacity_keyframes;
+    using registered_custom_property =
+        webscene_native::css::registered_custom_property;
     using hover_invalidation_scope = webscene_native::css::hover_invalidation_scope;
     using hover_selector_dependency = webscene_native::css::hover_selector_dependency;
     using css_cascade_state = webscene_native::css::css_cascade_state;

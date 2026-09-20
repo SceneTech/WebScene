@@ -9309,7 +9309,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         for (const auto& [property, stops] : keyframes.custom_property_stops) {
             result.native_css_rule_storage_bytes += string_bytes(property)
                 + sizeof(decltype(keyframes.custom_property_stops)::value_type)
-                + stops.capacity() * sizeof(css_opacity_keyframes::custom_property_stop);
+                + stops.capacity()
+                    * sizeof(implementation::css_opacity_keyframes::custom_property_stop);
             for (const auto& stop : stops) {
                 result.native_css_rule_storage_bytes += string_bytes(stop.value);
             }
@@ -9342,7 +9343,7 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                 result.native_css_rule_storage_bytes += string_bytes(property)
                     + sizeof(decltype(keyframes.custom_property_stops)::value_type)
                     + stops.capacity()
-                        * sizeof(css_opacity_keyframes::custom_property_stop);
+                        * sizeof(implementation::css_opacity_keyframes::custom_property_stop);
                 for (const auto& stop : stops) {
                     result.native_css_rule_storage_bytes += string_bytes(stop.value);
                 }

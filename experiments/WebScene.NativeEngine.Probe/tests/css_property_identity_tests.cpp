@@ -96,16 +96,16 @@ int main()
 {
     static_assert(static_cast<uint16_t>(css_property_id::unknown) == 0U);
     static_assert(static_cast<uint16_t>(css_property_id::custom) == 1U);
-    static_assert(static_cast<uint16_t>(css_property_id::contain_intrinsic_size) == 145U);
-    static_assert(static_cast<uint16_t>(css_property_id::object_position) == 148U);
-    static_assert(static_cast<uint16_t>(css_property_id::user_select) == 149U);
-    static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior) == 150U);
-    static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior_x) == 151U);
-    static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior_y) == 152U);
-    static_assert(static_cast<uint16_t>(css_property_id::isolation) == 153U);
-    static_assert(static_cast<uint16_t>(css_property_id::will_change) == 154U);
-    static_assert(static_cast<uint16_t>(css_property_id::text_wrap) == 155U);
-    static_assert(static_cast<uint16_t>(css_property_id::caret_color) == 156U);
+    static_assert(static_cast<uint16_t>(css_property_id::contain_intrinsic_size) == 147U);
+    static_assert(static_cast<uint16_t>(css_property_id::object_position) == 150U);
+    static_assert(static_cast<uint16_t>(css_property_id::user_select) == 151U);
+    static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior) == 152U);
+    static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior_x) == 153U);
+    static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior_y) == 154U);
+    static_assert(static_cast<uint16_t>(css_property_id::isolation) == 155U);
+    static_assert(static_cast<uint16_t>(css_property_id::will_change) == 156U);
+    static_assert(static_cast<uint16_t>(css_property_id::text_wrap) == 157U);
+    static_assert(static_cast<uint16_t>(css_property_id::caret_color) == 158U);
     static_assert(static_cast<uint16_t>(css_property_id::touch_action) == 159U);
     static_assert(native_typed_property_identity_catalog.size() == 235U);
     static_assert(native_storage_only_property_catalog.size() == 62U);

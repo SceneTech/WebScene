@@ -2929,6 +2929,7 @@ webscene_scene_acquire_status acquire_scene_v3(webscene_engine* engine,
     } catch (const std::bad_alloc&) { return WEBSCENE_SCENE_ACQUIRE_OUT_OF_MEMORY; }
     catch (...) { return WEBSCENE_SCENE_ACQUIRE_INTERNAL_ERROR; }
 }
+}
 
 uint32_t webscene_profile_clear_data_v1(
     const char* storage_directory,
@@ -2973,7 +2974,6 @@ uint32_t webscene_profile_clear_data_v1(
     } catch (...) {
     }
     return WEBSCENE_PROFILE_STATUS_IO_ERROR_V1;
-}
 }
 webscene_scene_acquire_status webscene_engine_acquire_latest_scene_v3(webscene_engine* engine,
     const webscene_scene_acquire_options_v3* options,const webscene_scene_view_v3** result)

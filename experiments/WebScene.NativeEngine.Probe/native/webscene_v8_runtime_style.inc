@@ -251,6 +251,14 @@
             node.style.aspect_ratio_inline = false;
             node.style.aspect_ratio_inline_important = false;
             node.style.aspect_ratio_important = false;
+        } else if (name == "objectFit" || name == "object-fit") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->object_fit.clear();
+            }
+        } else if (name == "objectPosition" || name == "object-position") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->object_position.clear();
+            }
         } else if (name == "boxSizing" || name == "box-sizing") {
             node.style.border_box = false;
             node.style.inline_property_mask &= ~inline_box_sizing;
@@ -945,6 +953,12 @@
                 node->style.aspect_ratio_inline = true;
                 node->style.aspect_ratio_inline_important = important;
             }
+        } else if (name == "object-fit" || name == "object-position") {
+            struct replaced_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_replaced_value(*node, name, value, decision);
         } else if (name == "box-sizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;
@@ -1547,6 +1561,12 @@
                 value = resolved_line_break_property(*node, false);
             } else if (name == "overflow-wrap") {
                 value = resolved_line_break_property(*node, true);
+            } else if (name == "object-fit") {
+                value = node->style.textual().object_fit.empty()
+                    ? "fill" : node->style.textual().object_fit;
+            } else if (name == "object-position") {
+                value = node->style.textual().object_position.empty()
+                    ? "50% 50%" : node->style.textual().object_position;
             } else if (name == "cursor") {
                 value = resolved_cursor(*node);
             } else if (name == "font-size") {
@@ -2004,6 +2024,12 @@
                 ? serialize_css_number(node->style.aspect_ratio_width) + " / "
                     + serialize_css_number(node->style.aspect_ratio_height)
                 : "auto";
+        } else if (name == "objectFit") {
+            value = node->style.textual().object_fit.empty()
+                ? "fill" : node->style.textual().object_fit;
+        } else if (name == "objectPosition") {
+            value = node->style.textual().object_position.empty()
+                ? "50% 50%" : node->style.textual().object_position;
         } else if (name == "boxSizing") {
             value = node->style.border_box ? "border-box" : "content-box";
         } else if (name == "borderRadius") {
@@ -2572,6 +2598,17 @@
                 node->style.aspect_ratio_inline = true;
                 node->style.aspect_ratio_inline_important = false;
             }
+        } else if (name == "objectFit" || name == "objectPosition") {
+            struct replaced_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_replaced_value(
+                *node,
+                name == "objectFit" ? std::string{"object-fit"}
+                    : std::string{"object-position"},
+                value,
+                decision);
         } else if (name == "boxSizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;

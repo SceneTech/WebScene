@@ -389,6 +389,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "object-fit-performance") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "object-fit performance engine creation failed");
+            test_object_fit_scene_performance_gate(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if(selected=="placeholder-pseudo") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"placeholder pseudo engine creation failed");

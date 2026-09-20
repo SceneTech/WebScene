@@ -231,6 +231,14 @@ inline void apply_all_unset(
         reset.mutable_textual().overflow_wrap =
             previous.textual().overflow_wrap;
     }
+    if (has_inline({"object-fit"})) {
+        reset.mutable_textual().object_fit =
+            previous.textual().object_fit;
+    }
+    if (has_inline({"object-position"})) {
+        reset.mutable_textual().object_position =
+            previous.textual().object_position;
+    }
 
     // These modeled properties do not yet have dedicated inline-mask
     // bits, so preserve their applied values by authored declaration.

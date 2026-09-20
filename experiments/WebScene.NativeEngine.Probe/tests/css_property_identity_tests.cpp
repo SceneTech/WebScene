@@ -97,10 +97,11 @@ int main()
     static_assert(static_cast<uint16_t>(css_property_id::unknown) == 0U);
     static_assert(static_cast<uint16_t>(css_property_id::custom) == 1U);
     static_assert(static_cast<uint16_t>(css_property_id::contain_intrinsic_size) == 145U);
-    static_assert(native_typed_property_identity_catalog.size() == 202U);
+    static_assert(static_cast<uint16_t>(css_property_id::object_position) == 148U);
+    static_assert(native_typed_property_identity_catalog.size() == 206U);
     static_assert(native_storage_only_property_catalog.size() == 62U);
-    static_assert(cssom_supported_property_catalog.size() == 239U);
-    static_assert(cssom_style_template_property_accessor_count == 435U);
+    static_assert(cssom_supported_property_catalog.size() == 241U);
+    static_assert(cssom_style_template_property_accessor_count == 445U);
 
     for (const auto& entry : native_typed_property_identity_catalog) {
         require(property_id(entry.name) == entry.id, "typed name maps to its generated id", entry.name);

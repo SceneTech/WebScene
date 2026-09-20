@@ -113,6 +113,8 @@ internal static class CssGeneratedPropertyMetadata
         "outline-width",
         "grid-template-areas",
         "aspect-ratio",
+        "object-fit",
+        "object-position",
     ];
 
     internal static readonly string[] SupportedNames =
@@ -298,6 +300,8 @@ internal static class CssGeneratedPropertyMetadata
         "min-height",
         "min-width",
         "moz-transform",
+        "object-fit",
+        "object-position",
         "opacity",
         "order",
         "orphans",
@@ -473,6 +477,8 @@ internal static class CssGeneratedPropertyMetadata
             "outline-width" => 105,
             "grid-template-areas" => 106,
             "aspect-ratio" => 107,
+            "object-fit" => 108,
+            "object-position" => 109,
             _ => -1,
         };
         return id >= 0;

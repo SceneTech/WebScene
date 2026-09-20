@@ -213,6 +213,10 @@ inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"content-visibility", css_property_id::content_visibility},
     native_typed_property_identity{"contain-intrinsic-size", css_property_id::contain_intrinsic_size},
     native_typed_property_identity{"aspect-ratio", css_property_id::aspect_ratio},
+    native_typed_property_identity{"object-fit", css_property_id::object_fit},
+    native_typed_property_identity{"objectfit", css_property_id::object_fit},
+    native_typed_property_identity{"object-position", css_property_id::object_position},
+    native_typed_property_identity{"objectposition", css_property_id::object_position},
 };
 
 inline constexpr std::array<std::string_view, 62> native_storage_only_property_catalog{
@@ -430,6 +434,8 @@ inline constexpr std::array native_modeled_property_mask_catalog{
     true,
     true,
     false,
+    false,
+    false,
 };
 
 inline constexpr bool generated_property_has_modeled_mask(
@@ -626,6 +632,8 @@ inline constexpr std::array native_property_grammar_catalog{
     native_property_grammar::keyword,
     native_property_grammar::length,
     native_property_grammar::complex,
+    native_property_grammar::keyword,
+    native_property_grammar::component_list,
 };
 
 inline constexpr native_property_grammar generated_property_grammar(
@@ -847,5 +855,9 @@ inline css_property_id generated_property_id_lowercase(std::string_view name) no
     if (name == "content-visibility") return css_property_id::content_visibility;
     if (name == "contain-intrinsic-size") return css_property_id::contain_intrinsic_size;
     if (name == "aspect-ratio") return css_property_id::aspect_ratio;
+    if (name == "object-fit") return css_property_id::object_fit;
+    if (name == "objectfit") return css_property_id::object_fit;
+    if (name == "object-position") return css_property_id::object_position;
+    if (name == "objectposition") return css_property_id::object_position;
     return css_property_id::unknown;
 }

@@ -205,10 +205,10 @@
     },
     {
       "family": "html-raster-images",
-      "required": ["PNG", "JPEG", "GIF", "WebP dimension parsing", "base64 data image URLs", "naturalWidth and naturalHeight", "automatic replaced-image aspect ratio", "retained encoded raster scene publication", "rounded image clipping"],
+      "required": ["PNG", "JPEG", "GIF", "WebP dimension parsing", "base64 data image URLs", "naturalWidth and naturalHeight", "automatic replaced-image aspect ratio", "retained encoded raster scene publication", "rounded image clipping", "object-fit sizing", "object-position alignment", "content-box clipping"],
       "productEvidence": ["catalog artwork", "album and artist cards"],
-      "coverage": ["contracts/html-raster-image-intrinsic-size.html", "test_image_elements_load_and_reach_scene", "appscene_compositor_opacity encoded-raster regression"],
-      "gap": "The native pipeline preserves encoded raster bytes for the platform Skia decoder and parses intrinsic dimensions for PNG, JPEG, GIF, and WebP. Responsive object-fit/object-position modes, animated image playback, srcset/sizes selection, picture/source negotiation, decoding hints, and CSS raster background images remain outside this bounded claim."
+      "coverage": ["contracts/html-raster-image-intrinsic-size.html", "contracts/css-object-fit-position.html", "test_image_elements_load_and_reach_scene", "test_object_fit_scene_performance_gate", "appscene_compositor_opacity encoded-raster regression"],
+      "gap": "The native pipeline preserves encoded raster bytes for the platform Skia decoder, parses intrinsic dimensions for PNG, JPEG, GIF, and WebP, and now authors provider-neutral object-fit/object-position destination and content-clip commands for SVG and raster images. Direct native/browser execution, exact raster/SVG pixels, and the 4,096-image paint-only performance gate remain qualification debt for WebScene #789. Animated image playback, srcset/sizes selection, picture/source negotiation, decoding hints, and CSS raster background images remain outside this bounded claim."
     },
     {
       "family": "svg-presentation-paint",

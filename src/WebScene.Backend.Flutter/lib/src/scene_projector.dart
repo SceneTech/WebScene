@@ -307,6 +307,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         scene.header.viewportHeight.clamp(1, double.infinity),
       ),
     );
+    final retainedSvgClips = <ui.RRect?>[];
     for (var index = 0; index < scene.header.commandCount; index++) {
       final command = scene.commands[index];
       switch (command.kind) {
@@ -363,7 +364,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
           _drawDomSvgPath(canvas, scene, command, stroke: command.kind == 5);
         case 6 when foreground:
           if (!_drawDomRasterBackground(canvas, scene, command)) {
-            _retainDomSvg(scene, command);
+            _retainDomSvg(scene, command, retainedSvgClips);
           }
         case 7 when !foreground:
         case 10 when foreground:
@@ -389,8 +390,12 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         case 12:
           canvas.save();
           _clipDomShape(canvas, scene, command);
+          retainedSvgClips.add(command.flags & _domPolygonClipResource == 0
+              ? _domRRect(command)
+              : null);
         case 13:
           canvas.restore();
+          if (retainedSvgClips.isNotEmpty) retainedSvgClips.removeLast();
       }
     }
     return recorder.endRecording();
@@ -467,6 +472,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
   void _retainDomSvg(
     WebSceneSceneView scene,
     WebSceneSceneCommand command,
+    List<ui.RRect?> activeClips,
   ) {
     final resource = _domString(scene, command.flags);
     final separator = resource.indexOf('\t');
@@ -494,6 +500,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         width: command.width,
         height: command.height,
         rotationDegrees: command.strokeWidth,
+        clips: activeClips.whereType<ui.RRect>().toList(growable: false),
       ),
     );
     _ensureSvgPicture(markup);
@@ -570,6 +577,9 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       final picture = _svgPictures[placement.markup]?.picture;
       if (picture == null) continue;
       canvas.save();
+      for (final clip in placement.clips) {
+        canvas.clipRRect(clip, doAntiAlias: true);
+      }
       if (placement.rotationDegrees.abs() >= 0.001) {
         final centerX = placement.x + placement.width / 2;
         final centerY = placement.y + placement.height / 2;
@@ -2644,6 +2654,7 @@ final class _DomSvgPlacement {
     required this.width,
     required this.height,
     required this.rotationDegrees,
+    required this.clips,
   });
 
   final String markup;
@@ -2653,6 +2664,7 @@ final class _DomSvgPlacement {
   final double width;
   final double height;
   final double rotationDegrees;
+  final List<ui.RRect> clips;
 }
 
 final class _SvgPictureEntry {

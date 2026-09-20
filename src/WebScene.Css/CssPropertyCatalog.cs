@@ -11,6 +11,12 @@ namespace WebScene.Css;
 /// </summary>
 public static class CssPropertyCatalog
 {
+    private static readonly string[] CssPositionUnits =
+    [
+        "cqmin", "cqmax", "rem", "cqw", "cqh", "cqi", "cqb",
+        "px", "em", "vw", "vh", "in", "cm", "mm", "pt", "pc", "q", "%"
+    ];
+
     private static readonly FrozenSet<string> s_supported = CssGeneratedPropertyMetadata.SupportedNames
         .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
@@ -76,6 +82,8 @@ public static class CssPropertyCatalog
         {
             "position" => normalizedValue is "static" or "relative" or "absolute" or "fixed" or "sticky"
                 or "-webkit-sticky",
+            "object-fit" => normalizedValue is "fill" or "contain" or "cover" or "none" or "scale-down",
+            "object-position" => IsObjectPosition(normalizedValue),
             "font-size" => IsFontSize(normalizedValue),
             "color-scheme" => normalizedValue is "normal" or "light" or "dark"
                 or "light dark" or "dark light" or "only light" or "only dark",
@@ -145,6 +153,43 @@ public static class CssPropertyCatalog
         => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var numeric)
            && double.IsFinite(numeric)
            && numeric != 0;
+
+    private static bool IsObjectPosition(string value)
+    {
+        var tokens = value.Split([' ', '\t', '\r', '\n'],
+            StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length is not (1 or 2) || !tokens.All(static token =>
+            token is "left" or "right" or "top" or "bottom" or "center"
+            || token.StartsWith("calc(", StringComparison.Ordinal)
+            || token.StartsWith("min(", StringComparison.Ordinal)
+            || token.StartsWith("max(", StringComparison.Ordinal)
+            || IsCssPositionLength(token)))
+        {
+            return false;
+        }
+        return tokens.Length == 1
+            || !((IsHorizontalPositionKeyword(tokens[0]) && IsHorizontalPositionKeyword(tokens[1]))
+                || (IsVerticalPositionKeyword(tokens[0]) && IsVerticalPositionKeyword(tokens[1])));
+    }
+
+    private static bool IsHorizontalPositionKeyword(string token) => token is "left" or "right";
+
+    private static bool IsVerticalPositionKeyword(string token) => token is "top" or "bottom";
+
+    private static bool IsCssPositionLength(string token)
+    {
+        if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var unitless))
+        {
+            return double.IsFinite(unitless) && unitless == 0;
+        }
+        foreach (var unit in CssPositionUnits)
+        {
+            if (!token.EndsWith(unit, StringComparison.Ordinal)) continue;
+            return double.TryParse(token[..^unit.Length], NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var number) && double.IsFinite(number);
+        }
+        return false;
+    }
 
     private static bool HasOnlyKeywords(string value, params string[] allowed)
     {

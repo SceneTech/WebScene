@@ -97,6 +97,63 @@ void test_word_break_layout_performance_gate(webscene_engine* engine)
             + std::to_string(elapsed) + " ms");
 }
 
+void test_object_fit_scene_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `<style>
+          #object-fit-grid { display:grid; grid-template-columns:repeat(64, 12px); }
+          #object-fit-grid img { width:12px; height:12px; }
+          #object-fit-grid.cover img { object-fit:cover; object-position:right bottom; }
+          #object-fit-grid.contain img { object-fit:contain; object-position:center; }
+        </style><div id="object-fit-grid"></div>`;
+        const source = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyIiBoZWlnaHQ9IjEiPjxyZWN0IHdpZHRoPSIyIiBoZWlnaHQ9IjEiIGZpbGw9InJlZCIvPjwvc3ZnPg==';
+        globalThis.objectFitGrid = document.getElementById('object-fit-grid');
+        const fragment = document.createDocumentFragment();
+        for (let index = 0; index < 4096; ++index) {
+          const image = document.createElement('img');
+          image.src = source;
+          fragment.appendChild(image);
+        }
+        objectFitGrid.appendChild(fragment);
+        globalThis.objectFitImages = objectFitGrid.children;
+      })()
+    )JS", "native-object-fit-performance-setup.js");
+    const auto loaded = evaluate_until_equals(
+        engine,
+        "String(objectFitImages.length === 4096 && objectFitImages[4095].complete)",
+        "native-object-fit-performance-loaded.js",
+        "true");
+    require(loaded == "true",
+        "object-fit performance fixture did not load 4,096 images");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        let checksum = '';
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          objectFitGrid.className = cycle % 2 === 0 ? 'cover' : 'contain';
+          const style = getComputedStyle(objectFitImages[4095]);
+          checksum += style.objectFit[0] + style.objectPosition[0];
+        }
+        return { nodes: objectFitImages.length, checksum };
+      })()
+    )JS", "native-object-fit-performance-gate.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(result.find(R"JSON({"nodes":4096,"checksum":)JSON") == 0U,
+        "object-fit performance fixture did not retain 4,096 nodes: " + result);
+    require(after.layout_passes == before.layout_passes,
+        "paint-only object-fit transitions performed layout");
+    require(elapsed < 5000.0,
+        "4,096-image object-fit transition gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);

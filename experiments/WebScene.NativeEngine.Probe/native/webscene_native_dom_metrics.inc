@@ -343,6 +343,8 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + textual->white_space.capacity() + 1U
             + textual->word_break.capacity() + 1U
             + textual->overflow_wrap.capacity() + 1U
+            + textual->object_fit.capacity() + 1U
+            + textual->object_position.capacity() + 1U
             + textual->cursor.capacity() + 1U
             + textual->svg_fill.capacity() + 1U
             + textual->svg_stroke.capacity() + 1U

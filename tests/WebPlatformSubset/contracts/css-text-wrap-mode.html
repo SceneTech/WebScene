@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Text-wrap mode controls retained line wrapping</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #parent { text-wrap: nowrap; }
+  #sample { width: 40px; font: 14px sans-serif; white-space: normal; }
+</style>
+<div id="parent"><div id="sample">alpha beta</div></div>
+<script>
+  test(() => {
+    const nowrapHeight = sample.clientHeight;
+    assert_equals(getComputedStyle(sample).textWrap, 'nowrap');
+    assert_greater_than(sample.scrollWidth, sample.clientWidth);
+    sample.style.textWrap = 'wrap';
+    assert_equals(getComputedStyle(sample).textWrap, 'wrap');
+    assert_greater_than(sample.clientHeight, nowrapHeight);
+    assert_less_than_equal(sample.scrollWidth, sample.clientWidth);
+    sample.style.textWrap = 'balance';
+    assert_equals(sample.style.textWrap, 'wrap');
+    sample.style.removeProperty('text-wrap');
+    assert_equals(getComputedStyle(sample).textWrap, 'nowrap');
+  }, 'nowrap inherits, wrap restores line breaking, and removal restores cascade');
+</script>

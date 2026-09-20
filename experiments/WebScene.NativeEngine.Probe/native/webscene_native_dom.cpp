@@ -1025,6 +1025,7 @@ std::string resolved_text_transform(const dom_node& node, std::string value)
 
 bool resolved_white_space_wraps(const dom_node& node)
 {
+    if (resolved_text_wrap_mode(node) == "nowrap") return false;
     for (auto* current = &node; current != nullptr; current = current->parent) {
         if (current->style.textual().white_space.empty()) continue;
         return current->style.textual().white_space != "nowrap"

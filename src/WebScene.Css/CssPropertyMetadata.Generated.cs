@@ -121,6 +121,7 @@ internal static class CssGeneratedPropertyMetadata
         "overscroll-behavior-y",
         "isolation",
         "will-change",
+        "text-wrap",
     ];
 
     internal static readonly string[] SupportedNames =
@@ -356,6 +357,7 @@ internal static class CssGeneratedPropertyMetadata
         "text-indent",
         "text-overflow",
         "text-transform",
+        "text-wrap",
         "top",
         "transform",
         "transform-origin",
@@ -501,6 +503,7 @@ internal static class CssGeneratedPropertyMetadata
             "overscroll-behavior-y" => 113,
             "isolation" => 114,
             "will-change" => 115,
+            "text-wrap" => 116,
             _ => -1,
         };
         return id >= 0;

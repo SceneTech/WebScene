@@ -321,6 +321,51 @@ void test_css_will_change_performance_gate(webscene_engine* engine)
             + std::to_string(elapsed) + " ms");
 }
 
+void test_css_text_wrap_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      document.body.innerHTML = '<div id="text-wrap-grid"></div>';
+      globalThis.textWrapGrid = document.getElementById('text-wrap-grid');
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < 4096; ++index) {
+        const node = document.createElement('div');
+        node.style.width = '40px';
+        node.textContent = 'alpha beta';
+        fragment.appendChild(node);
+      }
+      textWrapGrid.appendChild(fragment);
+    )JS", "native-css-text-wrap-performance-setup.js");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        let checksum = 0;
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          const value = cycle % 2 === 0 ? 'nowrap' : 'wrap';
+          for (const node of textWrapGrid.children) node.style.textWrap = value;
+          checksum += textWrapGrid.scrollHeight;
+        }
+        return [textWrapGrid.children.length,
+          textWrapGrid.lastElementChild.style.textWrap, checksum > 0];
+      })()
+    )JS", "native-css-text-wrap-performance-gate.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(result == R"JSON([4096,"wrap",true])JSON",
+        "CSS text-wrap performance fixture regressed: " + result);
+    require(after.layout_passes <= before.layout_passes + 10U,
+        "CSS text-wrap transitions performed unbounded layout");
+    require(after.published_scenes <= before.published_scenes + 10U,
+        "CSS text-wrap transitions published unbounded scenes");
+    require(elapsed < 5000.0,
+        "4,096-node CSS text-wrap gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);
@@ -5121,6 +5166,34 @@ void test_css_will_change_stacking_context(webscene_engine* engine)
     )JS", "native-css-will-change-auto.js");
     require(released == R"JSON(["background-position","escape"])JSON",
         "Non-context will-change hint retained an atomic context: " + released);
+}
+
+void test_css_text_wrap_layout(webscene_engine* engine)
+{
+    resize(engine, 320, 180, 79'700U);
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `<style>
+          body { margin:0; }
+          #parent { text-wrap:nowrap; }
+          #sample { width:40px; font:14px sans-serif; }
+        </style><div id="parent"><div id="sample">alpha beta</div></div>`;
+        const sample = document.getElementById('sample');
+        const nowrap = [getComputedStyle(sample).textWrap,
+          sample.clientHeight, sample.scrollWidth > sample.clientWidth];
+        sample.style.textWrap = 'wrap';
+        const wrapped = [getComputedStyle(sample).textWrap,
+          sample.clientHeight > nowrap[1], sample.scrollWidth <= sample.clientWidth];
+        sample.style.removeProperty('text-wrap');
+        return [nowrap, wrapped, getComputedStyle(sample).textWrap];
+      })()
+    )JS", "native-css-text-wrap-layout.js");
+    require(result.find(R"JSON([["nowrap")JSON") == 0,
+        "CSS text-wrap did not inherit nowrap: " + result);
+    require(result.find(R"JSON(["wrap",true,true])JSON") != std::string::npos,
+        "CSS text-wrap mutation did not restore wrapping geometry: " + result);
+    require(result.ends_with(R"JSON("nowrap"])JSON"),
+        "CSS text-wrap removal did not restore cascade: " + result);
 }
 
 void test_z_index_orders_positioned_siblings_in_scene(webscene_engine* engine)

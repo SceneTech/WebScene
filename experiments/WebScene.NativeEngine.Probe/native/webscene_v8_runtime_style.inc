@@ -449,6 +449,10 @@
                 textual->white_space.clear();
             }
             node.style.inline_property_mask &= ~inline_white_space;
+        } else if (name == "textWrap" || name == "text-wrap") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->text_wrap.clear();
+            }
         } else if (name == "wordBreak" || name == "word-break") {
             if (auto* textual = node.style.mutable_textual_if_present()) {
                 textual->word_break.clear();
@@ -1174,6 +1178,12 @@
         } else if (name == "white-space") {
             node->style.mutable_textual().white_space = value;
             node->style.inline_property_mask |= inline_white_space;
+        } else if (name == "text-wrap") {
+            auto mode = value;
+            if (mode == "inherit" || mode == "unset") mode.clear();
+            else if (mode == "initial" || mode == "revert"
+                || mode == "revert-layer") mode = "wrap";
+            node->style.mutable_textual().text_wrap = std::move(mode);
         } else if (name == "word-break") {
             node->style.mutable_textual().word_break =
                 value == "inherit" || value == "unset" ? std::string{} : value;
@@ -1610,6 +1620,8 @@
                 value = computed_effect_value(*node, name);
             } else if (name == "white-space") {
                 value = node->style.textual().white_space;
+            } else if (name == "text-wrap") {
+                value = resolved_text_wrap_mode(*node);
             } else if (name == "word-break") {
                 value = resolved_line_break_property(*node, false);
             } else if (name == "overflow-wrap") {
@@ -2367,6 +2379,9 @@
             value = node->style.textual().text_align;
         } else if (name == "whiteSpace") {
             value = node->style.textual().white_space;
+        } else if (name == "textWrap") {
+            value = computed ? std::string(resolved_text_wrap_mode(*node))
+                : node->style.textual().text_wrap;
         } else if (name == "wordBreak") {
             value = computed
                 ? resolved_line_break_property(*node, false)
@@ -2915,6 +2930,12 @@
         } else if (name == "whiteSpace") {
             node->style.mutable_textual().white_space = value;
             node->style.inline_property_mask |= inline_white_space;
+        } else if (name == "textWrap") {
+            auto mode = value;
+            if (mode == "inherit" || mode == "unset") mode.clear();
+            else if (mode == "initial" || mode == "revert"
+                || mode == "revert-layer") mode = "wrap";
+            node->style.mutable_textual().text_wrap = std::move(mode);
         } else if (name == "wordBreak") {
             node->style.mutable_textual().word_break =
                 value == "inherit" || value == "unset" ? std::string{} : value;

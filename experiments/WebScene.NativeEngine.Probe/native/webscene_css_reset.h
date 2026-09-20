@@ -231,6 +231,9 @@ inline void apply_all_unset(
         reset.mutable_textual().overflow_wrap =
             previous.textual().overflow_wrap;
     }
+    if (has_inline({"text-wrap"})) {
+        reset.mutable_textual().text_wrap = previous.textual().text_wrap;
+    }
     if (has_inline({"object-fit"})) {
         reset.mutable_textual().object_fit =
             previous.textual().object_fit;

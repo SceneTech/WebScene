@@ -791,6 +791,9 @@ struct node_style final {
         std::string vertical_align;
         std::string text_transform;
         std::string white_space;
+        // CSS Text Level 4 wrap mode is inherited independently from the
+        // white-space shorthand. Empty means inherit; root resolves to wrap.
+        std::string text_wrap;
         // Inherited line-breaking policy. Empty values inherit without adding
         // state to descendants; the root resolves both properties to normal.
         std::string word_break;
@@ -2231,6 +2234,15 @@ inline bool resolved_right_to_left(const dom_node& node) noexcept
         if (value == "ltr") return false;
     }
     return false;
+}
+
+inline std::string_view resolved_text_wrap_mode(const dom_node& node) noexcept
+{
+    for (auto* current = &node; current != nullptr; current = current->parent) {
+        const auto& value = current->style.textual().text_wrap;
+        if (!value.empty()) return value;
+    }
+    return "wrap";
 }
 
 // Shared by retained layout/paint and the V8-free CSS service contract so the

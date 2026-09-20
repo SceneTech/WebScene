@@ -2857,6 +2857,13 @@
       "capabilities": ["will-change-cssom", "hinted-atomic-stacking-context", "descendant-z-index-containment", "paint-order-mutation"],
       "evidence": ["focused-native-hit-order-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #800 contract for 16 will-change declarations across 12 unchanged Code OSS CSS files. It covers bounded list CSSOM, mutation/removal, invalid writes, hinted descendant z-index containment, and retained hit order without relayout or eager layer allocation. Direct browser/native execution, exact product pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-text-wrap-mode.html",
+      "type": "testharness",
+      "capabilities": ["text-wrap-cssom", "inherited-wrap-mode", "retained-line-wrapping", "text-wrap-mutation"],
+      "evidence": ["focused-native-layout-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #802 contract for 10 text-wrap declarations across 9 unchanged Code OSS CSS files. It covers wrap/nowrap CSSOM, inheritance, invalid writes, mutation/removal, overflow, and retained height changes while preserving independent computed white-space. Direct browser/native execution, exact product pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

@@ -244,13 +244,6 @@
     // selector's prepared routes without walking an unrelated DOM subtree.
     std::unordered_map<const dom_node*, std::unordered_set<uint32_t>>
         local_link_selector_subjects;
-    struct selector_target_cache_entry final {
-        std::string hash;
-        dom_node* target{nullptr};
-        // Retain the inclusive DOM chain so a post-mutation invalidation can
-        // still reach the old branch after the target is detached/reparented.
-        std::vector<dom_node*> inclusive_chain;
-    };
     std::unordered_map<const dom_node*,selector_target_cache_entry>
         selector_target_caches;
     session_storage_state outer_session_storage;

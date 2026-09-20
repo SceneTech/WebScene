@@ -582,7 +582,6 @@
         size_t first_new_rule) const
     {
         if (node.tag == "#text" || first_new_rule >= css_rules.size()) return false;
-        const auto previous_details_content = node.style.details_content_pseudo();
         const auto contains_new_rule = [first_new_rule](
             const std::vector<size_t>& indexes) {
             return !indexes.empty() && indexes.back() >= first_new_rule;
@@ -638,6 +637,7 @@
             profile_startup ? &startup_css_incremental_apply : nullptr);
 #endif
         if (node.tag == "#text" || first_new_rule >= css_rules.size()) return false;
+        const auto previous_details_content = node.style.details_content_pseudo();
 
         std::vector<size_t> candidates;
         const auto append_new_candidates = [&](const std::vector<size_t>& source) {

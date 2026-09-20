@@ -18,6 +18,14 @@
       v8::Global<v8::Object> object;
     };
 
+    struct selector_target_cache_entry final {
+      std::string hash;
+      dom_node* target{nullptr};
+      // Preserve the old inclusive chain across detach/reparent mutations so
+      // target-selector invalidation can replay the branch that lost state.
+      std::vector<dom_node*> inclusive_chain;
+    };
+
     struct range_binding final {
       implementation* owner{nullptr};
       uint64_t document_generation{0U};

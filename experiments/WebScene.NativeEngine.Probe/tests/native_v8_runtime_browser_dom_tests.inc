@@ -3465,7 +3465,7 @@ void test_batched_stylesheet_rule_mutation_performance()
     require(memory_before.v8_used_heap_bytes != 0U,
         "stylesheet mutation baseline heap snapshot was unavailable");
     const auto rss_before = file_system_access_test_peak_rss_bytes();
-    execute(engine, R"JS((() => {
+    const auto stylesheet_rule_mutation_source = std::string{R"JS((() => {
       const style = document.createElement('style');
       globalThis.__themeConnections = 0;
       customElements.define('x-theme-target', class extends HTMLElement {
@@ -3692,7 +3692,8 @@ void test_batched_stylesheet_rule_mutation_performance()
               rules.length);
             target.className = 'layer-statement-target';
             const firstStatement = rules[0];
-            const lastStatement = rules[63];
+)JS"}
+        + R"JS(            const lastStatement = rules[63];
             if (!(firstStatement instanceof CSSLayerStatementRule)
                 || !(lastStatement instanceof CSSLayerStatementRule)
                 || firstStatement.nameList.join('') !== `statement-${cycle}-0`
@@ -3907,7 +3908,9 @@ void test_batched_stylesheet_rule_mutation_performance()
           };
         }
       }, 0);
-    })())JS", "stylesheet-rule-mutation-setup.js");
+    })())JS";
+    execute(engine, stylesheet_rule_mutation_source,
+        "stylesheet-rule-mutation-setup.js");
     const auto result = evaluate_until_equals(
         engine,
         "globalThis.__stylesheetMutationResult?.status === 'passed' ? 'passed' : "

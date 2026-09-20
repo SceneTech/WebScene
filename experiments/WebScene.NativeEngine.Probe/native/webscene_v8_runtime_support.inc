@@ -663,6 +663,22 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
         return normalized_value == "auto" || normalized_value == "text"
             || normalized_value == "none" || normalized_value == "all";
     }
+    if (canonical_name == "overscroll-behavior-x"
+        || canonical_name == "overscroll-behavior-y") {
+        return normalized_value == "auto" || normalized_value == "contain"
+            || normalized_value == "none";
+    }
+    if (canonical_name == "overscroll-behavior") {
+        std::istringstream stream(normalized_value);
+        std::string first;
+        std::string second;
+        std::string extra;
+        stream >> first >> second >> extra;
+        const auto valid = [](std::string_view token) {
+            return token == "auto" || token == "contain" || token == "none";
+        };
+        return valid(first) && (second.empty() || valid(second)) && extra.empty();
+    }
 
     if (canonical_name == "position") {
         return normalized_value == "static" || normalized_value == "relative"

@@ -242,6 +242,12 @@ inline void apply_all_unset(
     if (has_inline({"user-select", "-webkit-user-select", "-ms-user-select"})) {
         reset.mutable_textual().user_select = previous.textual().user_select;
     }
+    if (has_inline({"overscroll-behavior", "overscroll-behavior-x"})) {
+        reset.mutable_textual().overscroll_x = previous.textual().overscroll_x;
+    }
+    if (has_inline({"overscroll-behavior", "overscroll-behavior-y"})) {
+        reset.mutable_textual().overscroll_y = previous.textual().overscroll_y;
+    }
 
     // These modeled properties do not yet have dedicated inline-mask
     // bits, so preserve their applied values by authored declaration.

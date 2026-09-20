@@ -4414,6 +4414,8 @@
                 && !platform_smoothed_wheel
                 && !css::get_active_accessibility_preferences().reduced_motion;
             if (!animate_wheel) cancel_discrete_wheel_scroll();
+            auto remaining_delta_x = static_cast<float>(input.delta_x);
+            auto remaining_delta_y = static_cast<float>(input.delta_y);
             for (auto* scroll_target = target; scroll_target != nullptr;
                 scroll_target = scroll_target->parent) {
                 // A loaded document exposes HTML beneath the retained native
@@ -4447,22 +4449,22 @@
                 const auto [base_x, base_y] = animate_wheel
                     ? discrete_wheel_scroll_base(
                         *scroll_target,
-                        static_cast<float>(input.delta_x),
-                        static_cast<float>(input.delta_y))
+                        remaining_delta_x,
+                        remaining_delta_y)
                     : std::pair{
                         scroll_target->scroll_left,
                         scroll_target->scroll_top};
                 const auto next_x = (scroll_target->style.scroll_x_enabled
                         || root_viewport_scroll_x)
                     ? std::clamp(
-                        base_x + static_cast<float>(input.delta_x),
+                        base_x + remaining_delta_x,
                         0.0F,
                         maximum_x)
                     : scroll_target->scroll_left;
                 const auto next_y = (scroll_target->style.scroll_y_enabled
                         || root_viewport_scroll_y)
                     ? std::clamp(
-                        base_y + static_cast<float>(input.delta_y),
+                        base_y + remaining_delta_y,
                         0.0F,
                         maximum_y)
                     : scroll_target->scroll_top;
@@ -4472,6 +4474,23 @@
                     ? base_y : scroll_target->scroll_top;
                 if (std::abs(next_x - comparison_x) <= 0.01F
                     && std::abs(next_y - comparison_y) <= 0.01F) {
+                    const auto& overscroll = scroll_target->style.textual();
+                    if (std::abs(remaining_delta_x) > 0.01F
+                        && (scroll_target->style.scroll_x_enabled
+                            || root_viewport_scroll_x)
+                        && overscroll.overscroll_x
+                            != overscroll_behavior::automatic) {
+                        remaining_delta_x = 0.0F;
+                    }
+                    if (std::abs(remaining_delta_y) > 0.01F
+                        && (scroll_target->style.scroll_y_enabled
+                            || root_viewport_scroll_y)
+                        && overscroll.overscroll_y
+                            != overscroll_behavior::automatic) {
+                        remaining_delta_y = 0.0F;
+                    }
+                    if (std::abs(remaining_delta_x) <= 0.01F
+                        && std::abs(remaining_delta_y) <= 0.01F) break;
                     continue;
                 }
                 if (animate_wheel) {

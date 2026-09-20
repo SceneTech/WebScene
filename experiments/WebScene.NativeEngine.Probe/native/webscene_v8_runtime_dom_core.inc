@@ -721,6 +721,11 @@
         dom_node& node,
         std::string_view canonical_property_name)
     {
+        if (canonical_property_name == "overscroll-behavior"
+            || canonical_property_name == "overscroll-behavior-x"
+            || canonical_property_name == "overscroll-behavior-y") {
+            return;
+        }
         // These properties affect painting or interaction, but never box
         // measurement or flow. Publish the scene without synchronously
         // traversing layout again.

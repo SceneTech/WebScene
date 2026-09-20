@@ -116,6 +116,9 @@ internal static class CssGeneratedPropertyMetadata
         "object-fit",
         "object-position",
         "user-select",
+        "overscroll-behavior",
+        "overscroll-behavior-x",
+        "overscroll-behavior-y",
     ];
 
     internal static readonly string[] SupportedNames =
@@ -318,6 +321,9 @@ internal static class CssGeneratedPropertyMetadata
         "overflow-wrap",
         "overflow-x",
         "overflow-y",
+        "overscroll-behavior",
+        "overscroll-behavior-x",
+        "overscroll-behavior-y",
         "padding",
         "padding-block",
         "padding-block-end",
@@ -486,6 +492,9 @@ internal static class CssGeneratedPropertyMetadata
             "object-fit" => 108,
             "object-position" => 109,
             "user-select" => 110,
+            "overscroll-behavior" => 111,
+            "overscroll-behavior-x" => 112,
+            "overscroll-behavior-y" => 113,
             _ => -1,
         };
         return id >= 0;

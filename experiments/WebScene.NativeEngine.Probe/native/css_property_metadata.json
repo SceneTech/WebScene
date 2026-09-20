@@ -152,7 +152,10 @@
     {"id": "aspect_ratio", "name": "aspect-ratio"},
     {"id": "object_fit", "name": "object-fit", "aliases": ["objectfit"]},
     {"id": "object_position", "name": "object-position", "aliases": ["objectposition"]},
-    {"id": "user_select", "name": "user-select", "aliases": ["userselect", "-webkit-user-select", "webkit-user-select", "webkituserselect", "-ms-user-select", "ms-user-select", "msuserselect"]}
+    {"id": "user_select", "name": "user-select", "aliases": ["userselect", "-webkit-user-select", "webkit-user-select", "webkituserselect", "-ms-user-select", "ms-user-select", "msuserselect"]},
+    {"id": "overscroll_behavior", "name": "overscroll-behavior", "aliases": ["overscrollbehavior"]},
+    {"id": "overscroll_behavior_x", "name": "overscroll-behavior-x", "aliases": ["overscrollbehaviorx"]},
+    {"id": "overscroll_behavior_y", "name": "overscroll-behavior-y", "aliases": ["overscrollbehaviory"]}
   ],
   "nativeStorageOnlyProperties": [
     "accent-color", "align-content", "animation-direction", "animation-fill-mode", "animation-play-state",
@@ -173,7 +176,8 @@
       "all", "display", "position", "floating", "flex_direction", "flex_wrap", "align_items", "align_self",
       "justify_content", "box_sizing", "vertical_align", "grid_auto_flow", "border_collapse", "table_layout", "border_style", "background_repeat",
       "visibility", "pointer_events", "text_anchor", "font_smoothing", "text_align", "text_transform", "white_space", "word_break", "overflow_wrap", "list_style_position",
-      "list_style_type", "scrollbar_width", "container", "container_type", "content_visibility", "object_fit", "user_select"
+      "list_style_type", "scrollbar_width", "container", "container_type", "content_visibility", "object_fit", "user_select",
+      "overscroll_behavior", "overscroll_behavior_x", "overscroll_behavior_y"
     ],
     "componentList": [
       "container_name", "background_position", "background_size", "transition", "transition_property", "transition_duration",
@@ -217,7 +221,7 @@
     "outline", "outline_width", "outline_color", "animation", "animation_name", "animation_duration", "animation_delay",
     "animation_timing_function", "animation_iteration_count", "background_repeat", "background_position", "background_size",
     "font", "text_transform", "word_break", "overflow_wrap", "list_style", "list_style_position", "list_style_type",
-    "object_fit", "object_position", "user_select"
+    "object_fit", "object_position", "user_select", "overscroll_behavior", "overscroll_behavior_x", "overscroll_behavior_y"
   ],
   "managedKnownProperties": [
     "align-content", "align-items", "align-self", "all", "background", "background-color",
@@ -238,7 +242,8 @@
     "stroke-linecap", "stroke-linejoin", "stroke-width", "text-align", "text-indent", "text-transform",
     "top", "transform", "visibility", "white-space", "word-break", "overflow-wrap", "width", "word-spacing", "z-index",
     "outline", "outline-color", "outline-offset", "outline-style", "outline-width",
-    "grid-template-areas", "aspect-ratio", "object-fit", "object-position", "user-select"
+    "grid-template-areas", "aspect-ratio", "object-fit", "object-position", "user-select",
+    "overscroll-behavior", "overscroll-behavior-x", "overscroll-behavior-y"
   ],
   "supportedPropertyExtras": [
     "animation", "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode",

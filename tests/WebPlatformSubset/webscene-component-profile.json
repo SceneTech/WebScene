@@ -2836,6 +2836,13 @@
       "capabilities": ["user-select-cssom", "prefixed-user-select-alias", "pointer-text-selection", "cancelable-selectstart", "atomic-select-all"],
       "evidence": ["focused-native-pointer-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #791 contract for 276 user-select declarations across 94 unchanged Code OSS files. It covers canonical/prefixed CSSOM, mutation/removal, pointer-created Selection state, none/text/all policy, and selectstart cancellation. Direct browser/native execution, exact selection pixels, package regions, performance, memory, and lifecycle evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-overscroll-behavior.html",
+      "type": "testharness",
+      "capabilities": ["overscroll-behavior-cssom", "per-axis-scroll-chain-policy", "nested-wheel-containment", "interaction-only-mutation"],
+      "evidence": ["focused-native-wheel-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #793 contract for the 12 unchanged Code OSS overscroll declarations used by the workbench root, Markdown, Chat, sessions/mobile shells, and overlay views. It covers shorthand/longhand CSSOM and retained wheel boundary containment. Direct browser/native execution, mixed-axis/nested-frame interaction, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

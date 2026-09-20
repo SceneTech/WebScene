@@ -35,7 +35,8 @@ public sealed class CssStylesheetCompilerTests
             static pseudo => !pseudo.IsElement && pseudo.Name == "active");
         Assert.Contains(result.Rules[1].Declarations,
             static declaration => declaration.Name == "background-color"
-                && declaration.Value == "blue" && declaration.Important);
+                && declaration.Value == "rgba(0, 0, 255, 1)"
+                && declaration.Important);
     }
 
     [Fact]

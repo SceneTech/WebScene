@@ -197,6 +197,50 @@ inline std::string read_css_identifier(std::string_view text, size_t& cursor)
         return result;
     }
 
+inline std::optional<selector_namespace_context>
+forgiving_namespace_retry_context(
+    std::string_view selector,
+    const selector_namespace_context& namespaces)
+{
+    auto result = namespaces;
+    auto added = size_t{0U};
+    for (size_t cursor = 0U; cursor < selector.size();) {
+        const auto character = static_cast<unsigned char>(selector[cursor]);
+        if (character == '\\' || std::isalpha(character) || character == '_'
+            || character == '-' || character >= 0x80U) {
+            auto end = cursor;
+            auto prefix = read_css_identifier(selector, end);
+            if (!prefix.empty() && end < selector.size() && selector[end] == '|'
+                && (end + 1U >= selector.size() || selector[end + 1U] != '=')
+                && !result.prefixes.contains(prefix)) {
+                if (added == 64U) return std::nullopt;
+                result.prefixes.emplace(
+                    std::move(prefix), "urn:webscene:undeclared-namespace");
+                ++added;
+            }
+            cursor = std::max(end, cursor + 1U);
+            continue;
+        }
+        if (character == '\'' || character == '"') {
+            const auto quote = static_cast<char>(character);
+            ++cursor;
+            while (cursor < selector.size() && selector[cursor] != quote) {
+                if (selector[cursor] == '\\') {
+                    cursor = skip_css_escape_sequence(selector, cursor);
+                } else {
+                    ++cursor;
+                }
+            }
+            if (cursor < selector.size()) ++cursor;
+            continue;
+        }
+        ++cursor;
+    }
+    return added == 0U
+        ? std::nullopt
+        : std::optional<selector_namespace_context>{std::move(result)};
+}
+
 inline size_t find_css_attribute_close(
         std::string_view selector,
         size_t cursor)
@@ -485,9 +529,14 @@ inline compiled_css_selector_list compile_selector_list_impl(
     constexpr size_t maximum_functional_depth = 32U;
     if (functional_depth > maximum_functional_depth || selector_budget == 0U)
         return result;
-    const auto parsed = namespaces == nullptr
+    auto parsed = namespaces == nullptr
         ? parse_selector_syntax(text)
         : parse_selector_syntax(text, *namespaces);
+    if (!parsed && namespaces != nullptr && functional_depth > 0U) {
+        if (auto retry = forgiving_namespace_retry_context(text, *namespaces)) {
+            parsed = parse_selector_syntax(text, *retry);
+        }
+    }
     if(!parsed) return result;
     if (parsed.selectors.size() > selector_budget) return result;
     selector_budget -= parsed.selectors.size();

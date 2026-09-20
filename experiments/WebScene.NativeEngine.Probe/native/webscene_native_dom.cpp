@@ -723,6 +723,15 @@ uint32_t resolved_foreground(const dom_node& node)
     return 0xD1D4DCFFU;
 }
 
+uint32_t resolved_caret_color(const dom_node& node)
+{
+    const auto value = resolved_caret_color_token(node);
+    if (value == "auto" || value == "currentcolor") {
+        return resolved_foreground(node);
+    }
+    return native_document::parse_color(value);
+}
+
 void append_xml_escaped(std::string_view value, std::string& output, bool attribute)
 {
     for (const auto character : value) {

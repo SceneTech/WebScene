@@ -2864,6 +2864,13 @@
       "capabilities": ["text-wrap-cssom", "inherited-wrap-mode", "retained-line-wrapping", "text-wrap-mutation"],
       "evidence": ["focused-native-layout-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #802 contract for 10 text-wrap declarations across 9 unchanged Code OSS CSS files. It covers wrap/nowrap CSSOM, inheritance, invalid writes, mutation/removal, overflow, and retained height changes while preserving independent computed white-space. Direct browser/native execution, exact product pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-caret-color.html",
+      "type": "testharness",
+      "capabilities": ["caret-color-cssom", "inherited-caret-color", "currentcolor-caret", "retained-caret-paint"],
+      "evidence": ["focused-native-scene-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #804 contract for the unchanged Code OSS EditContext caret color. It covers inheritance, auto/currentColor, computed CSSOM, mutation/removal, and a distinct retained caret scene color without adding a second caret node. Direct browser/native execution, exact editor pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

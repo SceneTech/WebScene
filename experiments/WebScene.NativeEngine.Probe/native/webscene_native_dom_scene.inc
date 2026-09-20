@@ -2967,7 +2967,7 @@ void native_document::append_scene(
                 text_y + 1.0F,
                 caret_x,
                 text_y + std::max(1.0F, line_height - 1.0F),
-                with_opacity(resolved_foreground(node)),
+                with_opacity(resolved_caret_color(node)),
                 node.id});
         }
     }

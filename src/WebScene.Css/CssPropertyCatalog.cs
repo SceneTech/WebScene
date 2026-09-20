@@ -93,6 +93,8 @@ public static class CssPropertyCatalog
             "isolation" => normalizedValue is "auto" or "isolate",
             "will-change" => IsWillChange(normalizedValue),
             "text-wrap" => normalizedValue is "wrap" or "nowrap",
+            "caret-color" => normalizedValue is "auto" or "currentcolor"
+                || CssColorParser.TryParseColor(trimmed, out _),
             "font-size" => IsFontSize(normalizedValue),
             "color-scheme" => normalizedValue is "normal" or "light" or "dark"
                 or "light dark" or "dark light" or "only light" or "only dark",

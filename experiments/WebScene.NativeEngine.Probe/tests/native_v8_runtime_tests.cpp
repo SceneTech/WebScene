@@ -437,6 +437,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "css-caret-color-performance") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "CSS caret-color performance engine creation failed");
+            test_css_caret_color_performance_gate(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if(selected=="placeholder-pseudo") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"placeholder pseudo engine creation failed");

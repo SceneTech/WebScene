@@ -28,7 +28,8 @@ public static class CssMutationInvalidationPlanner
         "font-size", "font-style", "font-variant", "font-weight", "letter-spacing", "line-height",
         "list-style", "list-style-position", "list-style-type",
         "pointer-events", "stroke", "stroke-linecap", "stroke-linejoin", "stroke-opacity", "stroke-width",
-        "text-align", "text-indent", "text-transform", "visibility", "white-space", "word-break",
+        "text-align", "text-indent", "text-transform", "visibility", "white-space", "text-wrap", "word-break",
+        "caret-color",
         "overflow-wrap", "word-wrap", "word-spacing"
     };
 
@@ -41,7 +42,7 @@ public static class CssMutationInvalidationPlanner
         "grid-row-start", "grid-row-end", "grid-column", "grid-column-start", "grid-column-end",
         "align-content", "align-items", "align-self", "justify-content",
         "gap", "list-style", "list-style-position", "list-style-type", "order", "row-gap", "column-gap", "z-index", "white-space",
-        "word-break", "overflow-wrap", "word-wrap"
+        "text-wrap", "word-break", "overflow-wrap", "word-wrap"
     };
 
     internal static IReadOnlySet<string> InheritedProperties => s_inheritedProperties;

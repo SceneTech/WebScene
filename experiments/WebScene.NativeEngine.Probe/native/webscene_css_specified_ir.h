@@ -240,6 +240,9 @@ inline specified_css_value compile_specified_value(css_property_id property,std:
     case native_property_grammar::special:return out;
     }
     switch(property){
+    case css_property_id::caret_color:
+        if(css_ir_lower(value)=="auto")keyword();else color();
+        break;
     case css_property_id::aspect_ratio:components();break;
     case css_property_id::contain:case css_property_id::cursor:case css_property_id::font_family:components();break;
     case css_property_id::fill:case css_property_id::stroke:color();break;

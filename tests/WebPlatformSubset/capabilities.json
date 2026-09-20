@@ -456,6 +456,14 @@
       "productEvidence": ["Code OSS diff and placeholder text", "Code OSS hover and Changes surfaces", "Code OSS Chat status, anchors, and code pills", "Code OSS notebook content"],
       "coverage": ["contracts/css-text-wrap-mode.html", "test_css_text_wrap_layout", "css-text-wrap-performance"],
       "gap": "Issue #802 implements the wrap/nowrap mode used by unchanged Code OSS while keeping computed white-space independent. The inherited cold token feeds the existing retained inline/layout/scene wrapping decision. Balance, pretty, stable, and the complete Text Level 4 shorthand remain outside this slice. Direct browser/native execution, exact product pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
+    },
+    {
+      "family": "css-caret-color",
+      "required": ["caret-color CSSOM", "inherited caret paint", "auto and currentColor", "cascade mutation and removal"],
+      "candidate": ["unchanged Code OSS editor caret pixels", "cross-RID performance qualification"],
+      "productEvidence": ["Code OSS EditContext text-area cursor", "Code OSS editor cursor theme color"],
+      "coverage": ["contracts/css-caret-color.html", "test_native_text_input_focus_events_and_caret", "css-caret-color-performance"],
+      "gap": "Issue #804 implements the caret-color slice used by unchanged Code OSS. The inherited token is stored only in sparse cold style state and drives the existing kind-14 retained caret command independently from text foreground, with no extra scene node. Direct browser/native execution, exact editor pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
     }
   ]
 }

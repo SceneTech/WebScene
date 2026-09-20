@@ -98,6 +98,20 @@ template<typename Decision,typename Protected,typename LoadSvg>
 bool apply_paint_value(dom_node& node,const std::string& name,const std::string& value,
     Decision& decision,Protected&& is_inline,LoadSvg&& load_svg)
 {
+    if (name == "caret-color") {
+            auto normalized = ascii_lower(trim_value(value));
+            auto& effects = node.style.mutable_textual().effect_values;
+            if (normalized == "inherit" || normalized == "unset") {
+                effects.erase(name);
+            } else {
+                if (normalized == "initial" || normalized == "revert"
+                    || normalized == "revert-layer") normalized = "auto";
+                effects[name] = std::move(normalized);
+            }
+            decision.classification = "supported";
+            decision.semantic_slice = "retained inherited caret paint";
+            return true;
+    }
     if (name == "mask-image") {
             auto& effects = node.style.mutable_textual().effect_values;
             effects.erase("-webscene-mask-markup");

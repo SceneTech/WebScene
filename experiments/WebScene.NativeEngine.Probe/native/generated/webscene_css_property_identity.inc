@@ -236,6 +236,8 @@ inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"willchange", css_property_id::will_change},
     native_typed_property_identity{"text-wrap", css_property_id::text_wrap},
     native_typed_property_identity{"textwrap", css_property_id::text_wrap},
+    native_typed_property_identity{"caret-color", css_property_id::caret_color},
+    native_typed_property_identity{"caretcolor", css_property_id::caret_color},
 };
 
 inline constexpr std::array<std::string_view, 62> native_storage_only_property_catalog{
@@ -462,6 +464,7 @@ inline constexpr std::array native_modeled_property_mask_catalog{
     false,
     false,
     false,
+    false,
 };
 
 inline constexpr bool generated_property_has_modeled_mask(
@@ -472,9 +475,10 @@ inline constexpr bool generated_property_has_modeled_mask(
         && native_modeled_property_mask_catalog[index];
 }
 
-inline constexpr std::array<std::string_view, 22> native_inherited_property_catalog{
+inline constexpr std::array<std::string_view, 24> native_inherited_property_catalog{
     "-webkit-font-smoothing",
     "all",
+    "caret-color",
     "color",
     "cursor",
     "direction",
@@ -491,6 +495,7 @@ inline constexpr std::array<std::string_view, 22> native_inherited_property_cata
     "overflow-wrap",
     "text-align",
     "text-transform",
+    "text-wrap",
     "visibility",
     "white-space",
     "word-break",
@@ -667,6 +672,7 @@ inline constexpr std::array native_property_grammar_catalog{
     native_property_grammar::keyword,
     native_property_grammar::keyword,
     native_property_grammar::keyword,
+    native_property_grammar::complex,
 };
 
 inline constexpr native_property_grammar generated_property_grammar(
@@ -911,5 +917,7 @@ inline css_property_id generated_property_id_lowercase(std::string_view name) no
     if (name == "willchange") return css_property_id::will_change;
     if (name == "text-wrap") return css_property_id::text_wrap;
     if (name == "textwrap") return css_property_id::text_wrap;
+    if (name == "caret-color") return css_property_id::caret_color;
+    if (name == "caretcolor") return css_property_id::caret_color;
     return css_property_id::unknown;
 }

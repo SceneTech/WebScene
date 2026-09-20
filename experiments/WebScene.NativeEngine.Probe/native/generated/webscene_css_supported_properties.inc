@@ -94,6 +94,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"bottom", "bottom"},
     cssom_supported_property_metadata{"box-shadow", "boxShadow"},
     cssom_supported_property_metadata{"box-sizing", "boxSizing"},
+    cssom_supported_property_metadata{"caret-color", "caretColor"},
     cssom_supported_property_metadata{"clear", "clear"},
     cssom_supported_property_metadata{"clip-path", "clipPath"},
     cssom_supported_property_metadata{"clip-rule", "clipRule"},
@@ -262,4 +263,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 466U;
+inline constexpr auto cssom_style_template_property_accessor_count = 468U;

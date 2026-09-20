@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$repo_root/scripts/v8-patch-workspace.sh"
 rid=
 output_dir="$repo_root/artifacts/native-engine-runtime"
 package_version=
@@ -166,40 +167,48 @@ if [[ -z "$v8_root" ]]; then
       gclient config https://chromium.googlesource.com/v8/v8
     )
   fi
+
+  cleanup_v8_workspace() {
+    local exit_status=$?
+    trap - EXIT
+    if ! webscene_restore_v8_patches "$v8_root" "$repo_root"; then
+      echo "Unable to restore WebScene-owned V8 workspace patches." >&2
+      if ((exit_status == 0)); then
+        exit_status=1
+      fi
+    fi
+    exit "$exit_status"
+  }
+  trap cleanup_v8_workspace EXIT
+
+  # A successful producer run leaves its selected patches applied so WebScene
+  # can compile against the patched headers. Restore those exact known changes
+  # before gclient inspects the reusable checkout on the next invocation.
+  webscene_restore_v8_patches "$v8_root" "$repo_root"
   (
     cd "$v8_workspace"
     gclient sync --no-history -r "$v8_revision"
   )
 
-  apply_patch_once() {
-    local checkout="$1"
-    local patch_file="$2"
-    if git -C "$checkout" apply --check "$patch_file" >/dev/null 2>&1; then
-      git -C "$checkout" apply "$patch_file"
-    elif ! git -C "$checkout" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
-      echo "Cannot apply or recognize V8 patch '$patch_file' in '$checkout'." >&2
-      exit 1
-    fi
-  }
   # WebScene owns the JavaScript console bindings. The inspector bridge keeps
   # the original V8 values so CDP clients receive object ids and previews.
-  apply_patch_once "$v8_root" "$repo_root/third-party/v8-patches/V8InspectorConsolePatch.txt"
+  webscene_apply_patch_once "$v8_root" "$repo_root/third-party/v8-patches/V8InspectorConsolePatch.txt"
   if [[ "$upstream_v8" == false && "$v8_revision" != 15.3.10 ]]; then
-  apply_patch_once "$v8_root" "$repo_root/third-party/v8-patches/V8Patch.txt"
-    apply_patch_once "$v8_root" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8ToolchainPatch.txt"
-  apply_patch_once "$v8_root/build" "$repo_root/third-party/v8-patches/BuildPatch.txt"
-  apply_patch_once "$v8_root/third_party/icu" "$repo_root/third-party/v8-patches/ICUPatch.txt"
+    webscene_apply_patch_once "$v8_root" "$repo_root/third-party/v8-patches/V8Patch.txt"
+    webscene_apply_patch_once "$v8_root" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8ToolchainPatch.txt"
+    webscene_apply_patch_once "$v8_root/build" "$repo_root/third-party/v8-patches/BuildPatch.txt"
+    webscene_apply_patch_once "$v8_root/third_party/icu" "$repo_root/third-party/v8-patches/ICUPatch.txt"
   fi
   if [[ "$thin_lto" == true ]]; then
-    apply_patch_once "$v8_root" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8ThinLtoPatch.txt"
+    webscene_apply_patch_once "$v8_root" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8ThinLtoPatch.txt"
   fi
   if [[ "$partition_alloc" == true && "$expected_kernel" == Darwin ]]; then
-    apply_patch_once \
-      "$v8_root/third_party/partition_alloc/src" \
+    webscene_apply_patch_once \
+      "$v8_root/third_party/partition_alloc" \
       "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt"
   fi
   if [[ "$expected_kernel" == Linux ]]; then
-    apply_patch_once "$v8_root/build" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt"
+    webscene_apply_patch_once "$v8_root/build" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt"
   fi
 
   gn_args="chrome_pgo_phase=0 fatal_linker_warnings=false is_cfi=false is_component_build=false is_debug=false symbol_level=0 target_cpu=\"$cpu\" treat_warnings_as_errors=false use_clang_modules=false use_custom_libcxx=false use_thin_lto=$thin_lto v8_embedder_string=\"-WebScene\" v8_enable_fuzztest=false v8_enable_partition_alloc=$partition_alloc v8_enable_pointer_compression=true v8_enable_pointer_compression_shared_cage=true v8_enable_sandbox=false v8_enable_static_roots=false v8_enable_31bit_smis_on_64bit_arch=false v8_enable_temporal_support=false v8_enable_webassembly=$v8_webassembly v8_monolithic=true v8_use_external_startup_data=false v8_target_cpu=\"$cpu\""

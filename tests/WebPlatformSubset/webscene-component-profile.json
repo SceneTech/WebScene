@@ -2822,6 +2822,13 @@
       "capabilities": ["word-break-layout", "overflow-wrap-layout", "word-wrap-alias", "unicode-break-boundaries", "inherited-line-breaking"],
       "evidence": ["focused-native-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #787 contract for retained long-token wrapping used by unchanged Code OSS Markdown preview, dialogs, notifications, hovers, hints, quick input, REPL and editor placeholders. It covers computed CSSOM, the legacy alias, inheritance, mutation/removal, geometry, and a supplementary-plane character. Direct browser/native execution, complete international line breaking, hyphenation, exact product pixels, and performance evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-object-fit-position.html",
+      "type": "testharness",
+      "capabilities": ["object-fit-replaced-image-paint", "object-position-alignment", "intrinsic-image-ratio", "content-box-clipping", "object-fit-cssom-mutation"],
+      "evidence": ["focused-native-scene-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #789 contract for the replaced-image fit and alignment used by unchanged Code OSS avatars, account imagery, thumbnails, extension surfaces, and session UI. It covers initial/computed CSSOM, inline mutation/removal, intrinsic dimensions, and stable element geometry; the native companion records cover/contain destination and clip commands. Direct browser/native execution, raster/SVG pixels, exact product regions, and performance evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

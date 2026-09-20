@@ -116,7 +116,7 @@ void main() {
     );
   });
 
-  testWidgets('projects and paints complete SVG scene commands',
+  testWidgets('projects complete SVG scene commands inside retained clips',
       (tester) async {
     const markup = '''
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -125,7 +125,7 @@ void main() {
 ''';
     final resource = utf8.encode('0 0 24 24\t$markup');
     final scene = calloc<WebSceneSceneView>();
-    final commands = calloc<WebSceneSceneCommand>();
+    final commands = calloc<WebSceneSceneCommand>(3);
     final strings = calloc<WebSceneSceneString>();
     final stringBytes = calloc<Uint8>(resource.length);
     final projector = WebSceneSceneProjector();
@@ -134,13 +134,20 @@ void main() {
       strings.ref
         ..byteOffset = 0
         ..byteLength = resource.length;
-      commands.ref
+      commands[0]
+        ..kind = 12
+        ..x = 8
+        ..y = 8
+        ..width = 16
+        ..height = 16;
+      commands[1]
         ..kind = 6
         ..flags = 0
         ..x = 4
         ..y = 4
         ..width = 24
         ..height = 24;
+      commands[2].kind = 13;
       scene.ref
         ..structSize = sizeOf<WebSceneSceneView>()
         ..abiVersion = 2
@@ -159,7 +166,7 @@ void main() {
         ..baseRevision = 0
         ..viewportWidth = 32
         ..viewportHeight = 32
-        ..commandCount = 1
+        ..commandCount = 3
         ..canvasLayerCount = 0
         ..damageRectCount = 0
         ..flags = 3;
@@ -183,6 +190,8 @@ void main() {
       final center = (16 * 32 + 16) * 4;
       expect(pixels!.getUint8(center), greaterThan(200));
       expect(pixels.getUint8(center + 3), greaterThan(200));
+      final clipped = (5 * 32 + 5) * 4;
+      expect(pixels.getUint8(clipped + 3), 0);
       image!.dispose();
       picture.dispose();
     } finally {

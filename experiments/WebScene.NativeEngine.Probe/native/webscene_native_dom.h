@@ -789,6 +789,10 @@ struct node_style final {
         // state to descendants; the root resolves both properties to normal.
         std::string word_break;
         std::string overflow_wrap;
+        // Replaced-image paint is cold. Empty values represent the initial
+        // `fill` and `50% 50%` values without enlarging the hot node record.
+        std::string object_fit;
+        std::string object_position;
         std::string contain_value;
         std::string container_type{"normal"};
         std::string container_name{"none"};

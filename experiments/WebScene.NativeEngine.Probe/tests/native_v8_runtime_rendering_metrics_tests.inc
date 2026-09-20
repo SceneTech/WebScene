@@ -1400,9 +1400,84 @@ void test_image_elements_load_and_reach_scene(webscene_engine* engine)
         if (found) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
+    require(found, "loaded SVG IMG element did not reach the native scene");
+
+    const auto object_cssom = evaluate(engine, R"JS((() => {
+      const image = document.querySelector('#native-svg-image');
+      image.style.objectFit = 'cover';
+      image.style.objectPosition = 'right bottom';
+      image.style.width = '100px';
+      image.style.height = '100px';
+      const style = getComputedStyle(image);
+      return [style.objectFit, style.objectPosition, image.style.objectFit,
+        image.style.objectPosition].join('|');
+    })())JS", "native-object-fit-cover-setup.js");
+    require(object_cssom == "cover|100% 100%|cover|right bottom",
+        "object-fit/object-position CSSOM did not retain cover alignment: "
+            + object_cssom);
+    webscene_engine_request_scene_checkpoint(engine);
+    auto cover_found = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 1U; index + 1U < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                const auto& clip = scene->commands[index - 1U];
+                const auto& restore = scene->commands[index + 1U];
+                if (command.kind == 6U && clip.kind == 12U && restore.kind == 13U
+                    && std::abs(clip.width - 100.0F) < 0.01F
+                    && std::abs(clip.height - 100.0F) < 0.01F
+                    && std::abs(command.x + 100.0F) < 0.01F
+                    && std::abs(command.width - 200.0F) < 0.01F
+                    && std::abs(command.height - 100.0F) < 0.01F) {
+                    cover_found = true;
+                    break;
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (cover_found) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(cover_found,
+        "cover/right-bottom intrinsic image geometry did not reach the retained scene");
+
+    execute(engine, R"JS(
+      (() => {
+        const image = document.querySelector('#native-svg-image');
+        image.style.objectFit = 'contain';
+        image.style.objectPosition = 'center';
+      })()
+    )JS", "native-object-fit-contain-mutation.js");
+    webscene_engine_request_scene_checkpoint(engine);
+    auto contain_found = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 1U; index + 1U < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind == 6U
+                    && scene->commands[index - 1U].kind == 12U
+                    && scene->commands[index + 1U].kind == 13U
+                    && std::abs(command.x) < 0.01F
+                    && std::abs(command.y - 25.0F) < 0.01F
+                    && std::abs(command.width - 100.0F) < 0.01F
+                    && std::abs(command.height - 50.0F) < 0.01F) {
+                    contain_found = true;
+                    break;
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (contain_found) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
     std::error_code cleanup_error;
     std::filesystem::remove_all(resource_directory, cleanup_error);
-    require(found, "loaded SVG IMG element did not reach the native scene");
+    require(contain_found,
+        "contain/center intrinsic image geometry did not reach the retained scene");
 }
 
 void test_percentage_radius_reaches_raster_image_scene_clip(webscene_engine* engine)
@@ -1432,13 +1507,14 @@ void test_percentage_radius_reaches_raster_image_scene_clip(webscene_engine* eng
         if (scene != nullptr) {
             for (uint32_t index = 0; index < scene->header.command_count; ++index) {
                 const auto& command = scene->commands[index];
-                if (command.kind == 6U
+                if (command.kind == 6U && index > 0U
                     && std::abs(command.width - 40.0F) < 0.01F
                     && std::abs(command.height - 40.0F) < 0.01F
-                    && std::abs(command.radius_top_left - 20.0F) < 0.01F
-                    && std::abs(command.radius_top_right - 20.0F) < 0.01F
-                    && std::abs(command.radius_bottom_right - 20.0F) < 0.01F
-                    && std::abs(command.radius_bottom_left - 20.0F) < 0.01F) {
+                    && scene->commands[index - 1U].kind == 12U
+                    && std::abs(scene->commands[index - 1U].radius_top_left - 20.0F) < 0.01F
+                    && std::abs(scene->commands[index - 1U].radius_top_right - 20.0F) < 0.01F
+                    && std::abs(scene->commands[index - 1U].radius_bottom_right - 20.0F) < 0.01F
+                    && std::abs(scene->commands[index - 1U].radius_bottom_left - 20.0F) < 0.01F) {
                     found = true;
                     break;
                 }

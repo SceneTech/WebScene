@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Replaced images retain object fit and position without changing their boxes</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #probe {
+    display: block;
+    width: 100px;
+    height: 100px;
+    padding: 5px;
+    border: 2px solid black;
+    object-fit: cover;
+    object-position: right bottom;
+  }
+</style>
+<img id="probe" alt="" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyIiBoZWlnaHQ9IjEiPjxyZWN0IHdpZHRoPSIyIiBoZWlnaHQ9IjEiIGZpbGw9InJlZCIvPjwvc3ZnPg==">
+<script>
+  promise_test(async () => {
+    if (!probe.complete) await new Promise(resolve => probe.addEventListener('load', resolve, { once: true }));
+    const before = probe.getBoundingClientRect();
+    const computed = getComputedStyle(probe);
+    assert_equals(computed.objectFit, 'cover');
+    assert_equals(computed.objectPosition, '100% 100%');
+    assert_equals(probe.naturalWidth, 2);
+    assert_equals(probe.naturalHeight, 1);
+
+    probe.style.objectFit = 'contain';
+    probe.style.objectPosition = '25% 75%';
+    assert_equals(getComputedStyle(probe).objectFit, 'contain');
+    assert_equals(getComputedStyle(probe).objectPosition, '25% 75%');
+    const after = probe.getBoundingClientRect();
+    assert_equals(after.width, before.width);
+    assert_equals(after.height, before.height);
+
+    probe.style.removeProperty('object-fit');
+    probe.style.removeProperty('object-position');
+    assert_equals(getComputedStyle(probe).objectFit, 'cover');
+    assert_equals(getComputedStyle(probe).objectPosition, '100% 100%');
+  }, 'object fit and position cascade, mutate, and preserve replaced-element geometry');
+
+  test(() => {
+    const detached = document.createElement('img');
+    detached.hidden = true;
+    document.body.appendChild(detached);
+    assert_equals(getComputedStyle(detached).objectFit, 'fill');
+    assert_equals(getComputedStyle(detached).objectPosition, '50% 50%');
+    detached.style.objectFit = 'scale-down';
+    detached.style.objectPosition = 'center';
+    assert_equals(detached.style.objectFit, 'scale-down');
+    assert_equals(detached.style.objectPosition, 'center');
+    detached.remove();
+  }, 'initial values and CSSOM aliases remain browser-shaped');
+</script>

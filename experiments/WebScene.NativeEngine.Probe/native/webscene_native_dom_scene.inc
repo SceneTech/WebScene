@@ -2285,19 +2285,107 @@ void native_document::append_scene(
             ? std::string{"webscene-raster-v1\t"} + replaced_image.markup
             : replaced_image.view_box + "\t\t" + replaced_image.markup;
         const auto resource_index = append_scene_string(resource, strings, string_bytes);
+        const auto border_left = resolve_length(
+            node, node.style.border_left_width, node.layout.width, 0);
+        const auto border_top = resolve_length(
+            node, node.style.border_top_width, node.layout.width, 0);
+        const auto border_right = resolve_length(
+            node, node.style.border_right_width, node.layout.width, 0);
+        const auto border_bottom = resolve_length(
+            node, node.style.border_bottom_width, node.layout.width, 0);
+        const auto padding_left = resolve_length(
+            node, node.style.padding_left, node.layout.width, 0);
+        const auto padding_top = resolve_length(
+            node, node.style.padding_top, node.layout.width, 0);
+        const auto padding_right = resolve_length(
+            node, node.style.padding_right, node.layout.width, 0);
+        const auto padding_bottom = resolve_length(
+            node, node.style.padding_bottom, node.layout.width, 0);
+        const auto inset_left = std::max(0.0F, border_left + padding_left);
+        const auto inset_top = std::max(0.0F, border_top + padding_top);
+        const auto inset_right = std::max(0.0F, border_right + padding_right);
+        const auto inset_bottom = std::max(0.0F, border_bottom + padding_bottom);
+        const layout_rect content_box{
+            node.layout.x + inset_left,
+            node.layout.y + inset_top,
+            std::max(0.0F, node.layout.width - inset_left - inset_right),
+            std::max(0.0F, node.layout.height - inset_top - inset_bottom)};
+        auto object_width = content_box.width;
+        auto object_height = content_box.height;
+        const auto natural_width = replaced_image.natural_width;
+        const auto natural_height = replaced_image.natural_height;
+        const auto fit = node.style.textual().object_fit.empty()
+            ? std::string_view{"fill"}
+            : std::string_view{node.style.textual().object_fit};
+        if (natural_width > 0 && natural_height > 0 && fit != "fill") {
+            auto scale = 1.0F;
+            if (fit == "contain" || fit == "cover" || fit == "scale-down") {
+                const auto width_scale = content_box.width / natural_width;
+                const auto height_scale = content_box.height / natural_height;
+                scale = fit == "cover"
+                    ? std::max(width_scale, height_scale)
+                    : std::min(width_scale, height_scale);
+                if (fit == "scale-down") scale = std::min(1.0F, scale);
+            }
+            object_width = std::max(0.0F, natural_width * scale);
+            object_height = std::max(0.0F, natural_height * scale);
+        }
+        auto horizontal_position = std::string{"50%"};
+        auto vertical_position = std::string{"50%"};
+        if (!node.style.textual().object_position.empty()) {
+            std::istringstream position(node.style.textual().object_position);
+            position >> horizontal_position >> vertical_position;
+            if (vertical_position.empty()) vertical_position = "50%";
+            const auto vertical_keyword = [](std::string_view token) {
+                return token == "top" || token == "bottom";
+            };
+            const auto horizontal_keyword = [](std::string_view token) {
+                return token == "left" || token == "right";
+            };
+            if (vertical_keyword(horizontal_position)
+                || horizontal_keyword(vertical_position)) {
+                std::swap(horizontal_position, vertical_position);
+            }
+        }
+        const auto resolve_object_position = [&](std::string_view token,
+            float free_space) {
+            if (token == "left" || token == "top") return 0.0F;
+            if (token == "center") return free_space * 0.5F;
+            if (token == "right" || token == "bottom") return free_space;
+            const auto length = native_document::parse_length(std::string(token));
+            return resolve_length(node, length, free_space, free_space * 0.5F);
+        };
+        const auto object_x = content_box.x + resolve_object_position(
+            horizontal_position, content_box.width - object_width);
+        const auto object_y = content_box.y + resolve_object_position(
+            vertical_position, content_box.height - object_height);
+        const auto clip_top_left = std::max(
+            0.0F, radii.top_left - std::max(inset_left, inset_top));
+        const auto clip_top_right = std::max(
+            0.0F, radii.top_right - std::max(inset_right, inset_top));
+        const auto clip_bottom_right = std::max(
+            0.0F, radii.bottom_right - std::max(inset_right, inset_bottom));
+        const auto clip_bottom_left = std::max(
+            0.0F, radii.bottom_left - std::max(inset_left, inset_bottom));
+        commands.push_back(webscene_scene_command{
+            12U, 0U, content_box.x, content_box.y,
+            content_box.width, content_box.height, 0U, node.id,
+            clip_top_left, clip_top_right, clip_bottom_right, clip_bottom_left});
         commands.push_back(webscene_scene_command{
             6U,
             resource_index,
-            node.layout.x,
-            node.layout.y,
-            node.layout.width,
-            node.layout.height,
+            object_x,
+            object_y,
+            object_width,
+            object_height,
             0U,
             node.id,
-            radii.top_left,
-            radii.top_right,
-            radii.bottom_right,
-            radii.bottom_left});
+            0,
+            0,
+            0,
+            0});
+        commands.push_back(webscene_scene_command{
+            13U, 0U, 0, 0, 0, 0, 0U, node.id});
     }
     if (paint_self && node.style.box_shadow_present && node.style.box_shadow_inset
         && node.layout.width > 0 && node.layout.height > 0) {

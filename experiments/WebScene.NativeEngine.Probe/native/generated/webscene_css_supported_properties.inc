@@ -186,6 +186,8 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"min-height", "minHeight"},
     cssom_supported_property_metadata{"min-width", "minWidth"},
     cssom_supported_property_metadata{"moz-transform", "mozTransform"},
+    cssom_supported_property_metadata{"object-fit", "objectFit"},
+    cssom_supported_property_metadata{"object-position", "objectPosition"},
     cssom_supported_property_metadata{"opacity", "opacity"},
     cssom_supported_property_metadata{"order", "order"},
     cssom_supported_property_metadata{"orphans", "orphans"},
@@ -249,4 +251,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 441U;
+inline constexpr auto cssom_style_template_property_accessor_count = 445U;

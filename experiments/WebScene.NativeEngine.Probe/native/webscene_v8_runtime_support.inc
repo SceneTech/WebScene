@@ -636,6 +636,9 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
     if (canonical_name == "grid-template-areas") {
         return css::parse_grid_template_areas(trimmed).has_value();
     }
+    if (canonical_name == "object-position") {
+        return css::valid_object_position_value(trimmed);
+    }
     auto normalized_value = std::string(trimmed);
     std::transform(
         normalized_value.begin(), normalized_value.end(), normalized_value.begin(),
@@ -649,6 +652,12 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
         || normalized_value.find("max(") != std::string::npos
         || normalized_value.find("clamp(") != std::string::npos) {
         return true;
+    }
+
+    if (canonical_name == "object-fit") {
+        return normalized_value == "fill" || normalized_value == "contain"
+            || normalized_value == "cover" || normalized_value == "none"
+            || normalized_value == "scale-down";
     }
 
     if (canonical_name == "position") {

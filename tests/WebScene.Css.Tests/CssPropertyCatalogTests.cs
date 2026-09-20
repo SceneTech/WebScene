@@ -51,6 +51,8 @@ public sealed class CssPropertyCatalogTests
     [InlineData("wordBreak")]
     [InlineData("overflowWrap")]
     [InlineData("wordWrap")]
+    [InlineData("objectFit")]
+    [InlineData("object-position")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -102,6 +104,12 @@ public sealed class CssPropertyCatalogTests
     [InlineData("filter", "unknown(1)", false)]
     [InlineData("backdrop-filter", "none", true)]
     [InlineData("backdrop-filter", "blur(8px) saturate(1.08)", true)]
+    [InlineData("object-fit", "cover", true)]
+    [InlineData("object-fit", "stretch", false)]
+    [InlineData("object-position", "right 25%", true)]
+    [InlineData("object-position", "left right", false)]
+    [InlineData("object-position", "top bottom", false)]
+    [InlineData("object-position", "left middle", false)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

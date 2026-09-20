@@ -20,6 +20,7 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
           input.style.letterSpacing = '2px';
           input.style.wordSpacing = '3px';
           input.style.color = 'rgb(18, 52, 86)';
+          input.style.caretColor = 'rgb(171, 205, 239)';
           const form = document.createElement('form');
           document.body.appendChild(form);
           form.appendChild(input);
@@ -108,7 +109,7 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
                     }
                 }
                 if (command.kind == 14U
-                    && (command.rgba >> 8U) == 0x123456U
+                    && (command.rgba >> 8U) == 0xABCDEFU
                     && command.x >= 20.0F && command.x <= 200.0F
                     && command.y >= 20.0F && command.y <= 52.0F) {
                     observed_caret = true;

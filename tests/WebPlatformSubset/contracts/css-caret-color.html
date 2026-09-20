@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Caret color CSSOM and inheritance</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #parent { color: rgb(18, 52, 86); caret-color: rgb(171, 205, 239); }
+</style>
+<div id="parent"><input id="input"></div>
+<script>
+  test(() => {
+    assert_equals(getComputedStyle(input).color, 'rgb(18, 52, 86)');
+    assert_equals(getComputedStyle(input).caretColor, 'rgb(171, 205, 239)');
+    input.style.caretColor = 'currentColor';
+    assert_equals(input.style.caretColor, 'currentColor');
+    assert_equals(getComputedStyle(input).caretColor, 'rgb(18, 52, 86)');
+    input.style.caretColor = '#010203';
+    assert_equals(getComputedStyle(input).caretColor, 'rgb(1, 2, 3)');
+    input.style.caretColor = 'not-a-color';
+    assert_equals(getComputedStyle(input).caretColor, 'rgb(1, 2, 3)');
+    input.style.removeProperty('caret-color');
+    assert_equals(getComputedStyle(input).caretColor, 'rgb(171, 205, 239)');
+  }, 'caret-color inherits and currentColor resolves independently from text paint');
+</script>

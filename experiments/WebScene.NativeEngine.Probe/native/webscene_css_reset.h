@@ -258,6 +258,12 @@ inline void apply_all_unset(
         reset.mutable_textual().will_change = previous.textual().will_change;
         reset.will_change_stacking_context = previous.will_change_stacking_context;
     }
+    if (has_inline({"caret-color"})) {
+        const auto value = previous.textual().effect_values.find("caret-color");
+        if (value != previous.textual().effect_values.end()) {
+            reset.mutable_textual().effect_values["caret-color"] = value->second;
+        }
+    }
 
     // These modeled properties do not yet have dedicated inline-mask
     // bits, so preserve their applied values by authored declaration.

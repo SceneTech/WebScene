@@ -61,6 +61,7 @@ public sealed class CssPropertyCatalogTests
     [InlineData("isolation")]
     [InlineData("willChange")]
     [InlineData("textWrap")]
+    [InlineData("caretColor")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -131,6 +132,9 @@ public sealed class CssPropertyCatalogTests
     [InlineData("will-change", "auto, transform", false)]
     [InlineData("text-wrap", "nowrap", true)]
     [InlineData("text-wrap", "balance", false)]
+    [InlineData("caret-color", "#123456", true)]
+    [InlineData("caret-color", "currentColor", true)]
+    [InlineData("caret-color", "not-a-color", false)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

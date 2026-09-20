@@ -122,6 +122,7 @@ internal static class CssGeneratedPropertyMetadata
         "isolation",
         "will-change",
         "text-wrap",
+        "caret-color",
     ];
 
     internal static readonly string[] SupportedNames =
@@ -215,6 +216,7 @@ internal static class CssGeneratedPropertyMetadata
         "bottom",
         "box-shadow",
         "box-sizing",
+        "caret-color",
         "clear",
         "clip-path",
         "clip-rule",
@@ -504,6 +506,7 @@ internal static class CssGeneratedPropertyMetadata
             "isolation" => 114,
             "will-change" => 115,
             "text-wrap" => 116,
+            "caret-color" => 117,
             _ => -1,
         };
         return id >= 0;

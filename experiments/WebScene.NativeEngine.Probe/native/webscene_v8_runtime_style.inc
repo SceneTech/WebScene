@@ -51,6 +51,29 @@
         return "normal";
     }
 
+    static std::string serialized_caret_color(const dom_node& node)
+    {
+        const auto token = resolved_caret_color_token(node);
+        auto color = uint32_t{0xD1D4DCFFU};
+        if (token == "auto" || token == "currentcolor") {
+            color = resolved_current_color_for_cssom(node);
+        } else {
+            color = native_document::parse_color(std::string(token));
+        }
+        std::ostringstream stream;
+        const auto red = static_cast<unsigned>((color >> 24U) & 0xFFU);
+        const auto green = static_cast<unsigned>((color >> 16U) & 0xFFU);
+        const auto blue = static_cast<unsigned>((color >> 8U) & 0xFFU);
+        const auto alpha = static_cast<unsigned>(color & 0xFFU);
+        if (alpha == 0xFFU) {
+            stream << "rgb(" << red << ", " << green << ", " << blue << ')';
+        } else {
+            stream << "rgba(" << red << ", " << green << ", " << blue << ", "
+                << serialize_css_number(static_cast<double>(alpha) / 255.0) << ')';
+        }
+        return stream.str();
+    }
+
     static bool clear_inline_style(dom_node& node, const std::string& name)
     {
         const auto canonical_name = canonical_css_property_name(name);
@@ -286,6 +309,10 @@
                 textual->will_change.clear();
             }
             node.style.will_change_stacking_context = false;
+        } else if (name == "caretColor" || name == "caret-color") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->effect_values.erase("caret-color");
+            }
         } else if (name == "boxSizing" || name == "box-sizing") {
             node.style.border_box = false;
             node.style.inline_property_mask &= ~inline_box_sizing;
@@ -781,7 +808,8 @@
             self->apply_css_declaration(
                 *node, {canonical_name, specified_value, important}, true);
             node->style.inline_property_mask |= property_mask;
-        } else if (value.find("var(") != std::string::npos && property_mask != 0U) {
+        } else if (value.find("var(") != std::string::npos
+            && (property_mask != 0U || canonical_name == "caret-color")) {
             // A CSSOM write is observable immediately. Resolve variable-backed
             // declarations through the same computed-value path used during a
             // cascade instead of feeding raw var() tokens to numeric parsers.
@@ -1016,6 +1044,16 @@
                 std::string semantic_slice;
             } decision;
             css::apply_will_change_value(*node, name, value, decision);
+        } else if (name == "caret-color") {
+            auto normalized = ascii_lower(trim_value(specified_value));
+            auto& effects = node->style.mutable_textual().effect_values;
+            if (normalized == "inherit" || normalized == "unset") {
+                effects.erase("caret-color");
+            } else {
+                if (normalized == "initial" || normalized == "revert"
+                    || normalized == "revert-layer") normalized = "auto";
+                effects["caret-color"] = std::move(normalized);
+            }
         } else if (name == "box-sizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;
@@ -1648,6 +1686,15 @@
             } else if (name == "will-change") {
                 value = node->style.textual().will_change.empty()
                     ? "auto" : node->style.textual().will_change;
+            } else if (name == "caret-color") {
+                if (computed) {
+                    value = serialized_caret_color(*node);
+                } else {
+                    const auto& declarations = node->authored_style().declarations;
+                    const auto authored = declarations.find("caret-color");
+                    value = authored == declarations.end()
+                        ? std::string{} : authored->second;
+                }
             } else if (name == "cursor") {
                 value = resolved_cursor(*node);
             } else if (name == "font-size") {
@@ -2129,6 +2176,15 @@
         } else if (name == "willChange") {
             value = node->style.textual().will_change.empty()
                 ? "auto" : node->style.textual().will_change;
+        } else if (name == "caretColor") {
+            if (computed) {
+                value = serialized_caret_color(*node);
+            } else {
+                const auto& declarations = node->authored_style().declarations;
+                const auto authored = declarations.find("caret-color");
+                value = authored == declarations.end()
+                    ? std::string{} : authored->second;
+            }
         } else if (name == "boxSizing") {
             value = node->style.border_box ? "border-box" : "content-box";
         } else if (name == "borderRadius") {
@@ -2743,6 +2799,16 @@
                 std::string semantic_slice;
             } decision;
             css::apply_will_change_value(*node, "will-change", value, decision);
+        } else if (name == "caretColor") {
+            auto normalized = ascii_lower(trim_value(specified_value));
+            auto& effects = node->style.mutable_textual().effect_values;
+            if (normalized == "inherit" || normalized == "unset") {
+                effects.erase("caret-color");
+            } else {
+                if (normalized == "initial" || normalized == "revert"
+                    || normalized == "revert-layer") normalized = "auto";
+                effects["caret-color"] = std::move(normalized);
+            }
         } else if (name == "boxSizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;

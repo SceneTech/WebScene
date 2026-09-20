@@ -2245,6 +2245,16 @@ inline std::string_view resolved_text_wrap_mode(const dom_node& node) noexcept
     return "wrap";
 }
 
+inline std::string_view resolved_caret_color_token(const dom_node& node) noexcept
+{
+    for (auto* current = &node; current != nullptr; current = current->parent) {
+        const auto& effects = current->style.textual().effect_values;
+        const auto value = effects.find("caret-color");
+        if (value != effects.end()) return value->second;
+    }
+    return "auto";
+}
+
 // Shared by retained layout/paint and the V8-free CSS service contract so the
 // contract exercises the production marker-suppression path.
 std::string list_marker_text(const dom_node& node);

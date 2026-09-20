@@ -366,6 +366,46 @@ void test_css_text_wrap_performance_gate(webscene_engine* engine)
             + std::to_string(elapsed) + " ms");
 }
 
+void test_css_caret_color_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      document.body.innerHTML = '<div id="caret-color-grid"></div>';
+      globalThis.caretColorGrid = document.getElementById('caret-color-grid');
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < 4096; ++index) {
+        fragment.appendChild(document.createElement('input'));
+      }
+      caretColorGrid.appendChild(fragment);
+    )JS", "native-css-caret-color-performance-setup.js");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          const value = cycle % 2 === 0 ? '#abcdef' : 'auto';
+          for (const node of caretColorGrid.children) node.style.caretColor = value;
+        }
+        return [caretColorGrid.children.length,
+          caretColorGrid.lastElementChild.style.caretColor];
+      })()
+    )JS", "native-css-caret-color-performance-gate.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(result == R"JSON([4096,"auto"])JSON",
+        "CSS caret-color performance fixture regressed: " + result);
+    require(after.layout_passes == before.layout_passes,
+        "CSS caret-color transitions performed layout");
+    require(after.published_scenes <= before.published_scenes + 1U,
+        "CSS caret-color transitions published unbounded scenes");
+    require(elapsed < 5000.0,
+        "4,096-node CSS caret-color gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);

@@ -105,10 +105,11 @@ int main()
     static_assert(static_cast<uint16_t>(css_property_id::isolation) == 153U);
     static_assert(static_cast<uint16_t>(css_property_id::will_change) == 154U);
     static_assert(static_cast<uint16_t>(css_property_id::text_wrap) == 155U);
-    static_assert(native_typed_property_identity_catalog.size() == 231U);
+    static_assert(static_cast<uint16_t>(css_property_id::caret_color) == 156U);
+    static_assert(native_typed_property_identity_catalog.size() == 233U);
     static_assert(native_storage_only_property_catalog.size() == 62U);
-    static_assert(cssom_supported_property_catalog.size() == 255U);
-    static_assert(cssom_style_template_property_accessor_count == 464U);
+    static_assert(cssom_supported_property_catalog.size() == 256U);
+    static_assert(cssom_style_template_property_accessor_count == 468U);
 
     for (const auto& entry : native_typed_property_identity_catalog) {
         require(property_id(entry.name) == entry.id, "typed name maps to its generated id", entry.name);
@@ -151,7 +152,8 @@ int main()
             && !variable_collection_contains(indexed_variables, std::string{"--missing"}),
         "variable membership supports ordered and indexed containers");
 
-    std::array<bool, 146U> audited_mask_ids{};
+    std::array<bool, static_cast<size_t>(css_property_id::caret_color) + 1U>
+        audited_mask_ids{};
     for (const auto& entry : native_typed_property_identity_catalog) {
         const auto index = static_cast<size_t>(entry.id);
         if (audited_mask_ids[index]) continue;
@@ -161,10 +163,12 @@ int main()
             "native mask coverage agrees with explicit property classification",
             entry.name);
     }
-    require(native_inherited_property_catalog.size() == 20U,
+    require(native_inherited_property_catalog.size() == 24U,
         "native inherited-property classification remains complete");
     require(generated_property_inherits_by_default("color")
             && generated_property_inherits_by_default("direction")
+            && generated_property_inherits_by_default("text-wrap")
+            && generated_property_inherits_by_default("caret-color")
             && generated_property_inherits_by_default("-webkit-font-smoothing")
             && !generated_property_inherits_by_default("display")
             && !generated_property_inherits_by_default("width"),

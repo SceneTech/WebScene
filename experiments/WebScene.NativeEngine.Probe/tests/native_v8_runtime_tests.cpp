@@ -413,6 +413,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "css-isolation-performance") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "CSS isolation performance engine creation failed");
+            test_css_isolation_performance_gate(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if(selected=="placeholder-pseudo") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"placeholder pseudo engine creation failed");
@@ -1530,6 +1538,7 @@ int main()
         webscene_engine_destroy(file_engine);
     }
     test_z_index_orders_positioned_siblings_in_scene(engine);
+    test_css_isolation_stacking_context(engine);
     test_popup_portal_tooltip_escapes_non_stacking_positioned_wrapper(engine);
     test_fixed_portal_descendant_stays_in_ancestor_stacking_context(engine);
     test_transform_origin_keywords_cascade_independently_from_inline_transform(engine);

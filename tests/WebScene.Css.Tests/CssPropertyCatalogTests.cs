@@ -58,6 +58,7 @@ public sealed class CssPropertyCatalogTests
     [InlineData("overscrollBehavior")]
     [InlineData("overscrollBehaviorX")]
     [InlineData("overscrollBehaviorY")]
+    [InlineData("isolation")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -122,6 +123,8 @@ public sealed class CssPropertyCatalogTests
     [InlineData("overscroll-behavior-x", "contain", true)]
     [InlineData("overscroll-behavior", "contain auto none", false)]
     [InlineData("overscroll-behavior-y", "bounce", false)]
+    [InlineData("isolation", "isolate", true)]
+    [InlineData("isolation", "group", false)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Isolation establishes an atomic stacking context</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  body { margin: 0; }
+  #isolated { isolation: isolate; width: 100px; height: 40px; }
+  #escape { position: relative; z-index: 100; width: 100px; height: 40px; }
+  #sibling { position: relative; z-index: 1; width: 100px; height: 40px; margin-top: -40px; }
+</style>
+<div id="isolated"><div id="escape"></div></div>
+<div id="sibling"></div>
+<script>
+  test(() => {
+    assert_equals(getComputedStyle(isolated).isolation, 'isolate');
+    assert_equals(document.elementFromPoint(10, 10), sibling);
+    isolated.style.isolation = 'auto';
+    assert_equals(getComputedStyle(isolated).isolation, 'auto');
+    assert_equals(document.elementFromPoint(10, 10), escape);
+    isolated.style.isolation = 'invalid';
+    assert_equals(isolated.style.isolation, 'auto');
+    isolated.style.removeProperty('isolation');
+    assert_equals(getComputedStyle(isolated).isolation, 'isolate');
+  }, 'isolate contains descendant z-index and responds to CSSOM mutation');
+</script>

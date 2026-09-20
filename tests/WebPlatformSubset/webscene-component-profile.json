@@ -2843,6 +2843,13 @@
       "capabilities": ["overscroll-behavior-cssom", "per-axis-scroll-chain-policy", "nested-wheel-containment", "interaction-only-mutation"],
       "evidence": ["focused-native-wheel-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #793 contract for the 12 unchanged Code OSS overscroll declarations used by the workbench root, Markdown, Chat, sessions/mobile shells, and overlay views. It covers shorthand/longhand CSSOM and retained wheel boundary containment. Direct browser/native execution, mixed-axis/nested-frame interaction, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-isolation-stacking-context.html",
+      "type": "testharness",
+      "capabilities": ["isolation-cssom", "atomic-stacking-context", "descendant-z-index-containment", "paint-order-mutation"],
+      "evidence": ["focused-native-hit-order-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #795 contract for the five isolation:isolate declarations in unchanged Code OSS. It covers initial/computed CSSOM, mutation/removal, invalid writes, descendant z-index containment, and retained hit order without relayout. Direct browser/native execution, exact product pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

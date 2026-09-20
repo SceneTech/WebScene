@@ -1037,6 +1037,9 @@ struct node_style final {
     bool transform_stacking_context : 1 {false};
     // layout/paint containment establishes an atomic stacking context.
     bool contain_stacking_context : 1 {false};
+    // CSS isolation is consulted on every retained paint-order walk, so keep
+    // it in the existing packed hot flags rather than a token map lookup.
+    bool isolation_stacking_context : 1 {false};
     bool content_visibility_hidden : 1 {false};
     bool interpolate_size_allow_keywords : 1 {false};
     // Margin parsing passes these four flags by reference, so unlike the other

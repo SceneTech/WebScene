@@ -240,6 +240,47 @@ void test_overscroll_behavior_performance_gate(webscene_engine* engine)
             + std::to_string(elapsed) + " ms");
 }
 
+void test_css_isolation_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      document.body.innerHTML = '<div id="isolation-grid"></div>';
+      globalThis.isolationGrid = document.getElementById('isolation-grid');
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < 4096; ++index) {
+        const node = document.createElement('div');
+        fragment.appendChild(node);
+      }
+      isolationGrid.appendChild(fragment);
+    )JS", "native-css-isolation-performance-setup.js");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          const value = cycle % 2 === 0 ? 'isolate' : 'auto';
+          for (const node of isolationGrid.children) node.style.isolation = value;
+        }
+        return [isolationGrid.children.length,
+          isolationGrid.lastElementChild.style.isolation];
+      })()
+    )JS", "native-css-isolation-performance-gate.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(result == R"JSON([4096,"auto"])JSON",
+        "CSS isolation performance fixture regressed: " + result);
+    require(after.layout_passes == before.layout_passes,
+        "CSS isolation transitions performed layout");
+    require(after.published_scenes <= before.published_scenes + 1U,
+        "CSS isolation transitions published unbounded scenes");
+    require(elapsed < 5000.0,
+        "4,096-node CSS isolation gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);
@@ -4980,6 +5021,36 @@ void test_pointer_hit_targets_and_related_targets_are_elements(webscene_engine* 
     require(
         state == R"({"entered":"pointer-row","leftFor":"pointer-outside"})",
         "pointer boundary target/relatedTarget did not retain browser element identity: " + state);
+}
+
+void test_css_isolation_stacking_context(webscene_engine* engine)
+{
+    resize(engine, 320, 180, 79'500U);
+    const auto isolated = evaluate(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `<style>
+          body { margin:0; }
+          #isolated { isolation:isolate; width:100px; height:40px; }
+          #escape { position:relative; z-index:100; width:100px; height:40px; }
+          #sibling { position:relative; z-index:1; width:100px; height:40px;
+            margin-top:-40px; }
+        </style><div id="isolated"><div id="escape"></div></div><div id="sibling"></div>`;
+        return [getComputedStyle(document.getElementById('isolated')).isolation,
+          document.elementFromPoint(10,10).id];
+      })()
+    )JS", "native-css-isolation-stacking.js");
+    require(isolated == R"JSON(["isolate","sibling"])JSON",
+        "CSS isolation did not contain descendant z-index: " + isolated);
+    const auto released = evaluate(engine, R"JS(
+      (() => {
+        const isolated = document.getElementById('isolated');
+        isolated.style.isolation = 'auto';
+        return [getComputedStyle(isolated).isolation,
+          document.elementFromPoint(10,10).id];
+      })()
+    )JS", "native-css-isolation-auto.js");
+    require(released == R"JSON(["auto","escape"])JSON",
+        "CSS isolation auto mutation retained an atomic context: " + released);
 }
 
 void test_z_index_orders_positioned_siblings_in_scene(webscene_engine* engine)

@@ -205,6 +205,7 @@ bool style_establishes_atomic_stacking_context(const dom_node& node) noexcept
         || (node.style.position != position_mode::normal
             && !node.style.z_index_auto)
         || node.style.contain_stacking_context
+        || node.style.isolation_stacking_context
         || node.style.opacity < 0.999F
         || node.style.transform_stacking_context
         || node.has_painted_filter_override_value()

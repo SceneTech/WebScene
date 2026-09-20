@@ -2897,7 +2897,15 @@ enum {
      * origin. The host completes with
      * application/vnd.webscene.media-devices+json and the bounded v1 schema
      * documented by the media runtime. This request never grants capture. */
-    WEBSCENE_HOST_REQUEST_MEDIA_ENUMERATE_DEVICES_V1 = 10
+    WEBSCENE_HOST_REQUEST_MEDIA_ENUMERATE_DEVICES_V1 = 10,
+    /* Permission-bearing audio-only capture request. The request MIME is
+     * application/vnd.webscene.media-capture-request+json; the host completes
+     * with application/vnd.webscene.media-capture+json and a scoped v1 capture
+     * descriptor. */
+    WEBSCENE_HOST_REQUEST_MEDIA_OPEN_CAPTURE_V1 = 11,
+    /* One-way (request_id zero) release of the capture identity carried in the
+     * application/vnd.webscene.media-capture-stop+json body. */
+    WEBSCENE_HOST_REQUEST_MEDIA_STOP_CAPTURE_V1 = 12
 };
 enum {
     WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U,
@@ -2950,6 +2958,46 @@ WEBSCENE_API uint8_t webscene_engine_complete_host_request_v1(
     const uint8_t* bytes,
     size_t byte_count,
     const char* error_message);
+
+enum {
+    WEBSCENE_MEDIA_CAPTURE_OK_V1 = 0U,
+    WEBSCENE_MEDIA_CAPTURE_INVALID_ARGUMENT_V1 = 1U,
+    WEBSCENE_MEDIA_CAPTURE_NOT_FOUND_V1 = 2U,
+    WEBSCENE_MEDIA_CAPTURE_STALE_GENERATION_V1 = 3U,
+    WEBSCENE_MEDIA_CAPTURE_FORMAT_MISMATCH_V1 = 4U,
+    WEBSCENE_MEDIA_CAPTURE_OUT_OF_ORDER_V1 = 5U,
+    WEBSCENE_MEDIA_CAPTURE_RETIRED_V1 = 6U,
+    WEBSCENE_MEDIA_CAPTURE_QUEUE_FULL_V1 = 7U
+};
+enum {
+    WEBSCENE_MEDIA_CAPTURE_EVENT_MUTE_V1 = 1U,
+    WEBSCENE_MEDIA_CAPTURE_EVENT_UNMUTE_V1 = 2U,
+    WEBSCENE_MEDIA_CAPTURE_EVENT_ERROR_V1 = 3U,
+    WEBSCENE_MEDIA_CAPTURE_EVENT_ENDED_V1 = 4U
+};
+typedef struct webscene_media_capture_packet_v1 {
+    uint32_t struct_size, version;
+    uint64_t capture_id, capture_generation;
+    uint64_t first_frame_index, monotonic_timestamp_ns;
+    uint32_t sample_rate, channel_count;
+    const float* interleaved_samples;
+    size_t frame_count;
+} webscene_media_capture_packet_v1;
+typedef struct webscene_media_capture_event_v1 {
+    uint32_t struct_size, version;
+    uint64_t capture_id, capture_generation;
+    uint64_t monotonic_timestamp_ns;
+    uint32_t kind, detail;
+} webscene_media_capture_event_v1;
+/* Thread-safe consumer ingress. Frame numbering begins at zero and is contiguous
+ * for each capture generation. The native provider first writes its realtime
+ * callback into a bounded host transport; one serialized consumer submits
+ * packets/events here. Each packet is capped at 8192 frames and eight channels.
+ * Inputs are borrowed for the call only. No V8 executes on the caller. */
+WEBSCENE_API uint32_t webscene_engine_submit_media_capture_packet_v1(
+    webscene_engine* engine, const webscene_media_capture_packet_v1* packet);
+WEBSCENE_API uint32_t webscene_engine_submit_media_capture_event_v1(
+    webscene_engine* engine, const webscene_media_capture_event_v1* event);
 /*
  * Removes one V8 console entry. The UTF-8 payload is `<level>\n<message>`;
  * querying with a null/short destination reports the required byte count

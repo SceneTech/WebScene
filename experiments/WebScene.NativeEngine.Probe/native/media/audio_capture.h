@@ -42,6 +42,21 @@ class audio_capture {
         }
         end_.store(end + stereo.size() / 2, std::memory_order_release);
     }
+    void write_interleaved(const float* samples, size_t frames,
+                           uint32_t channels) noexcept {
+        if (!samples || !frames || !channels) return;
+        auto end = end_.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < frames; ++i) {
+            auto &f = data_[(end + i) % capacity];
+            f.stamp.store(UINT64_MAX, std::memory_order_seq_cst);
+            const auto left = samples[i * channels];
+            const auto right = channels == 1 ? left : samples[i * channels + 1];
+            f.left.store(left, std::memory_order_seq_cst);
+            f.right.store(right, std::memory_order_seq_cst);
+            f.stamp.store(end + i, std::memory_order_seq_cst);
+        }
+        end_.store(end + frames, std::memory_order_release);
+    }
     result read(uint64_t &cursor, std::span<float> stereo) const noexcept {
         result out;
         auto end = end_frame(), begin = end > capacity ? end - capacity : 0;

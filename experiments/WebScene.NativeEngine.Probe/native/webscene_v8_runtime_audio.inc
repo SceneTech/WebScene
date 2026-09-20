@@ -11,6 +11,63 @@ uint32_t next_audio_context{1}, next_audio_track{1};
 std::unordered_map<uint32_t, std::shared_ptr<webscene::media::audio_track>> audio_tracks;
 // Recording adapters retain these native PCM consumers, independently of
 // JS/context lifetime. Each track has its own cursor and stop state.
+struct native_audio_input_binding {
+    uint64_t capture_id{}, generation{};
+    uint32_t sample_rate{}, channels{};
+    std::string origin;
+    std::shared_ptr<webscene::media::audio_capture> source;
+    uint64_t next_frame{}, last_timestamp{};
+    bool muted{}, ended{};
+    uint32_t live_tracks{};
+};
+struct native_audio_input_track {
+    std::shared_ptr<native_audio_input_binding> input;
+    v8::Global<v8::Object> object;
+    bool stopped{};
+};
+struct pending_audio_input_event {
+    uint64_t capture_id{}, generation{};
+    uint32_t kind{}, detail{};
+};
+std::mutex native_audio_input_mutex;
+std::unordered_map<uint64_t, std::shared_ptr<native_audio_input_binding>>
+    native_audio_inputs;
+std::unordered_map<uint32_t, native_audio_input_track> native_audio_input_tracks;
+std::deque<pending_audio_input_event> pending_audio_input_events;
+static constexpr size_t maximum_native_audio_inputs = 16U;
+static constexpr size_t maximum_pending_audio_input_events = 256U;
+
+void queue_audio_input_stop(const native_audio_input_binding& input) {
+    auto request = std::make_unique<native_host_request>();
+    request->view.kind = WEBSCENE_HOST_REQUEST_MEDIA_STOP_CAPTURE_V1;
+    request->content_type = "application/vnd.webscene.media-capture-stop+json";
+    request->url = input.origin;
+    const auto json = std::string{"{\"version\":1,\"captureId\":\""}
+        + std::to_string(input.capture_id) + "\",\"generation\":\""
+        + std::to_string(input.generation) + "\"}";
+    request->bytes.assign(json.begin(), json.end());
+    (void)enqueue_typed_host_request(std::move(request));
+}
+
+void release_audio_input_track(uint32_t id) {
+    const auto found = native_audio_input_tracks.find(id);
+    if (found == native_audio_input_tracks.end() || found->second.stopped) return;
+    auto input = found->second.input;
+    found->second.stopped = true;
+    found->second.object.Reset();
+    bool stop = false;
+    {
+        std::lock_guard lock(native_audio_input_mutex);
+        if (input->live_tracks) --input->live_tracks;
+        if (input->live_tracks == 0U && !input->ended) {
+            input->ended = true;
+            input->source->end();
+            native_audio_inputs.erase(input->capture_id);
+            stop = true;
+        }
+    }
+    if (stop) queue_audio_input_stop(*input);
+}
 
 std::unique_ptr<webscene::media::audio_graph> media_default_audio;
 std::unordered_map<uint64_t, uint32_t> media_default_sources;
@@ -47,6 +104,23 @@ struct audio_decode_binding {
 std::vector<audio_decode_binding> audio_decodes;
 std::unique_ptr<webscene::media::decode_service> audio_decoder;
 void clear_audio_bindings() {
+    std::vector<std::shared_ptr<native_audio_input_binding>> inputs;
+    {
+        std::lock_guard lock(native_audio_input_mutex);
+        inputs.reserve(native_audio_inputs.size());
+        for (auto& [id, input] : native_audio_inputs) {
+            static_cast<void>(id);
+            if (!input->ended) {
+                input->ended = true;
+                input->source->end();
+                inputs.push_back(input);
+            }
+        }
+        native_audio_inputs.clear();
+        pending_audio_input_events.clear();
+    }
+    for (const auto& input : inputs) queue_audio_input_stop(*input);
+    native_audio_input_tracks.clear();
     audio_track_key.Reset();
     audio_tracks.clear();
     media_audio_source_elements.clear();
@@ -55,6 +129,58 @@ void clear_audio_bindings() {
     audio_decoder.reset();
     audio_decodes.clear();
     audio_contexts.clear();
+}
+
+void drain_audio_input_events() {
+    std::deque<pending_audio_input_event> events;
+    {
+        std::lock_guard lock(native_audio_input_mutex);
+        events.swap(pending_audio_input_events);
+    }
+    for (const auto& event : events) {
+        const char* type = nullptr;
+        {
+            std::lock_guard lock(native_audio_input_mutex);
+            const auto binding = native_audio_inputs.find(event.capture_id);
+            if (binding == native_audio_inputs.end()
+                || binding->second->generation != event.generation) continue;
+            if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_MUTE_V1) {
+                binding->second->muted = true;
+                type = "mute";
+            } else if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_UNMUTE_V1) {
+                binding->second->muted = false;
+                type = "unmute";
+            } else {
+                binding->second->ended = true;
+                binding->second->source->end();
+                native_audio_inputs.erase(binding);
+                type = "ended";
+            }
+        }
+        for (auto& [id, track] : native_audio_input_tracks) {
+            static_cast<void>(id);
+            if (track.input->capture_id != event.capture_id
+                || track.input->generation != event.generation
+                || track.stopped) continue;
+            auto object = track.object.Get(isolate);
+            if (object.IsEmpty()) continue;
+            v8::Local<v8::Context> realm;
+            if (!object->GetCreationContext().ToLocal(&realm)) continue;
+            v8::Context::Scope scope(realm);
+            v8::Local<v8::Value> dispatcher;
+            if (object->Get(realm, js_string(isolate, "dispatchEvent")).ToLocal(&dispatcher)
+                && dispatcher->IsFunction()) {
+                auto instance = create_event_instance(realm);
+                instance->Set(realm, js_string(isolate, "type"),
+                              js_string(isolate, type)).Check();
+                v8::Local<v8::Value> args[] = {instance};
+                (void)dispatcher.As<v8::Function>()->Call(realm, object, 1, args);
+            }
+            if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_ENDED_V1
+                || event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_ERROR_V1)
+                track.object.Reset();
+        }
+    }
 }
 void refresh_audio_source(uint64_t key, media_binding &b) {
     if (!b.frame.audio)
@@ -122,7 +248,7 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
         if (info.Length() < 1)
             throw std::invalid_argument("Audio operation required");
         auto op = to_utf8(info.GetIsolate(), info[0]);
-        if (op == "enumerateDevices") {
+        if (op == "enumerateDevices" || op == "openCapture") {
             auto resolver = v8::Promise::Resolver::New(realm).ToLocalChecked();
             info.GetReturnValue().Set(resolver->GetPromise());
             const auto reject = [&](const char* message, const char* name) {
@@ -148,11 +274,28 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
             const auto request_id = ++self->next_host_request_id;
             auto request = std::make_unique<native_host_request>();
             request->view.request_id = request_id;
-            request->view.kind = WEBSCENE_HOST_REQUEST_MEDIA_ENUMERATE_DEVICES_V1;
-            request->content_type = "application/vnd.webscene.media-devices+json";
+            request->view.kind = op == "openCapture"
+                ? WEBSCENE_HOST_REQUEST_MEDIA_OPEN_CAPTURE_V1
+                : WEBSCENE_HOST_REQUEST_MEDIA_ENUMERATE_DEVICES_V1;
+            request->content_type = op == "openCapture"
+                ? "application/vnd.webscene.media-capture-request+json"
+                : "application/vnd.webscene.media-devices+json";
             request->url = self->current_security_origin();
+            if (op == "openCapture") {
+                if (info.Length() < 2 || !info[1]->IsString()) {
+                    reject("A canonical media-capture request is required", "TypeError");
+                    return;
+                }
+                auto json = to_utf8(info.GetIsolate(), info[1]);
+                if (json.empty() || json.size() > 16U * 1024U) {
+                    reject("The media-capture request is too large", "QuotaExceededError");
+                    return;
+                }
+                request->bytes.assign(json.begin(), json.end());
+            }
             host_promise_target target;
-            target.operation = "enumerateMediaDevices";
+            target.operation = op == "openCapture"
+                ? "openMediaCapture" : "enumerateMediaDevices";
             target.context.Reset(info.GetIsolate(), realm);
             target.resolver.Reset(info.GetIsolate(), resolver);
             self->host_promise_targets.emplace(request_id, std::move(target));
@@ -162,8 +305,74 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
             }
             return;
         }
-        if (op == "trackBind" || op == "trackClone" || op == "trackStop" || op == "trackEnded" ||
-            op == "trackEnabled") {
+        if (op == "releaseCapture") {
+            if (info.Length() < 3 || !info[1]->IsString() || !info[2]->IsString())
+                throw std::invalid_argument("Native capture identity required");
+            const auto parse_identity = [](const std::string& text) {
+                uint64_t result{};
+                const auto parsed = std::from_chars(
+                    text.data(), text.data() + text.size(), result);
+                if (text.empty() || parsed.ec != std::errc{}
+                    || parsed.ptr != text.data() + text.size() || result == 0U)
+                    throw std::invalid_argument("Invalid native capture identity");
+                return result;
+            };
+            native_audio_input_binding input;
+            input.capture_id = parse_identity(to_utf8(info.GetIsolate(), info[1]));
+            input.generation = parse_identity(to_utf8(info.GetIsolate(), info[2]));
+            input.origin = self->current_security_origin();
+            self->queue_audio_input_stop(input);
+            return;
+        }
+        if (op == "bindCapture") {
+            if (info.Length() < 5 || !info[1]->IsString() || !info[2]->IsString())
+                throw std::invalid_argument("Native capture identity required");
+            const auto capture_text = to_utf8(info.GetIsolate(), info[1]);
+            const auto generation_text = to_utf8(info.GetIsolate(), info[2]);
+            const auto parse_identity = [](const std::string& text) {
+                uint64_t result{};
+                const auto parsed = std::from_chars(
+                    text.data(), text.data() + text.size(), result);
+                if (text.empty() || parsed.ec != std::errc{}
+                    || parsed.ptr != text.data() + text.size() || result == 0U)
+                    throw std::invalid_argument("Invalid native capture identity");
+                return result;
+            };
+            const auto capture_id = parse_identity(capture_text);
+            const auto generation = parse_identity(generation_text);
+            const auto rate = info[3]->Uint32Value(realm).FromMaybe(0U);
+            const auto channels = info[4]->Uint32Value(realm).FromMaybe(0U);
+            if (rate < 8000U || rate > 192000U || channels < 1U || channels > 8U)
+                throw std::invalid_argument("Invalid native capture format");
+            if (self->audio_tracks.size() >= 256U)
+                throw std::length_error("Audio track limit");
+            auto source = std::make_shared<webscene::media::audio_capture>(rate);
+            auto input = std::make_shared<native_audio_input_binding>();
+            input->capture_id = capture_id;
+            input->generation = generation;
+            input->sample_rate = rate;
+            input->channels = channels;
+            input->origin = self->current_security_origin();
+            input->source = source;
+            input->live_tracks = 1U;
+            {
+                std::lock_guard lock(self->native_audio_input_mutex);
+                if (self->native_audio_inputs.size() >= maximum_native_audio_inputs)
+                    throw std::length_error("Native audio input limit");
+                if (self->native_audio_inputs.contains(capture_id))
+                    throw std::invalid_argument("Native capture identity is already active");
+                self->native_audio_inputs.emplace(capture_id, input);
+            }
+            const auto track_id = self->next_audio_track++;
+            self->audio_tracks.emplace(
+                track_id, std::make_shared<webscene::media::audio_track>(source));
+            self->native_audio_input_tracks.emplace(
+                track_id, native_audio_input_track{input, {}, false});
+            info.GetReturnValue().Set(track_id);
+            return;
+        }
+        if (op == "trackBind" || op == "trackClone" || op == "trackStop"
+            || op == "trackEnded" || op == "trackEnabled" || op == "trackMuted") {
             auto id = info[1]->Uint32Value(realm).FromMaybe(0);
             auto found = self->audio_tracks.find(id);
             if (found == self->audio_tracks.end())
@@ -179,10 +388,14 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
                     ->SetPrivate(realm, self->audio_track_key.Get(info.GetIsolate()),
                                  v8::Integer::NewFromUnsigned(info.GetIsolate(), id))
                     .Check();
+                if (auto input = self->native_audio_input_tracks.find(id);
+                    input != self->native_audio_input_tracks.end())
+                    input->second.object.Reset(info.GetIsolate(), info[2].As<v8::Object>());
                 return;
             }
             if (op == "trackStop") {
                 track->stop();
+                self->release_audio_input_track(id);
                 return;
             }
             if (op == "trackEnded") {
@@ -193,10 +406,29 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
                 track->enabled = info[2]->BooleanValue(info.GetIsolate());
                 return;
             }
+            if (op == "trackMuted") {
+                const auto input = self->native_audio_input_tracks.find(id);
+                if (input == self->native_audio_input_tracks.end()) {
+                    info.GetReturnValue().Set(false);
+                    return;
+                }
+                std::lock_guard lock(self->native_audio_input_mutex);
+                info.GetReturnValue().Set(input->second.input->muted);
+                return;
+            }
             if (self->audio_tracks.size() >= 256)
                 throw std::length_error("Audio track limit");
             auto clone = self->next_audio_track++;
             self->audio_tracks.emplace(clone, track->clone());
+            if (const auto input = self->native_audio_input_tracks.find(id);
+                input != self->native_audio_input_tracks.end()) {
+                {
+                    std::lock_guard lock(self->native_audio_input_mutex);
+                    ++input->second.input->live_tracks;
+                }
+                self->native_audio_input_tracks.emplace(
+                    clone, native_audio_input_track{input->second.input, {}, false});
+            }
             info.GetReturnValue().Set(clone);
             return;
         }

@@ -28,7 +28,7 @@
         "media-device-info",
         "media-track-constraints"
       ],
-      "reason": "Browser-shaped secure-context surface and fail-closed capture contract; native enumeration completion is covered by the runtime host-ABI gate."
+      "reason": "Browser-shaped secure-context surface and fail-closed unsupported capture constraints; native enumeration and microphone completion are covered by runtime host-ABI gates."
     }
   ],
   "candidate": [],

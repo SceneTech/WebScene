@@ -232,6 +232,7 @@ bool drain_media() {
 #endif
     if (!ready)
         return false;
+    drain_audio_input_events();
     drain_audio_decodes();
     perform_microtask_checkpoint();
     // Callback may call load()/release(); collect keys then reacquire each binding.

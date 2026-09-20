@@ -37,13 +37,13 @@ class MediaElementAudioSourceNode extends AudioNode {constructor(context,options
 const tracks=new WeakMap(),streams=new WeakMap();
 const trackToken={};
 class MediaStreamTrack extends EventTarget {
- constructor(token,id){super();if(token!==trackToken)throw new TypeError('Illegal constructor');tracks.set(this,{id,enabled:true});native('trackBind',id,this);}
- get id(){return 'webscene-audio-'+tracks.get(this).id;}get kind(){return 'audio';}get label(){return 'WebScene audio mix';}
- get readyState(){return native('trackEnded',tracks.get(this).id)?'ended':'live';}get muted(){return false;}
+ constructor(token,id,metadata={}){super();if(token!==trackToken)throw new TypeError('Illegal constructor');const value={id,enabled:true,label:metadata.label??'WebScene audio mix',settings:{channelCount:metadata.channelCount??2}};for(const key of ['deviceId','groupId','sampleRate'])if(metadata[key]!==undefined)value.settings[key]=metadata[key];tracks.set(this,value);native('trackBind',id,this);}
+ get id(){return 'webscene-audio-'+tracks.get(this).id;}get kind(){return 'audio';}get label(){return tracks.get(this).label;}
+ get readyState(){return native('trackEnded',tracks.get(this).id)?'ended':'live';}get muted(){return native('trackMuted',tracks.get(this).id);}
  get enabled(){return tracks.get(this).enabled;}set enabled(value){const t=tracks.get(this);t.enabled=!!value;native('trackEnabled',t.id,t.enabled);}
- clone(){const result=new MediaStreamTrack(trackToken,native('trackClone',tracks.get(this).id));result.enabled=this.enabled;return result;}
+ clone(){const source=tracks.get(this),result=new MediaStreamTrack(trackToken,native('trackClone',source.id),{label:source.label,...source.settings});result.enabled=this.enabled;return result;}
  stop(){native('trackStop',tracks.get(this).id);}
- getSettings(){return {channelCount:2};}
+ getSettings(){return {...tracks.get(this).settings};}
 }
 let streamId=0;
 class MediaStream extends EventTarget {
@@ -86,7 +86,26 @@ class MediaDevices extends EventTarget {
   records.sort((a,b)=>Number(b.isDefault)-Number(a.isDefault));
   return records.map(record=>new InputDeviceInfo(mediaDeviceToken,record));
  }
- getUserMedia(){return Promise.reject(new DOMException('Native media capture is not connected','NotSupportedError'));}
+ async getUserMedia(constraints){
+  if(!constraints||typeof constraints!=='object')throw new TypeError('MediaStreamConstraints required');
+  if(constraints.video)throw new DOMException('Native video capture is not supported','NotSupportedError');
+  if(!constraints.audio)throw new TypeError('At least one media kind must be requested');
+  const source=constraints.audio===true?{}:constraints.audio;
+  if(!source||typeof source!=='object'||Array.isArray(source))throw new TypeError('Audio constraints must be true or an object');
+  const result={},booleanNames=['autoGainControl','echoCancellation','noiseSuppression'],numberNames=['channelCount','sampleRate','sampleSize'],stringNames=['deviceId','groupId'];
+  const constraint=(name,kinds)=>{if(!(name in source))return;const value=source[name];if(kinds.includes(typeof value)){result[name]=value;return;}if(!value||typeof value!=='object'||Array.isArray(value))throw new TypeError('Invalid '+name+' constraint');const normalized={};for(const key of ['exact','ideal','min','max'])if(key in value){if(!kinds.includes(typeof value[key]))throw new TypeError('Invalid '+name+' constraint');normalized[key]=value[key];}if(!Object.keys(normalized).length)throw new TypeError('Invalid '+name+' constraint');result[name]=normalized;};
+  for(const name of booleanNames)constraint(name,['boolean']);for(const name of numberNames)constraint(name,['number']);for(const name of stringNames)constraint(name,['string']);
+  const finite=value=>typeof value!=='number'||Number.isFinite(value);for(const value of Object.values(result)){if(typeof value==='number'&&!finite(value))throw new TypeError('Media constraints must be finite');if(value&&typeof value==='object')for(const part of Object.values(value))if(!finite(part))throw new TypeError('Media constraints must be finite');}
+  const request=JSON.stringify({version:1,audio:result});if(request.length>16384)throw new DOMException('The media-capture request is too large','QuotaExceededError');
+  const response=await native('openCapture',request),malformed=()=>new DOMException('The native media-capture response is invalid','DataError');
+  if(!response||response.type!=='application/vnd.webscene.media-capture+json'||!(response.bytes instanceof Uint8Array)||response.bytes.byteLength>65536)throw malformed();
+  let payload;try{payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(response.bytes));}catch{throw malformed();}
+  const text=value=>typeof value==='string'&&value.length<=4096;
+  const identity=value=>text(value)&&/^[1-9][0-9]{0,19}$/.test(value)&&(value.length<20||value<='18446744073709551615');
+  if(!payload||payload.version!==1||!identity(payload.captureId)||!identity(payload.generation)||!Number.isInteger(payload.sampleRate)||payload.sampleRate<8000||payload.sampleRate>192000||!Number.isInteger(payload.channelCount)||payload.channelCount<1||payload.channelCount>8||!text(payload.deviceId)||!payload.deviceId||!text(payload.groupId)||!text(payload.label))throw malformed();
+  let id;try{id=native('bindCapture',payload.captureId,payload.generation,payload.sampleRate,payload.channelCount);}catch(error){native('releaseCapture',payload.captureId,payload.generation);throw error;}
+  return new MediaStream([new MediaStreamTrack(trackToken,id,{label:payload.label,deviceId:payload.deviceId,groupId:payload.groupId,sampleRate:payload.sampleRate,channelCount:payload.channelCount})]);
+ }
  getDisplayMedia(){return Promise.reject(new DOMException('Native display capture is not connected','NotSupportedError'));}
 }
 const mediaDevices=new MediaDevices(mediaDevicesToken);

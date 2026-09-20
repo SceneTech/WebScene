@@ -14,7 +14,8 @@ promise_test(async()=>{
  assert_equals(Object.prototype.toString.call(navigator.mediaDevices),'[object MediaDevices]');
  const supported=navigator.mediaDevices.getSupportedConstraints();
  for(const name of ['deviceId','groupId','channelCount','sampleRate','sampleSize','echoCancellation','noiseSuppression','autoGainControl'])assert_true(supported[name]===true,`${name} missing`);
- await promise_rejects_dom('NotSupportedError',navigator.mediaDevices.getUserMedia({audio:true}));
+ await promise_rejects_dom('NotSupportedError',navigator.mediaDevices.getUserMedia({audio:true,video:true}));
+ let invalid=false;try{await navigator.mediaDevices.getUserMedia({audio:false,video:false})}catch(e){invalid=e instanceof TypeError}assert_true(invalid);
  await promise_rejects_dom('NotSupportedError',navigator.mediaDevices.getDisplayMedia({audio:true}));
-},'MediaDevices exposes secure branded constraints and fails closed before capture integration');
+},'MediaDevices exposes secure branded constraints and rejects unsupported capture shapes');
 </script>

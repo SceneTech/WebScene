@@ -1565,6 +1565,7 @@ int main()
     test_native_mutable_stylesheet_cssom(engine);
     test_clipboard_write_text_host_handoff(engine);
     test_media_devices_enumeration_host_handoff();
+    test_media_capture_track_host_handoff();
     test_clipboard_read_host_completion(engine);
     test_native_clipboard_shortcut_events(engine);
     test_primary_selection_middle_paste(engine);

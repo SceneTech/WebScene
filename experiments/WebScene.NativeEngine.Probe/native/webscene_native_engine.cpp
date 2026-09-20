@@ -2396,6 +2396,22 @@ uint8_t webscene_engine_complete_host_request_v1(
     return engine->complete_host_request(std::move(completion)) ? 1U : 0U;
 }
 
+uint32_t webscene_engine_submit_media_capture_packet_v1(
+    webscene_engine* engine, const webscene_media_capture_packet_v1* packet)
+{
+    if (engine == nullptr || packet == nullptr)
+        return WEBSCENE_MEDIA_CAPTURE_INVALID_ARGUMENT_V1;
+    return engine->submit_media_capture_packet(*packet);
+}
+
+uint32_t webscene_engine_submit_media_capture_event_v1(
+    webscene_engine* engine, const webscene_media_capture_event_v1* event)
+{
+    if (engine == nullptr || event == nullptr)
+        return WEBSCENE_MEDIA_CAPTURE_INVALID_ARGUMENT_V1;
+    return engine->submit_media_capture_event(*event);
+}
+
 void webscene_engine_configure_diagnostics(
     webscene_engine* engine, uint32_t flags,
     webscene_diagnostic_available_callback callback, void* user_data)

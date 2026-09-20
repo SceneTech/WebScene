@@ -493,6 +493,10 @@ public:
     void complete_file_grant_remove_request(
         file_grant_remove_completion_data_v2& completion);
     void complete_host_request(native_host_completion& completion);
+    uint32_t submit_media_capture_packet(
+        const webscene_media_capture_packet_v1& packet);
+    uint32_t submit_media_capture_event(
+        const webscene_media_capture_event_v1& event);
     bool try_take_host_request(std::string& request);
     std::unique_ptr<native_host_request> take_typed_host_request();
     bool discard_host_request();

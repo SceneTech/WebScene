@@ -47,6 +47,12 @@ find_package(WebScene CONFIG REQUIRED)
 target_link_libraries(my_native_host PRIVATE WebScene::Runtime)
 ```
 
+An installed SDK may instead flatten the same verified files into `bin`, `lib`,
+`include`, and `lib/cmake/WebScene`. The config accepts exactly one complete
+layout, reports it as `WebScene_RUNTIME_LAYOUT`, and exposes the selected `bin`
+or NuGet native directory through `WebScene_RUNTIME_DIRECTORY`. It rejects
+partial or simultaneous layouts so a stale DLL cannot shadow the packaged one.
+
 `WebSceneConfig.cmake` rejects a non-Windows consumer, a target architecture that
 does not match the package RID, an ABI other than 3, inconsistent manifest
 metadata, missing artifacts, and runtime/header/import-library hash mismatches.

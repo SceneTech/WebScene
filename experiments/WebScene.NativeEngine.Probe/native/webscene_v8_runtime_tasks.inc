@@ -59,6 +59,9 @@
         }
         activate_css_cascade(task_context);
         v8::Context::Scope task_context_scope(task_context);
+        terminal_handoff_task_scope terminal_scope(
+            terminal_handoff_task_active,
+            task.terminal_handoff_critical);
         auto callback = task.callback.Get(isolate);
         if (callback.IsEmpty()) {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
@@ -828,10 +831,10 @@
         // queue; otherwise hot application code remains on its initial tier.
         pump_v8_platform_tasks();
         // A top-level navigation is a browser task, not a synchronous tail of
-        // beforeunload/pagehide. Preserve timer-source order for zero-delay
-        // lifecycle work, then expose every bounded terminal request together.
+        // beforeunload/pagehide. Preserve lifecycle-descended zero-delay and
+        // IndexedDB persistence work, then expose every terminal request.
         if (!pending_terminal_host_requests.empty()
-            && !has_lifecycle_timer_before_terminal_handoff()) {
+            && !has_terminal_handoff_persistence_work()) {
             return drain_terminal_host_request_task();
         }
         const auto timer_due = has_due_timer();

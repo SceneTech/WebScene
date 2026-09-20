@@ -38,7 +38,8 @@
             v8::Global<v8::Context>(info.GetIsolate(), info.GetIsolate()->GetCurrentContext()),
             v8::Global<v8::Function>(info.GetIsolate(), info[0].As<v8::Function>()),
             {},
-            -1});
+            -1,
+            false});
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         self->inspector_async_task_scheduled(
             "requestAnimationFrame",
@@ -89,6 +90,11 @@
         for (int index = 2; index < info.Length(); ++index) {
             arguments.emplace_back(info.GetIsolate(), info[index]);
         }
+        const auto terminal_handoff_critical = !repeating && delay <= 0
+            && self->terminal_handoff_task_budget != 0U
+            && (self->window_close_lifecycle_dispatching
+                || self->terminal_handoff_task_active);
+        if (terminal_handoff_critical) --self->terminal_handoff_task_budget;
         self->timers.push_back(timer_task{
             id,
             false,
@@ -99,7 +105,8 @@
             v8::Global<v8::Context>(info.GetIsolate(), info.GetIsolate()->GetCurrentContext()),
             v8::Global<v8::Function>(info.GetIsolate(), info[0].As<v8::Function>()),
             std::move(arguments),
-            -1});
+            -1,
+            terminal_handoff_critical});
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         self->inspector_async_task_scheduled(
             repeating ? "setInterval" : "setTimeout",
@@ -148,7 +155,8 @@
             v8::Global<v8::Function>(
                 info.GetIsolate(), info[0].As<v8::Function>()),
             {},
-            -1});
+            -1,
+            false});
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         self->inspector_async_task_scheduled("FileReader", id, false);
 #endif

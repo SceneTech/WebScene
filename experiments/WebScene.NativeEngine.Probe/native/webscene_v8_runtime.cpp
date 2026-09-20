@@ -7026,7 +7026,7 @@ struct v8_dom_runtime::implementation final {
         std::lock_guard lock(host_request_mutex);
         const auto count = pending_terminal_host_requests.size();
         pending_terminal_host_requests.clear();
-        terminal_host_request_timer_cutoff.reset();
+        terminal_handoff_task_budget = 0U;
         reserved_host_request_count = count > reserved_host_request_count
             ? 0U : reserved_host_request_count - count;
     }
@@ -7037,14 +7037,6 @@ struct v8_dom_runtime::implementation final {
         if (!request) return false;
         std::lock_guard lock(host_request_mutex);
         if (reserved_host_request_count == 0U) return false;
-        if (pending_terminal_host_requests.empty()) {
-            // Every zero-delay timer scheduled by beforeunload/pagehide or by
-            // their microtasks has an earlier deadline. Timers created by one
-            // of those tasks receive a later deadline and cannot indefinitely
-            // postpone a terminal navigation.
-            terminal_host_request_timer_cutoff =
-                std::chrono::steady_clock::now();
-        }
         pending_terminal_host_requests.push_back(std::move(request));
         return true;
     }
@@ -7057,6 +7049,7 @@ struct v8_dom_runtime::implementation final {
         // coalesced into the outer handoff.
         if (window_close_lifecycle_dispatching) return true;
         if (!reserve_typed_host_request_capacity()) return false;
+        terminal_handoff_task_budget = maximum_terminal_handoff_tasks;
         struct lifecycle_dispatch_guard final {
             bool& dispatching;
             explicit lifecycle_dispatch_guard(bool& value) : dispatching(value)
@@ -7068,22 +7061,28 @@ struct v8_dom_runtime::implementation final {
         const auto disposition =
             request_window_close_in_current_realm(local_context);
         if (disposition != WEBSCENE_WINDOW_CLOSE_ALLOW_V1) {
+            terminal_handoff_task_budget = 0U;
             release_typed_host_request_capacity();
             return disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1;
         }
         if (defer_reserved_terminal_host_request(std::move(request))) return true;
+        terminal_handoff_task_budget = 0U;
         release_typed_host_request_capacity();
         return false;
     }
 
-    bool has_lifecycle_timer_before_terminal_handoff() const noexcept
+    bool has_terminal_handoff_persistence_work() const noexcept
     {
-        if (pending_terminal_host_requests.empty()
-            || !terminal_host_request_timer_cutoff.has_value()) return false;
-        const auto cutoff = *terminal_host_request_timer_cutoff;
-        return std::any_of(timers.begin(), timers.end(), [&](const auto& timer) {
-            return !timer.animation_frame && timer.deadline <= cutoff;
-        });
+        if (pending_terminal_host_requests.empty()) return false;
+        if (std::any_of(timers.begin(), timers.end(), [](const auto& timer) {
+                return timer.terminal_handoff_critical;
+            })) return true;
+        return std::any_of(
+            pending_indexeddb_promises.begin(),
+            pending_indexeddb_promises.end(),
+            [](const auto& entry) {
+                return entry.second.terminal_handoff_critical;
+            });
     }
 
     bool drain_terminal_host_request_task()
@@ -7092,7 +7091,7 @@ struct v8_dom_runtime::implementation final {
         {
             std::lock_guard lock(host_request_mutex);
             if (pending_terminal_host_requests.empty()) {
-                terminal_host_request_timer_cutoff.reset();
+                terminal_handoff_task_budget = 0U;
                 return true;
             }
             while (!pending_terminal_host_requests.empty()) {
@@ -7100,7 +7099,7 @@ struct v8_dom_runtime::implementation final {
                     last_error =
                         "Deferred terminal navigation lost its host-request reservation";
                     pending_terminal_host_requests.clear();
-                    terminal_host_request_timer_cutoff.reset();
+                    terminal_handoff_task_budget = 0U;
                     return false;
                 }
                 --reserved_host_request_count;
@@ -7109,7 +7108,7 @@ struct v8_dom_runtime::implementation final {
                 pending_terminal_host_requests.pop_front();
                 notify = true;
             }
-            terminal_host_request_timer_cutoff.reset();
+            terminal_handoff_task_budget = 0U;
         }
         if (notify && host_request_available) host_request_available();
         return true;

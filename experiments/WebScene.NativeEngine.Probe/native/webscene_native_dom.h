@@ -770,6 +770,7 @@ struct node_style final {
             float height{6};
             float overlay_inset{2};
             float thumb_border_width{0};
+            float thumb_min_height{18};
             float thumb_radius{3};
             float track_radius{3};
             uint32_t thumb_rgba{0xA0A0A0D0U};
@@ -1798,6 +1799,11 @@ struct dom_node final {
     // display state reaches or leaves `none`.
     bool css_cascade_initialized : 1 {false};
     bool css_was_rendered : 1 {false};
+    // Retained scrollbar pseudo state is independent of the host element's
+    // :hover/:active state. These use the remaining bits in the existing node
+    // flag byte and therefore do not increase the hot dom_node footprint.
+    bool scrollbar_thumb_hovered : 1 {false};
+    bool scrollbar_thumb_active : 1 {false};
     std::string tag;
     std::string id_attribute;
     std::string class_name;

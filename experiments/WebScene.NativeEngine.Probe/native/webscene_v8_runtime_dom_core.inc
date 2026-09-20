@@ -2101,6 +2101,7 @@
         }
         if (nodes.contains(active_pointer_target)) active_pointer_target = nullptr;
         if (nodes.contains(scrollbar_drag_target)) scrollbar_drag_target = nullptr;
+        if (nodes.contains(scrollbar_hover_target)) scrollbar_hover_target = nullptr;
         if (nodes.contains(hover_target)) hover_target = nullptr;
         if (nodes.contains(current_related_target)) current_related_target = nullptr;
         released_detached_dom_nodes += document.erase_detached_subtrees(roots);

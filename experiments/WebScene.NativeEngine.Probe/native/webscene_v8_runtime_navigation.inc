@@ -292,6 +292,7 @@
         middle_paste_target_id = 0U;
         active_pointer_target = nullptr;
         scrollbar_drag_target = nullptr;
+        scrollbar_hover_target = nullptr;
         scrollbar_drag_vertical = false;
         scrollbar_drag_pointer_origin = 0;
         scrollbar_drag_scroll_origin = 0;

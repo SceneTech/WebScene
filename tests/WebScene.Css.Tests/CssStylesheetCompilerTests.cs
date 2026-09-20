@@ -18,6 +18,27 @@ public sealed class CssStylesheetCompilerTests
     }
 
     [Fact]
+    public void PreservesScrollbarThumbInteractionStateAfterParserProtection()
+    {
+        var result = CssStylesheetCompiler.Compile("""
+            .scroller::-webkit-scrollbar-thumb:hover { background-color: red; }
+            .scroller::-webkit-scrollbar-thumb:active { background-color: blue !important; }
+            """);
+
+        Assert.Equal(2, result.Rules.Count);
+        Assert.All(result.Rules, rule => Assert.Contains(
+            rule.Selector.Parts[^1].Simple.Pseudos,
+            static pseudo => pseudo.IsElement && pseudo.Name == "-webkit-scrollbar-thumb"));
+        Assert.Contains(result.Rules[0].Selector.Parts[^1].Simple.Pseudos,
+            static pseudo => !pseudo.IsElement && pseudo.Name == "hover");
+        Assert.Contains(result.Rules[1].Selector.Parts[^1].Simple.Pseudos,
+            static pseudo => !pseudo.IsElement && pseudo.Name == "active");
+        Assert.Contains(result.Rules[1].Declarations,
+            static declaration => declaration.Name == "background-color"
+                && declaration.Value == "blue" && declaration.Important);
+    }
+
+    [Fact]
     public void CompilerProducesPortableSelectorsDeclarationsAndNestedMedia()
     {
         var result = CssStylesheetCompiler.Compile("""

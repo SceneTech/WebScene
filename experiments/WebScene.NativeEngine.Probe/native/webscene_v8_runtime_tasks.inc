@@ -3654,7 +3654,6 @@
         float x,
         float y)
     {
-        constexpr auto minimum_thumb = 18.0F;
         for (auto* node = &hit_target; node != nullptr; node = node->parent) {
             if (node->style.scrollbar_hidden
                 || node->layout.width <= 0 || node->layout.height <= 0) continue;
@@ -3698,7 +3697,7 @@
                 const auto rail_y = viewport_y + inset;
                 const auto rail_height = std::max(0.0F, viewport_height - inset * 2);
                 const auto thumb_height = std::min(rail_height, std::max(
-                    minimum_thumb,
+                    scrollbar.thumb_min_height,
                     rail_height * node->scroll_viewport_height
                         / std::max(node->scroll_viewport_height, node->scroll_content_height)));
                 const auto travel = std::max(0.0F, rail_height - thumb_height);
@@ -3716,7 +3715,7 @@
                 const auto rail_y = viewport_y + viewport_height - scrollbar.height - inset;
                 const auto rail_width = std::max(0.0F, viewport_width - inset * 2);
                 const auto thumb_width = std::min(rail_width, std::max(
-                    minimum_thumb,
+                    18.0F,
                     rail_width * node->scroll_viewport_width
                         / std::max(node->scroll_viewport_width, node->scroll_content_width)));
                 const auto travel = std::max(0.0F, rail_width - thumb_width);
@@ -3730,6 +3729,33 @@
             }
         }
         return std::nullopt;
+    }
+
+    void update_scrollbar_thumb_interaction(
+        dom_node* next_hover,
+        dom_node* next_active)
+    {
+        auto* previous_hover = scrollbar_hover_target;
+        auto* previous_active = scrollbar_drag_target;
+        scrollbar_hover_target = next_hover;
+        std::array<dom_node*, 4> affected{
+            previous_hover, previous_active, next_hover, next_active};
+        for (size_t index = 0; index < affected.size(); ++index) {
+            auto* node = affected[index];
+            if (node == nullptr || !is_connected(*node)) continue;
+            if (std::find(affected.begin(), affected.begin() + index, node)
+                != affected.begin() + index) continue;
+            const auto hovered = node == next_hover;
+            const auto active = node == next_active;
+            if (node->scrollbar_thumb_hovered == hovered
+                && node->scrollbar_thumb_active == active) continue;
+            node->scrollbar_thumb_hovered = hovered;
+            node->scrollbar_thumb_active = active;
+            // State selectors are folded into the existing thumb cascade, so
+            // one affected-node recascade preserves specificity, layers,
+            // source order and !important without scanning the document.
+            apply_css_rules(*node);
+        }
     }
 
     bool dispatch_input(const webscene_input_event& input, bool defer_cursor_update = false)
@@ -3812,6 +3838,7 @@
             if (pointer_capture_target != nullptr || scrollbar_drag_target != nullptr) {
                 return true;
             }
+            update_scrollbar_thumb_interaction(nullptr, nullptr);
             auto* previous = hover_target;
             hover_target = nullptr;
             current_related_target = nullptr;
@@ -3859,6 +3886,23 @@
         const auto viewport = viewport_provider();
         const auto pointer_outside = input.x < 0 || input.y < 0
             || input.x >= viewport.width || input.y >= viewport.height;
+        const auto scrollbar_hit_at_pointer = [&]() -> std::optional<scrollbar_thumb_hit> {
+            if (pointer_outside
+                || (input.kind != WEBSCENE_INPUT_POINTER_MOVE
+                    && input.kind != WEBSCENE_INPUT_POINTER_DOWN
+                    && input.kind != WEBSCENE_INPUT_POINTER_UP)) return std::nullopt;
+            auto* start = initial_hit_target;
+            if (start == nullptr) start = &document.body();
+            return hit_test_scrollbar_thumb(
+                *start, static_cast<float>(input.x), static_cast<float>(input.y));
+        };
+        auto current_scrollbar_hit = scrollbar_hit_at_pointer();
+        if (scrollbar_drag_target == nullptr
+            && input.kind == WEBSCENE_INPUT_POINTER_MOVE) {
+            update_scrollbar_thumb_interaction(
+                current_scrollbar_hit.has_value() ? current_scrollbar_hit->target : nullptr,
+                nullptr);
+        }
         if (scrollbar_drag_target != nullptr
             && (input.kind == WEBSCENE_INPUT_POINTER_MOVE
                 || input.kind == WEBSCENE_INPUT_POINTER_UP)) {
@@ -3887,6 +3931,10 @@
                 }
             }
             if (input.kind == WEBSCENE_INPUT_POINTER_UP) {
+                update_scrollbar_thumb_interaction(
+                    current_scrollbar_hit.has_value()
+                        ? current_scrollbar_hit->target : nullptr,
+                    nullptr);
                 scrollbar_drag_target = nullptr;
                 if (pointer_outside) return leave_host();
             }
@@ -3910,9 +3958,16 @@
         }
         if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
             && ((input.flags >> 8U) & 0xffU) <= 1U) {
-            if (const auto hit = hit_test_scrollbar_thumb(
+            if (current_scrollbar_hit.has_value()) {
+                update_scrollbar_thumb_interaction(
+                    current_scrollbar_hit->target,
+                    current_scrollbar_hit->target);
+                // Hover declarations can alter the authored minimum extent.
+                // Re-read the same retained geometry before beginning drag.
+                current_scrollbar_hit = hit_test_scrollbar_thumb(
                     *hit_target, static_cast<float>(input.x), static_cast<float>(input.y));
-                hit.has_value()) {
+            }
+            if (const auto& hit = current_scrollbar_hit; hit.has_value()) {
                 scrollbar_drag_target = hit->target;
                 scrollbar_drag_vertical = hit->vertical;
                 scrollbar_drag_pointer_origin = hit->pointer_origin;
@@ -3921,6 +3976,11 @@
                 scrollbar_drag_thumb_travel = hit->thumb_travel;
                 return true;
             }
+        }
+        if (input.kind == WEBSCENE_INPUT_POINTER_UP) {
+            update_scrollbar_thumb_interaction(
+                current_scrollbar_hit.has_value() ? current_scrollbar_hit->target : nullptr,
+                nullptr);
         }
         auto* target = pointer_capture_target != nullptr
             && input.kind != WEBSCENE_INPUT_POINTER_DOWN

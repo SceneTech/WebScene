@@ -733,6 +733,7 @@
     bool outbound_drag_threshold_crossed{false};
     dom_node* active_pointer_target{nullptr};
     dom_node* scrollbar_drag_target{nullptr};
+    dom_node* scrollbar_hover_target{nullptr};
     bool scrollbar_drag_vertical{false};
     double scrollbar_drag_pointer_origin{0};
     float scrollbar_drag_scroll_origin{0};

@@ -697,7 +697,11 @@
             const auto pseudo_kind = split_pseudo_element_selector(rule.selector(), pseudo_origin);
             if (pseudo_kind != 0) {
                 if (!pseudo_origin.empty() && css_selector_matches(node, pseudo_origin)) {
-                    matched_pseudo_rules.emplace_back(pseudo_kind, &rule);
+                    if (pseudo_kind == 11 && !node.scrollbar_thumb_hovered) continue;
+                    if (pseudo_kind == 12 && !node.scrollbar_thumb_active) continue;
+                    matched_pseudo_rules.emplace_back(
+                        pseudo_kind == 11 || pseudo_kind == 12 ? 4 : pseudo_kind,
+                        &rule);
                 }
                 continue;
             }

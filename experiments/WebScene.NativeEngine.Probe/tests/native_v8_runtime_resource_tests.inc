@@ -1034,9 +1034,11 @@ void test_query_iframe_worker_extension_host_bootstrap()
         "https://extension-host.test/index.html"};
     constexpr std::string_view frame_address{
         "https://extension-host.test/webWorkerExtensionHostIframe.html?&vscodeWebWorkerExtHostId=extension-host-id"};
+    constexpr std::string_view rejected_frame_address{
+        "https://extension-host.test/rejected-inline.html"};
     resource_server server{.content = {
         {std::string{address}, "<!doctype html><title>extension host</title><body></body>"},
-        {std::string{frame_address}, R"HTML(<!doctype html><body><script>
+        {std::string{frame_address}, R"HTML(<!doctype html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'sha256-XRm2CyzSZ5NkI0tgV+AGmmkhHsFTQnXLIXyTFDUyMuc='"></head><body><script>
           (() => {
             const searchParams = new URL(document.location.href).searchParams;
             const vscodeWebWorkerExtHostId =
@@ -1064,6 +1066,7 @@ void test_query_iframe_worker_extension_host_bootstrap()
             }, '*');
           })();
         </script></body>)HTML"},
+        {std::string{rejected_frame_address}, R"HTML(<!doctype html><head><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"></head><body><script>parent.postMessage('bad','*')</script></body>)HTML"},
         {"https://extension-host.test/extensionHostWorker.js", R"JS(
           const channel = new MessageChannel();
           channel.port1.onmessage = event => channel.port1.postMessage(event.data + 1);
@@ -1165,6 +1168,25 @@ void test_query_iframe_worker_extension_host_bootstrap()
         "query iframe extension-host bootstrap diverged: "
             + evaluate(engine, "JSON.stringify(__extensionHost)",
                 "query-iframe-extension-host-detail.js"));
+    execute(engine, R"JS(
+      globalThis.__rejectedCspInline = {message:false, complete:false};
+      addEventListener('message', event => {
+        if (event.data === 'bad') __rejectedCspInline.message = true;
+      });
+      const rejected = document.createElement('iframe');
+      rejected.src = 'https://extension-host.test/rejected-inline.html';
+      document.body.appendChild(rejected);
+      setTimeout(() => {
+        rejected.remove();
+        __rejectedCspInline.complete = true;
+      }, 250);
+    )JS", "query-iframe-csp-rejection.js");
+    require(evaluate_until_equals(engine, "__rejectedCspInline.complete",
+            "query-iframe-csp-rejection-complete.js", "true", 2'500) == "true",
+        "nonmatching iframe CSP hash rejection timed out");
+    require(evaluate(engine, "__rejectedCspInline.message",
+            "query-iframe-csp-rejection-result.js") == "false",
+        "unsafe-inline bypassed a present nonmatching CSP hash source");
     require(webscene_engine_request_low_memory(engine) != 0,
         "query iframe extension-host low-memory request failed");
     webscene_engine_memory_metrics memory_after{

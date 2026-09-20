@@ -3758,6 +3758,136 @@
         }
     }
 
+    std::pair<std::string_view, dom_node*> used_user_select(dom_node& target)
+    {
+        for (auto* node = target.kind == dom_node_kind::text
+                ? target.parent : &target;
+            node != nullptr; node = node->parent) {
+            const auto& value = node->style.textual().user_select;
+            if (value == "none" || value == "text" || value == "all") {
+                return {value, node};
+            }
+        }
+        return {"text", target.kind == dom_node_kind::text
+            ? target.parent : &target};
+    }
+
+    dom_node* pointer_text_node_at(dom_node& hit, float x, float y)
+    {
+        if (hit.kind == dom_node_kind::text && !hit.text_content.empty()) {
+            return &hit;
+        }
+        dom_node* fallback = nullptr;
+        const auto find = [&](const auto& recurse, dom_node& node) -> dom_node* {
+            if (!node.visible || node.style.display == display_mode::none) return nullptr;
+            if (node.kind == dom_node_kind::text && !node.text_content.empty()) {
+                if (fallback == nullptr) fallback = &node;
+                const auto& box = node.layout;
+                if (x >= box.x && x <= box.x + box.width
+                    && y >= box.y && y <= box.y + box.height) return &node;
+                for (const auto& fragment : node.text_layout_fragments) {
+                    if (x >= fragment.x && x <= fragment.x + fragment.width
+                        && y >= fragment.y && y <= fragment.y + fragment.height) {
+                        return &node;
+                    }
+                }
+                return nullptr;
+            }
+            for (auto* child : node.children) {
+                if (child == nullptr) continue;
+                if (auto* result = recurse(recurse, *child); result != nullptr) {
+                    return result;
+                }
+            }
+            return nullptr;
+        };
+        if (auto* exact = find(find, hit); exact != nullptr) return exact;
+        return fallback;
+    }
+
+    bool begin_pointer_text_selection(
+        const webscene_input_event& input, dom_node& target)
+    {
+        auto [policy, boundary] = used_user_select(target);
+        if (policy == "none" || boundary == nullptr) return true;
+        for (auto* node = &target; node != nullptr; node = node->parent) {
+            if (node->tag == "input" || node->tag == "textarea"
+                || node->tag == "select" || node->tag == "button") return true;
+            if (const auto draggable = node->attributes.find("draggable");
+                draggable != node->attributes.end() && draggable->second == "true") {
+                return true;
+            }
+        }
+        bool prevented = false;
+        if (!dispatch_input_event_type(input, "selectstart", target, &prevented)) {
+            return false;
+        }
+        if (prevented) return true;
+        auto* root = css_cascade_root_for_node(target);
+        if (root == nullptr) return true;
+        auto& selection = window_selections.try_emplace(root->id).first->second;
+        selection.root_id = root->id;
+        refresh_selection_text_nodes(selection, *root);
+        if (policy == "all") {
+            std::vector<dom_node*> selected;
+            const auto collect = [&](const auto& recurse, dom_node& node) -> void {
+                if (!node.visible || node.style.display == display_mode::none) return;
+                if (node.kind == dom_node_kind::text && !node.text_content.empty()) {
+                    selected.push_back(&node);
+                }
+                for (auto* child : node.children) {
+                    if (child != nullptr) recurse(recurse, *child);
+                }
+            };
+            collect(collect, *boundary);
+            if (selected.empty()) return true;
+            selection.has_range = true;
+            selection.anchor_node_id = selected.front()->id;
+            selection.anchor_offset = 0U;
+            selection.focus_node_id = selected.back()->id;
+            selection.focus_offset = decode_wtf8_to_utf16(
+                selected.back()->text_content).size();
+            pointer_text_selection_active = false;
+            pointer_selection_root_id = 0U;
+            selection_paint_changed();
+            return true;
+        }
+        auto* text = pointer_text_node_at(
+            target, static_cast<float>(input.x), static_cast<float>(input.y));
+        if (text == nullptr) return true;
+        const auto offset = document.text_caret_offset_at_x(
+            *text, static_cast<float>(input.x));
+        selection.has_range = true;
+        selection.anchor_node_id = text->id;
+        selection.focus_node_id = text->id;
+        selection.anchor_offset = offset;
+        selection.focus_offset = offset;
+        pointer_selection_root_id = root->id;
+        pointer_text_selection_active = true;
+        selection_paint_changed();
+        return true;
+    }
+
+    void update_pointer_text_selection(
+        const webscene_input_event& input, dom_node& hit)
+    {
+        if (!pointer_text_selection_active) return;
+        const auto known = window_selections.find(pointer_selection_root_id);
+        if (known == window_selections.end()) return;
+        auto* text = pointer_text_node_at(
+            hit, static_cast<float>(input.x), static_cast<float>(input.y));
+        if (text == nullptr || css_cascade_root_for_node(*text) == nullptr
+            || css_cascade_root_for_node(*text)->id != pointer_selection_root_id
+            || used_user_select(*text).first == "none") return;
+        auto& selection = known->second;
+        const auto offset = document.text_caret_offset_at_x(
+            *text, static_cast<float>(input.x));
+        if (selection.focus_node_id == text->id && selection.focus_offset == offset) return;
+        selection.focus_node_id = text->id;
+        selection.focus_offset = offset;
+        selection_paint_changed();
+    }
+
     bool dispatch_input(const webscene_input_event& input, bool defer_cursor_update = false)
     {
         struct user_input_dispatch_scope {
@@ -4263,6 +4393,17 @@
             report_input_exception();
             return false;
         }
+        if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            && changed_button == 0 && !pointer_focus_default_prevented
+            && !begin_pointer_text_selection(input, *target)) {
+            last_error = "Native selectstart dispatch failed";
+            return false;
+        }
+        if ((input.kind == WEBSCENE_INPUT_POINTER_MOVE
+                || input.kind == WEBSCENE_INPUT_POINTER_UP)
+            && pointer_text_selection_active) {
+            update_pointer_text_selection(input, *hit_target);
+        }
         if (input.kind == WEBSCENE_INPUT_WHEEL && !wheel_default_prevented) {
             const auto discrete_wheel =
                 (input.flags & WEBSCENE_INPUT_WHEEL_DISCRETE) != 0U;
@@ -4519,6 +4660,8 @@
             }
         }
         if (input.kind == WEBSCENE_INPUT_POINTER_UP) {
+            pointer_text_selection_active = false;
+            pointer_selection_root_id = 0U;
             pointer_capture_target = nullptr;
             pointer_down_target = nullptr;
             middle_paste_target_id = 0U;

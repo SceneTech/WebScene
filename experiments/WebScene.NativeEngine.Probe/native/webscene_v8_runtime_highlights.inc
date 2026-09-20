@@ -144,7 +144,6 @@
         constexpr auto selection_priority = std::numeric_limits<int32_t>::max();
         uint32_t selection_order = 0U;
         for (auto& [root_id, selection] : window_selections) {
-            if (selection_rules.empty()) break;
             auto* root = document.find_by_native_id(root_id);
             if (root == nullptr || !validate_selection(selection)
                 || (selection.anchor_node_id == selection.focus_node_id
@@ -183,38 +182,42 @@
                         matching.push_back(entry.rule);
                     }
                 }
-                if (matching.empty()) continue;
                 std::stable_sort(
                     matching.begin(), matching.end(),
                     [](const css_rule* left, const css_rule* right) {
                         return css::cascade_rule_precedes(left, right, false);
                     });
                 resolved_highlight_style style;
-                const css::cascaded_rule_order cascade(matching);
-                css::for_each_cascaded_declaration(
-                    cascade,
-                    false,
-                    [&](const css_declaration& declaration) {
-                        const auto foreground = declaration.name == "color";
-                        const auto background = declaration.name == "background-color";
-                        if (!foreground && !background) return;
-                        auto resolved = declaration.value.find("var(") != std::string::npos
-                            ? resolve_value(*origin_node, declaration.value, css_variables)
-                            : declaration.value;
-                        const auto color = native_document::parse_color(resolved);
-                        if (!css::is_explicit_color_token(resolved, color)) return;
-                        if (foreground) {
-                            style.foreground_rgba = color;
-                            style.foreground_specified = true;
-                        } else {
-                            style.background_rgba = color;
-                            style.background_specified = true;
-                        }
-                    },
-                    [](const css_declaration& declaration) -> std::string_view {
-                        return declaration.name;
-                    });
-                if (!style.foreground_specified && !style.background_specified) continue;
+                style.foreground_rgba = css::system_color_rgba("HighlightText")
+                    .value_or(0xffffffffU);
+                style.background_rgba = css::system_color_rgba("Highlight")
+                    .value_or(0x0067c0ffU);
+                style.foreground_specified = true;
+                style.background_specified = true;
+                if (!matching.empty()) {
+                    const css::cascaded_rule_order cascade(matching);
+                    css::for_each_cascaded_declaration(
+                        cascade,
+                        false,
+                        [&](const css_declaration& declaration) {
+                            const auto foreground = declaration.name == "color";
+                            const auto background = declaration.name == "background-color";
+                            if (!foreground && !background) return;
+                            auto resolved = declaration.value.find("var(") != std::string::npos
+                                ? resolve_value(*origin_node, declaration.value, css_variables)
+                                : declaration.value;
+                            const auto color = native_document::parse_color(resolved);
+                            if (!css::is_explicit_color_token(resolved, color)) return;
+                            if (foreground) {
+                                style.foreground_rgba = color;
+                            } else {
+                                style.background_rgba = color;
+                            }
+                        },
+                        [](const css_declaration& declaration) -> std::string_view {
+                            return declaration.name;
+                        });
+                }
                 const auto text_length = decode_wtf8_to_utf16(text->text_content).size();
                 const auto start_offset = iterator == first
                     ? std::min(first_offset, text_length) : 0U;

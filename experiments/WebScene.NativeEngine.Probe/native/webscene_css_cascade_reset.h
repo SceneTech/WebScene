@@ -228,6 +228,7 @@ inline void reset_cascaded_style(dom_node& node,
             textual->overflow_wrap.clear();
             textual->object_fit.clear();
             textual->object_position.clear();
+            textual->user_select.clear();
         }
         if ((node.style.inline_property_mask & inline_font_weight) == 0U) node.style.font_weight = 0;
         if ((node.style.inline_property_mask & inline_line_height) == 0U) node.style.line_height = -1;

@@ -259,6 +259,12 @@
             if (auto* textual = node.style.mutable_textual_if_present()) {
                 textual->object_position.clear();
             }
+        } else if (name == "userSelect" || name == "user-select"
+            || name == "webkitUserSelect" || name == "WebkitUserSelect"
+            || name == "msUserSelect" || name == "MsUserSelect") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->user_select.clear();
+            }
         } else if (name == "boxSizing" || name == "box-sizing") {
             node.style.border_box = false;
             node.style.inline_property_mask &= ~inline_box_sizing;
@@ -959,6 +965,12 @@
                 std::string semantic_slice;
             } decision;
             css::apply_replaced_value(*node, name, value, decision);
+        } else if (name == "user-select") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_user_select_value(*node, name, value, decision);
         } else if (name == "box-sizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;
@@ -1567,6 +1579,9 @@
             } else if (name == "object-position") {
                 value = node->style.textual().object_position.empty()
                     ? "50% 50%" : node->style.textual().object_position;
+            } else if (name == "user-select") {
+                value = node->style.textual().user_select.empty()
+                    ? "auto" : node->style.textual().user_select;
             } else if (name == "cursor") {
                 value = resolved_cursor(*node);
             } else if (name == "font-size") {
@@ -2030,6 +2045,11 @@
         } else if (name == "objectPosition") {
             value = node->style.textual().object_position.empty()
                 ? "50% 50%" : node->style.textual().object_position;
+        } else if (name == "userSelect" || name == "webkitUserSelect"
+            || name == "WebkitUserSelect" || name == "msUserSelect"
+            || name == "MsUserSelect") {
+            value = node->style.textual().user_select.empty()
+                ? "auto" : node->style.textual().user_select;
         } else if (name == "boxSizing") {
             value = node->style.border_box ? "border-box" : "content-box";
         } else if (name == "borderRadius") {
@@ -2609,6 +2629,14 @@
                     : std::string{"object-position"},
                 value,
                 decision);
+        } else if (name == "userSelect" || name == "webkitUserSelect"
+            || name == "WebkitUserSelect" || name == "msUserSelect"
+            || name == "MsUserSelect") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_user_select_value(*node, "user-select", value, decision);
         } else if (name == "boxSizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;

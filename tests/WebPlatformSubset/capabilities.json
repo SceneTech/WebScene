@@ -211,6 +211,13 @@
       "gap": "The native pipeline preserves encoded raster bytes for the platform Skia decoder, parses intrinsic dimensions for PNG, JPEG, GIF, and WebP, and now authors provider-neutral object-fit/object-position destination and content-clip commands for SVG and raster images. Direct native/browser execution, exact raster/SVG pixels, and the 4,096-image paint-only performance gate remain qualification debt for WebScene #789. Animated image playback, srcset/sizes selection, picture/source negotiation, decoding hints, and CSS raster background images remain outside this bounded claim."
     },
     {
+      "family": "user-text-selection",
+      "required": ["user-select auto/text/none/all", "WebKit/MS aliases", "pointer drag Selection", "cancelable selectstart", "atomic all subtree", "paint-only mutation"],
+      "productEvidence": ["Monaco native selection policy", "lists and dialogs", "terminal and notebooks", "Chat and webview content"],
+      "coverage": ["contracts/css-user-select-interaction.html", "test_user_select_pointer_default_action", "test_user_select_performance_gate", "existing Selection/Range and ::selection retained-paint contracts"],
+      "gap": "WebScene #791 authors the bounded native pointer-selection default action over existing Selection/Range and retained highlight paint. Direct native/browser execution, multiline and bidirectional exact pixels, package interaction, accessibility, memory/lifecycle, and the 4,096-node performance gate remain qualification debt. Touch selection handles and platform-native context selection UI remain outside this bounded slice."
+    },
+    {
       "family": "svg-presentation-paint",
       "required": ["presentation attributes below author rules in the cascade", "inherited fill and stroke properties", "currentColor resolution against the painted element", "scene invalidation after inherited color and class changes"],
       "productEvidence": ["Volume three-dot submenu chevrons", "axis-scale Labels and Lines submenu chevrons", "sidebar and toolbar currentColor icons"],

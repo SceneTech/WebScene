@@ -659,6 +659,10 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
             || normalized_value == "cover" || normalized_value == "none"
             || normalized_value == "scale-down";
     }
+    if (canonical_name == "user-select") {
+        return normalized_value == "auto" || normalized_value == "text"
+            || normalized_value == "none" || normalized_value == "all";
+    }
 
     if (canonical_name == "position") {
         return normalized_value == "static" || normalized_value == "relative"

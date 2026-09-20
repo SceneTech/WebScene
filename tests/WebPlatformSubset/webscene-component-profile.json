@@ -2829,6 +2829,13 @@
       "capabilities": ["object-fit-replaced-image-paint", "object-position-alignment", "intrinsic-image-ratio", "content-box-clipping", "object-fit-cssom-mutation"],
       "evidence": ["focused-native-scene-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #789 contract for the replaced-image fit and alignment used by unchanged Code OSS avatars, account imagery, thumbnails, extension surfaces, and session UI. It covers initial/computed CSSOM, inline mutation/removal, intrinsic dimensions, and stable element geometry; the native companion records cover/contain destination and clip commands. Direct browser/native execution, raster/SVG pixels, exact product regions, and performance evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-user-select-interaction.html",
+      "type": "testharness",
+      "capabilities": ["user-select-cssom", "prefixed-user-select-alias", "pointer-text-selection", "cancelable-selectstart", "atomic-select-all"],
+      "evidence": ["focused-native-pointer-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #791 contract for 276 user-select declarations across 94 unchanged Code OSS files. It covers canonical/prefixed CSSOM, mutation/removal, pointer-created Selection state, none/text/all policy, and selectstart cancellation. Direct browser/native execution, exact selection pixels, package regions, performance, memory, and lifecycle evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

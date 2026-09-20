@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>User selection policy retains browser-shaped CSSOM</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #none { user-select: none; }
+  #text { -webkit-user-select: text; }
+  #all { user-select: all; }
+</style>
+<div id="none"><span id="auto-child">blocked text</span></div>
+<div id="text">selectable text</div>
+<div id="all">atomic text</div>
+<script>
+  test(() => {
+    assert_equals(getComputedStyle(none).userSelect, 'none');
+    assert_equals(getComputedStyle(document.getElementById('auto-child')).userSelect, 'auto');
+    assert_equals(getComputedStyle(text).userSelect, 'text');
+    assert_equals(getComputedStyle(all).userSelect, 'all');
+  }, 'canonical and prefixed declarations expose browser-shaped computed values');
+
+  test(() => {
+    text.style.userSelect = 'none';
+    assert_equals(text.style.userSelect, 'none');
+    assert_equals(getComputedStyle(text).userSelect, 'none');
+    text.style.webkitUserSelect = 'text';
+    assert_equals(text.style.webkitUserSelect, 'text');
+    assert_equals(getComputedStyle(text).userSelect, 'text');
+    text.style.userSelect = 'invalid';
+    assert_equals(text.style.userSelect, 'text');
+    text.style.removeProperty('user-select');
+    assert_equals(getComputedStyle(text).userSelect, 'text');
+  }, 'inline aliases, invalid writes, and removal preserve the cascade');
+</script>

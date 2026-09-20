@@ -9,6 +9,7 @@
 #include "webscene_css_variables.h"
 #include "webscene_css_scrollbar_values.h"
 #include "webscene_css_replaced_values.h"
+#include "webscene_css_interaction_values.h"
 
 namespace webscene_native::css {
 // Apply an already-resolved declaration. The caller owns variable resolution,
@@ -257,6 +258,7 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
             load_svg)) {
         } else if (css::apply_visibility_value(document,node,name,value,is_inline)) {
         } else if (css::apply_replaced_value(node,name,value,decision)) {
+        } else if (css::apply_user_select_value(node,name,value,decision)) {
         } else if (css::apply_text_value(node,name,value,decision,is_inline)) {
         } else if (name == "border-style") {
             decision.classification = "partially-supported";

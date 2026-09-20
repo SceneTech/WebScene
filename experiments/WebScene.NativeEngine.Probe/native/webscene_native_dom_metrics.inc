@@ -345,6 +345,7 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + textual->overflow_wrap.capacity() + 1U
             + textual->object_fit.capacity() + 1U
             + textual->object_position.capacity() + 1U
+            + textual->user_select.capacity() + 1U
             + textual->cursor.capacity() + 1U
             + textual->svg_fill.capacity() + 1U
             + textual->svg_stroke.capacity() + 1U

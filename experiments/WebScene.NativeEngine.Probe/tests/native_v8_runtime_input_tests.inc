@@ -97,6 +97,63 @@ void animation_frame(webscene_engine* engine, double timestamp, uint64_t sequenc
     require(webscene_engine_enqueue(engine, &input) != 0, "animation frame was rejected");
 }
 
+void test_user_select_pointer_default_action(webscene_engine* engine)
+{
+    resize(engine, 500, 180, 7901U);
+    execute(engine, R"JS(
+      document.body.innerHTML = `<style>
+        body { margin:0; }
+        .row { display:block; width:300px; height:30px; font:20px monospace; }
+        #none { user-select:none; }
+        #text { -webkit-user-select:text; }
+        #all { user-select:all; }
+      </style>
+      <div id="none" class="row">blocked value</div>
+      <div id="text" class="row">selectable value</div>
+      <div id="all" class="row">atomic value</div>
+      <div id="cancel" class="row">cancelled value</div>`;
+      globalThis.selectStarts = 0;
+      document.addEventListener('selectstart', event => {
+        ++selectStarts;
+        if (event.target.id === 'cancel') event.preventDefault();
+      });
+    )JS", "native-user-select-setup.js");
+
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 2, 45, 7902U, true);
+    pointer_move(engine, 100, 45, 7903U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 100, 45, 7904U, false);
+    const auto text = evaluate(engine,
+        "JSON.stringify([getSelection().toString(),selectStarts])",
+        "native-user-select-text.js");
+    require(text.find("selectable") != std::string::npos
+            && text.ends_with(",1]"),
+        "user-select:text pointer drag did not create one selection: " + text);
+
+    execute(engine, "getSelection().removeAllRanges()",
+        "native-user-select-clear.js");
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 2, 15, 7905U, true);
+    pointer_move(engine, 100, 15, 7906U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 100, 15, 7907U, false);
+    require(evaluate(engine, "getSelection().toString()",
+            "native-user-select-none.js").empty(),
+        "user-select:none admitted a native pointer selection");
+
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 30, 75, 7908U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 30, 75, 7909U, false);
+    require(evaluate(engine, "getSelection().toString()",
+            "native-user-select-all.js") == "atomic value",
+        "user-select:all did not atomically select its subtree");
+
+    execute(engine, "getSelection().removeAllRanges()",
+        "native-user-select-clear-cancel.js");
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 30, 105, 7910U, true);
+    pointer_move(engine, 100, 105, 7911U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 100, 105, 7912U, false);
+    require(evaluate(engine, "getSelection().toString()",
+            "native-user-select-cancel.js").empty(),
+        "canceled selectstart still created a pointer selection");
+}
+
 void animation_frame_and_wait(
     webscene_engine* engine,
     double timestamp,

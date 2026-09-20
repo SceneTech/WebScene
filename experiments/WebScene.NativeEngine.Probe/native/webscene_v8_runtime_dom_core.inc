@@ -736,6 +736,7 @@
             std::string_view{"opacity"},
             std::string_view{"object-fit"},
             std::string_view{"object-position"},
+            std::string_view{"user-select"},
             std::string_view{"pointer-events"},
             std::string_view{"visibility"},
             std::string_view{"-webkit-font-smoothing"}

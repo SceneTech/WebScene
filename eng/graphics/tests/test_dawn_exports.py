@@ -23,7 +23,9 @@ class DawnExportTests(unittest.TestCase):
              "00001040 T websceneDawnQueryVulkanDeviceV3\n"
              "00001050 T websceneDawnAcquireVulkanQueueV3\n"
              "00001060 T websceneDawnReleaseVulkanQueueV3\n"),
-            ("win-x64", "  1  0 00001000 wgpuCreateInstance\n  2  1 00001010 wgpuGetProcAddress\n")]:
+            ("win-x64", "  1  0 00001000 wgpuCreateInstance\n"
+             "  2  1 00001010 wgpuGetProcAddress\n"
+             "  3  2 00001020 websceneDawnQueryD3D12DeviceV1\n")]:
             with self.subTest(rid=rid):
                 self.assertEqual(self.inspect(text, rid)["status"], "passed")
 

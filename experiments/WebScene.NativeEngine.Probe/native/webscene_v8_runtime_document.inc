@@ -1371,6 +1371,7 @@
 
         auto has_nonce_or_hash = false;
         auto allows_unsafe_inline = false;
+        std::optional<std::string> inline_sha256;
         for (const auto& source : policy.sources) {
             const auto normalized = lower_html_name(source);
             has_nonce_or_hash = has_nonce_or_hash
@@ -1383,6 +1384,24 @@
             if (!script.nonce.empty()
                 && source == "'nonce-" + script.nonce + "'") {
                 return true;
+            }
+            if (script.source.empty()
+                && normalized.starts_with("'sha256-")
+                && source.size() > 9U && source.back() == '\'') {
+                if (!inline_sha256.has_value()) {
+                    const auto digest = sha256(
+                        reinterpret_cast<const uint8_t*>(script.code.data()),
+                        script.code.size());
+                    inline_sha256 = encode_base64(std::string_view{
+                        reinterpret_cast<const char*>(digest.data()),
+                        digest.size()});
+                }
+                // The algorithm token is ASCII case-insensitive. Digest
+                // Base64 remains case-sensitive and covers the parser's exact
+                // inline source bytes, including leading/trailing whitespace.
+                const auto encoded = std::string_view{source}.substr(
+                    8U, source.size() - 9U);
+                if (encoded == *inline_sha256) return true;
             }
         }
         if (script.source.empty()) {

@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "revisions": {
     "codeOss": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
-    "webScene": "d5b7670e5e8522220cc2bdaab7487986726c5c4a",
+    "webScene": "24c18362906da7314eeda6e1af12f7eafb7afad5",
     "appScene": "773e94e26b58eac423ca24d5e47bea172965c94c",
     "wpt": "2c705104a295c48053eeddf7fe0170d790a4e853"
   },
@@ -462,11 +462,15 @@
       "state": "blocked",
       "issues": [
         "WebScene#270",
-        "AppScene#124"
+        "AppScene#124",
+        "WebScene#768"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "URL parsing, native-host navigation, localhost mapping, and object-URL lifetime slices exist; complete installed-package and cross-platform qualification remains incomplete.",
+      "limits": [
+        "URL.parse and URL.canParse main/iframe contracts are authored but unexecuted under the active implementation-throughput directive.",
+        "The enclosing URL parser remains deliberately partial; installed Browser View, Chat, MCP, and session-artifact acceptance is pending."
+      ],
+      "reason": "Object URL, navigation, localhost mapping, and the URL.parse/URL.canParse static surface reached by unchanged Code OSS are implemented with authored gates at WebScene 24c18362; complete URL conformance and installed cross-platform product evidence remain incomplete.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

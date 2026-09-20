@@ -153,6 +153,13 @@
       "evidence": ["tradingview-datafeed-symbol-search"]
     },
     {
+      "path": "contracts/url-static-helpers.html",
+      "type": "contract",
+      "capabilities": ["url-can-parse", "url-parse", "url-static-realm-parity", "url-static-input-bounds"],
+      "evidence": ["vscode-oss-browser-view-url-matching", "vscode-oss-chat-mcp-uri-validation", "vscode-oss-session-artifact-links"],
+      "reason": "Candidate contract for WebScene #768. It covers main/iframe shape, absolute and relative parsing, special/non-special schemes, invalid inputs and bases, missing arguments, single input conversion, and null-return behavior. Installed Code OSS Browser View, Chat, MCP, and session-artifact acceptance remains under #260/#261/#263/#264."
+    },
+    {
       "path": "contracts/fetch-formdata-post.html",
       "type": "contract",
       "capabilities": ["formdata", "fetch-post", "multipart-form-data", "asynchronous-save-acknowledgement"],

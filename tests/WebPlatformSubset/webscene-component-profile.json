@@ -1384,6 +1384,7 @@
     {
       "path": "contracts/css-webkit-details-marker-display.html",
       "type": "reftest",
+      "reference": "contracts/css-webkit-details-marker-display-ref.html",
       "capabilities": ["webkit-details-marker-display-none", "retained-summary-marker-suppression", "details-marker-layout-invalidation"],
       "evidence": ["css-pseudo-elements-derived", "native-retained-list-marker-contract", "vscode-oss-645f29c-details-marker-ledger"],
       "reason": "Implementation-first WebScene #783 slice for the two unchanged Code OSS Chat disclosure rules. The pseudo-hidden result matches the established list-style:none reference while reusing one retained marker representation. Native companion coverage requires initial visibility, hide/restore, classifier origin, layout equality, and a non-summary zero-allocation guard. Direct browser/native pixels, dynamic mutation, 4,096-summary performance/lifecycle, and package execution remain validation debt."

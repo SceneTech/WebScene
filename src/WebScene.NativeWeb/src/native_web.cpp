@@ -28,6 +28,7 @@ struct document_state {
   uint64_t rendered_scene_generation{};
   bool keyboard_modality{true};
   node_id focus{}, hover{}, pressed{}, body_id{};
+  std::array<node_id, 16> pointer_pressed{};
   std::map<node_id,std::string> uncommitted_text;
   uint64_t next_listener{1};
   std::mutex listener_mutex;
@@ -220,6 +221,8 @@ void document::remove(node_id id) {
     state_->hover = 0;
   if (std::ranges::find(removed, state_->pressed) != removed.end())
     state_->pressed = 0;
+  for (auto &pressed : state_->pointer_pressed)
+    if (std::ranges::find(removed, pressed) != removed.end()) pressed = 0;
   std::erase_if(state_->rules, [&](const auto &r) {
     return r.inline_target &&
            std::ranges::find(removed, r.inline_target) != removed.end();
@@ -258,6 +261,15 @@ subscription document::on(node_id node, std::string type,
   return subscription(state_, id);
 }
 bool document::dispatch(node_id target, std::string type, float client_x, float client_y, float delta_y, uint32_t buttons, std::string property_name, float elapsed_time_seconds, input_modifiers modifiers, std::string data, std::string input_type, std::string key) {
+  return dispatch_impl(target, std::move(type), client_x, client_y, delta_y,
+                       buttons, std::move(property_name), elapsed_time_seconds,
+                       modifiers, std::move(data), std::move(input_type),
+                       std::move(key), {});
+}
+bool document::dispatch_impl(node_id target, std::string type, float client_x,
+    float client_y, float delta_y, uint32_t buttons, std::string property_name,
+    float elapsed_time_seconds, input_modifiers modifiers, std::string data,
+    std::string input_type, std::string key, pointer_input pointer) {
   auto &n = state_->node(target);
   std::vector<node_id> path;
   for (auto *p = &n; p; p = p->parent)
@@ -271,6 +283,7 @@ bool document::dispatch(node_id target, std::string type, float client_x, float 
   e.elapsed_time_seconds = elapsed_time_seconds;
   e.modifiers = modifiers;
   e.data=std::move(data);e.input_type=std::move(input_type);e.key=std::move(key);
+  e.device=pointer.device;e.pointer_id=pointer.pointer_id;e.is_primary=pointer.primary;
   for (auto id : path) {
     if (!state_->alive)
       return false;
@@ -559,10 +572,20 @@ void document::wheel(float x, float y, float delta_y, input_modifiers modifiers)
   }
 }
 void document::pointer(std::string type, float x, float y, uint32_t buttons, input_modifiers modifiers) {
+  pointer(std::move(type), x, y, buttons, modifiers, {});
+}
+void document::pointer(std::string type, float x, float y, uint32_t buttons,
+                       input_modifiers modifiers, pointer_input pointer) {
   state_->check();
+  if (pointer.device != pointer_device::mouse
+      && pointer.device != pointer_device::touch
+      && pointer.device != pointer_device::pen)
+    throw std::invalid_argument("invalid pointer device");
+  if (pointer.pointer_id == 0 || pointer.pointer_id >= state_->pointer_pressed.size())
+    throw std::invalid_argument("pointer id must be in 1..15");
   auto *n = state_->dom.hit_test(state_->dom.body(), x, y);
   auto id = n ? n->id : 0;
-  if (state_->hover != id) {
+  if (pointer.device == pointer_device::mouse && state_->hover != id) {
     state_->hover = id;
     state_->styles_dirty = true;
     state_->dom.mark_dirty();
@@ -570,7 +593,9 @@ void document::pointer(std::string type, float x, float y, uint32_t buttons, inp
   if (type == "pointerdown" || type == "pointerup") {
     for (auto *p = n; p; p = p->parent)
       if (p->tag == "button" && p->attributes.contains("disabled")) {
-        state_->pressed = 0;
+        const auto prior = std::exchange(
+            state_->pointer_pressed[pointer.pointer_id], 0);
+        if (pointer.primary && state_->pressed == prior) state_->pressed = 0;
         return;
       }
   }
@@ -578,16 +603,20 @@ void document::pointer(std::string type, float x, float y, uint32_t buttons, inp
     state_->keyboard_modality = false;
     // Only the primary button participates in click activation.
     // Auxiliary presses still reach native handlers (for example CAD panning).
-    state_->pressed = (buttons & 1u) ? id : 0;
+    state_->pointer_pressed[pointer.pointer_id] = (buttons & 1u) ? id : 0;
+    if (pointer.primary) state_->pressed = state_->pointer_pressed[pointer.pointer_id];
     state_->styles_dirty = true;
     state_->dom.mark_dirty();
   }
   if (type == "pointercancel") {
-    state_->pressed = 0;
+    const auto prior = std::exchange(
+        state_->pointer_pressed[pointer.pointer_id], 0);
+    if (pointer.primary && state_->pressed == prior) state_->pressed = 0;
     state_->styles_dirty = true;
     state_->dom.mark_dirty();
   }
-  const bool default_allowed = !id || dispatch(id, type, x, y, 0, buttons, {}, 0, modifiers);
+  const bool default_allowed = !id || dispatch_impl(
+      id, type, x, y, 0, buttons, {}, 0, modifiers, {}, {}, {}, pointer);
   if (!state_->alive)
     return;
   if (type == "pointerdown" && default_allowed) {
@@ -599,7 +628,9 @@ void document::pointer(std::string type, float x, float y, uint32_t buttons, inp
     }
   }
   if (type == "pointerup") {
-    const auto pressed = std::exchange(state_->pressed, 0);
+    const auto pressed = std::exchange(
+        state_->pointer_pressed[pointer.pointer_id], 0);
+    if (pointer.primary && state_->pressed == pressed) state_->pressed = 0;
     state_->styles_dirty = true;
     state_->dom.mark_dirty();
     if (id && id == pressed && state_->dom.find_by_native_id(id))

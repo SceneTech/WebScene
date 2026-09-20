@@ -337,6 +337,12 @@ struct rule {
   std::optional<bool> reduced_motion;
 };
 struct input_modifiers {bool shift{},control{},alt{},meta{};};
+enum class pointer_device : uint8_t { mouse, touch, pen };
+struct pointer_input {
+  pointer_device device{pointer_device::mouse};
+  uint32_t pointer_id{1};
+  bool primary{true};
+};
 struct event {
   std::string type;
   node_id target{}, current_target{};
@@ -349,6 +355,10 @@ struct event {
   std::string data;
   std::string input_type;
   std::string key;
+  // Appended to preserve the prefix layout used by existing native clients.
+  pointer_device device{pointer_device::mouse};
+  uint32_t pointer_id{1};
+  bool is_primary{true};
   void stop_propagation() { propagation_stopped = true; }
   void prevent_default() { default_prevented = true; }
 };
@@ -434,6 +444,10 @@ public:
                 std::string property_name = {}, float elapsed_time_seconds = 0,
                 input_modifiers modifiers = {}, std::string data = {}, std::string input_type = {}, std::string key = {});
   void pointer(std::string type, float x, float y, uint32_t buttons = 1, input_modifiers = {});
+  // Additive contact-aware path. The legacy overload remains primary mouse
+  // pointer 1 and keeps its existing source and binary symbol.
+  void pointer(std::string type, float x, float y, uint32_t buttons,
+               input_modifiers, pointer_input);
   void wheel(float x, float y, float delta_y, input_modifiers = {});
   void focus(node_id);
   // Structural modal scope for a connected HTML dialog. The application chooses
@@ -475,6 +489,9 @@ public:
   bool disposed() const noexcept;
 
 private:
+  bool dispatch_impl(node_id, std::string, float, float, float, uint32_t,
+                     std::string, float, input_modifiers, std::string,
+                     std::string, std::string, pointer_input);
   void activate(node_id,float,float,uint32_t,input_modifiers);
   std::shared_ptr<document_state> state_;
 };

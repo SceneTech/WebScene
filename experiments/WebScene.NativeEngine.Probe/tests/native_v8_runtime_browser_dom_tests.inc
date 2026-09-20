@@ -5804,8 +5804,6 @@ void test_media_devices_enumeration_host_handoff()
             json: device.toJSON()
           })));
         }, error => { __mediaDevicesState = error.name; });
-        navigator.mediaDevices.getUserMedia({audio:true}).catch(
-          error => { globalThis.__mediaCaptureState = error.name; });
     )JS", "native-media-devices-enumeration.js");
     require(evaluate(engine, "true", "native-media-devices-barrier.js") == "true",
         "MediaDevices enumeration did not drain to the host queue");
@@ -5823,10 +5821,9 @@ void test_media_devices_enumeration_host_handoff()
                 nullptr) != 0,
         "MediaDevices host completion was rejected");
     const auto result = evaluate(engine,
-        "({state:__mediaDevicesState,same:__sameMediaDevices,constraints:__mediaConstraints,capture:__mediaCaptureState})",
+        "({state:__mediaDevicesState,same:__sameMediaDevices,constraints:__mediaConstraints})",
         "native-media-devices-result.js");
     require(result.find(R"(\"same\":true)") != std::string::npos
-                && result.find(R"(\"capture\":\"NotSupportedError\")") != std::string::npos
                 && result.find(R"(\"deviceId\":\"default-private\")")
                     < result.find(R"(\"deviceId\":\"secondary\")")
                 && result.find(R"(\"brand\":\"[object InputDeviceInfo]\")")
@@ -5850,6 +5847,153 @@ void test_media_devices_enumeration_host_handoff()
     require(evaluate(engine, "__malformedMediaState",
                 "native-media-devices-malformed-result.js") == R"("DataError")",
         "Malformed MediaDevices payload did not fail closed");
+    webscene_engine_destroy(engine);
+}
+
+void test_media_capture_track_host_handoff()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "media-capture engine creation failed");
+    execute(engine, R"JS(
+        globalThis.__mediaCaptureState = 'pending';
+        navigator.mediaDevices.getUserMedia({audio:{
+          deviceId:{exact:'private-mic'},sampleRate:48000,
+          channelCount:{ideal:1},echoCancellation:true,
+          noiseSuppression:{ideal:false}
+        },video:false}).then(stream => {
+          globalThis.__captureStream = stream;
+          globalThis.__captureTrack = stream.getAudioTracks()[0];
+          __mediaCaptureState = JSON.stringify({
+            stream:Object.prototype.toString.call(stream),
+            track:Object.prototype.toString.call(__captureTrack),
+            label:__captureTrack.label,settings:__captureTrack.getSettings(),
+            ready:__captureTrack.readyState,muted:__captureTrack.muted
+          });
+        }, error => { __mediaCaptureState = error.name; });
+    )JS", "native-media-capture-open.js");
+    require(evaluate(engine, "true", "native-media-capture-open-barrier.js") == "true",
+        "getUserMedia did not drain to the host queue");
+    const auto open = take_typed_host_request(engine);
+    const auto open_body = std::string(open.bytes.begin(), open.bytes.end());
+    require(open.kind == WEBSCENE_HOST_REQUEST_MEDIA_OPEN_CAPTURE_V1
+                && open.id != 0U && !open.url.empty()
+                && open.content_type
+                    == "application/vnd.webscene.media-capture-request+json"
+                && open_body == R"JSON({"version":1,"audio":{"echoCancellation":true,"noiseSuppression":{"ideal":false},"channelCount":{"ideal":1},"sampleRate":48000,"deviceId":{"exact":"private-mic"}}})JSON",
+        "getUserMedia did not preserve its bounded canonical host request: "
+            + open_body);
+    constexpr std::string_view descriptor = R"JSON({"version":1,"captureId":"41","generation":"7","sampleRate":48000,"channelCount":1,"deviceId":"private-mic","groupId":"private-group","label":"Desk Mic"})JSON";
+    require(webscene_engine_complete_host_request_v1(engine, open.id, 0U,
+                "application/vnd.webscene.media-capture+json",
+                reinterpret_cast<const uint8_t*>(descriptor.data()),
+                descriptor.size(), nullptr) != 0,
+        "media-capture host completion was rejected");
+    auto result = evaluate(engine, "__mediaCaptureState",
+        "native-media-capture-open-result.js");
+    require(result.find(R"(\"stream\":\"[object MediaStream]\")") != std::string::npos
+                && result.find(R"(\"track\":\"[object MediaStreamTrack]\")") != std::string::npos
+                && result.find(R"(\"label\":\"Desk Mic\")") != std::string::npos
+                && result.find(R"(\"sampleRate\":48000)") != std::string::npos
+                && result.find(R"(\"channelCount\":1)") != std::string::npos
+                && result.find(R"(\"ready\":\"live\")") != std::string::npos,
+        "media-capture track shape was inconsistent: " + result);
+
+    const float samples[] = {0.25F, -0.25F, 0.5F, -0.5F};
+    webscene_media_capture_packet_v1 packet{};
+    packet.struct_size = sizeof(packet); packet.version = 1U;
+    packet.capture_id = 41U; packet.capture_generation = 7U;
+    packet.first_frame_index = 0U; packet.monotonic_timestamp_ns = 1000U;
+    packet.sample_rate = 48000U; packet.channel_count = 1U;
+    packet.interleaved_samples = samples; packet.frame_count = 4U;
+    require(webscene_engine_submit_media_capture_packet_v1(engine, &packet)
+                == WEBSCENE_MEDIA_CAPTURE_OK_V1,
+        "valid native capture packet was rejected");
+    packet.capture_generation = 8U;
+    require(webscene_engine_submit_media_capture_packet_v1(engine, &packet)
+                == WEBSCENE_MEDIA_CAPTURE_STALE_GENERATION_V1,
+        "stale native capture generation was accepted");
+    packet.capture_generation = 7U; packet.sample_rate = 44100U;
+    require(webscene_engine_submit_media_capture_packet_v1(engine, &packet)
+                == WEBSCENE_MEDIA_CAPTURE_FORMAT_MISMATCH_V1,
+        "native capture format drift was accepted");
+    packet.sample_rate = 48000U;
+    require(webscene_engine_submit_media_capture_packet_v1(engine, &packet)
+                == WEBSCENE_MEDIA_CAPTURE_OUT_OF_ORDER_V1,
+        "duplicate native capture packet was accepted");
+    std::array<float, 128> packet_samples{};
+    packet.interleaved_samples = packet_samples.data();
+    packet.frame_count = packet_samples.size();
+    packet.first_frame_index = 4U;
+    const auto packet_gate_started = std::chrono::steady_clock::now();
+    for (uint64_t index = 0U; index < 4096U; ++index) {
+        packet.monotonic_timestamp_ns = 2000U + index;
+        require(webscene_engine_submit_media_capture_packet_v1(engine, &packet)
+                    == WEBSCENE_MEDIA_CAPTURE_OK_V1,
+            "bounded native capture packet gate rejected ordered PCM");
+        packet.first_frame_index += packet.frame_count;
+    }
+    const auto packet_gate_elapsed = std::chrono::duration_cast<
+        std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - packet_gate_started).count();
+    require(packet_gate_elapsed < 2000,
+        "native capture packet gate exceeded two seconds: "
+            + std::to_string(packet_gate_elapsed) + " ms");
+
+    execute(engine, R"JS(
+        globalThis.__captureEvents=[];
+        __captureClone=__captureTrack.clone();
+        __captureClone.addEventListener('mute',()=>__captureEvents.push('mute'));
+        __captureClone.addEventListener('unmute',()=>__captureEvents.push('unmute'));
+        __captureTrack.stop();
+    )JS", "native-media-capture-clone.js");
+    require(!take_typed_host_request(engine),
+        "stopping one capture clone stopped the shared host lease");
+    webscene_media_capture_event_v1 event{};
+    event.struct_size = sizeof(event); event.version = 1U;
+    event.capture_id = 41U; event.capture_generation = 7U;
+    event.monotonic_timestamp_ns = 2000U;
+    event.kind = WEBSCENE_MEDIA_CAPTURE_EVENT_MUTE_V1;
+    require(webscene_engine_submit_media_capture_event_v1(engine, &event)
+                == WEBSCENE_MEDIA_CAPTURE_OK_V1,
+        "native capture mute event was rejected");
+    evaluate(engine, "true", "native-media-capture-mute-barrier.js");
+    event.kind = WEBSCENE_MEDIA_CAPTURE_EVENT_UNMUTE_V1;
+    require(webscene_engine_submit_media_capture_event_v1(engine, &event)
+                == WEBSCENE_MEDIA_CAPTURE_OK_V1,
+        "native capture unmute event was rejected");
+    evaluate(engine, "true", "native-media-capture-unmute-barrier.js");
+    require(evaluate(engine,
+                "JSON.stringify({events:__captureEvents,muted:__captureClone.muted})",
+                "native-media-capture-events-result.js")
+                == R"JSON({"events":["mute","unmute"],"muted":false})JSON",
+        "native capture mute lifecycle was inconsistent");
+    execute(engine, "__captureClone.stop();",
+        "native-media-capture-final-stop.js");
+    const auto stop = take_typed_host_request(engine);
+    require(stop.kind == WEBSCENE_HOST_REQUEST_MEDIA_STOP_CAPTURE_V1
+                && stop.id == 0U && stop.url == open.url
+                && std::string(stop.bytes.begin(), stop.bytes.end())
+                    == R"JSON({"version":1,"captureId":"41","generation":"7"})JSON",
+        "the final capture clone did not release the host lease");
+    require(webscene_engine_submit_media_capture_packet_v1(engine, &packet)
+                == WEBSCENE_MEDIA_CAPTURE_NOT_FOUND_V1,
+        "a released native capture still accepted PCM");
+
+    execute(engine, R"JS(
+        globalThis.__badCaptureState='pending';
+        navigator.mediaDevices.getUserMedia({audio:true}).catch(
+          error=>{__badCaptureState=error.name;});
+    )JS", "native-media-capture-malformed.js");
+    evaluate(engine, "true", "native-media-capture-malformed-barrier.js");
+    const auto malformed = take_typed_host_request(engine);
+    constexpr uint8_t invalid[] = {'{'};
+    require(webscene_engine_complete_host_request_v1(engine, malformed.id, 0U,
+                "application/vnd.webscene.media-capture+json",
+                invalid, sizeof(invalid), nullptr) != 0,
+        "malformed capture completion was rejected before delivery");
+    require(evaluate(engine, "__badCaptureState",
+                "native-media-capture-malformed-result.js") == R"("DataError")",
+        "malformed capture descriptor did not fail closed");
     webscene_engine_destroy(engine);
 }
 

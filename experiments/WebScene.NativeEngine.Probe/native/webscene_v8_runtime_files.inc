@@ -132,6 +132,20 @@
             perform_microtask_checkpoint();
             return;
         }
+        if (target.operation == "openMediaCapture"
+            && (completion.content_type
+                    != "application/vnd.webscene.media-capture+json"
+                || completion.bytes.size() > 64U * 1024U)) {
+            auto error = v8::Exception::Error(js_string(
+                isolate, "The native media-capture response is invalid"));
+            if (error->IsObject())
+                error.As<v8::Object>()->Set(local_context,
+                    js_string(isolate, "name"),
+                    js_string(isolate, "DataError")).Check();
+            resolver->Reject(local_context, error).Check();
+            perform_microtask_checkpoint();
+            return;
+        }
         if (target.operation == "readPrimarySelection") {
             auto* requested = document.find_by_native_id(target.target_node_id);
             if (!is_writable_text_control(requested)

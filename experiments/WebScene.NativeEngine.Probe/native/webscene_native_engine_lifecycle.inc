@@ -201,6 +201,28 @@
         signal_worker();
         return true;
     }
+    uint32_t submit_media_capture_packet(
+        const webscene_media_capture_packet_v1& packet) {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(file_runtime_mutex_);
+        if (file_runtime_ready_ && runtime_ != nullptr)
+            return runtime_->submit_media_capture_packet(packet);
+#else
+        static_cast<void>(packet);
+#endif
+        return WEBSCENE_MEDIA_CAPTURE_RETIRED_V1;
+    }
+    uint32_t submit_media_capture_event(
+        const webscene_media_capture_event_v1& event) {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(file_runtime_mutex_);
+        if (file_runtime_ready_ && runtime_ != nullptr)
+            return runtime_->submit_media_capture_event(event);
+#else
+        static_cast<void>(event);
+#endif
+        return WEBSCENE_MEDIA_CAPTURE_RETIRED_V1;
+    }
     bool complete_outbound_drag(
         webscene_native::native_outbound_drag_completion completion) {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)

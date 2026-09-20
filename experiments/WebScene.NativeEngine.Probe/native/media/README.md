@@ -62,8 +62,13 @@ Production Avalonia 11 remains supported; Frameforge can opt into Avalonia 12.
   origin and returns privacy-scoped audio-input records using the versioned
   `application/vnd.webscene.media-devices+json` schema. WebScene admits at most
   64 devices and 256 KiB, validates unique opaque IDs and string bounds, and
-  retires pending promises on navigation. Capture methods reject explicitly
-  until the native input-track/audio-graph slice is connected.
+  retires pending promises on navigation. Audio `getUserMedia()` uses a separate
+  permission-bearing typed request and accepts only a bounded versioned capture
+  descriptor. Host PCM enters through a size-versioned C ABI without executing
+  V8 on the producer thread. A fixed 16,384-frame stereo ring feeds independent
+  `MediaStreamTrack` clone cursors; mute/unmute/end events are delivered on the
+  runtime worker, and the host lease stops after the final clone or realm ends.
+  Display/video capture remains explicitly unsupported.
 
 ## Dependency decision and platform scope
 

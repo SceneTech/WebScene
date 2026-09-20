@@ -127,6 +127,19 @@ int main() {
             check(data.dropped == 256 && data.first_frame == 256 && data.frames == 128,
                   "Capture overrun not reported");
         }
+        {
+            audio_capture ring(48000);
+            const std::array<float, 3> mono{.25F, -.5F, .75F};
+            ring.write_interleaved(mono.data(), mono.size(), 1U);
+            uint64_t cursor = 0U;
+            std::array<float, 6> stereo{};
+            const auto data = ring.read(cursor, stereo);
+            check(data.frames == mono.size(), "Interleaved capture frame count changed");
+            for (size_t index = 0; index < mono.size(); ++index)
+                check(stereo[index * 2U] == mono[index]
+                          && stereo[index * 2U + 1U] == mono[index],
+                    "Interleaved mono capture was not duplicated to stereo");
+        }
         std::cout << "Audio graph: native mixing, gain automation, analyser/capture, suspend/mute, "
                      "cycle/limit and teardown passed\n";
         return 0;

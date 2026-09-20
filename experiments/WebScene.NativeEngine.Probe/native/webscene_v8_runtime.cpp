@@ -9823,6 +9823,87 @@ void v8_dom_runtime::complete_host_request(native_host_completion& completion) {
             impl_->console_messages.push_back("error\nNative host completion: "+impl_->last_error);
     }
 }
+uint32_t v8_dom_runtime::submit_media_capture_packet(
+    const webscene_media_capture_packet_v1& packet) {
+#if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
+    if (impl_ == nullptr || packet.struct_size < sizeof(packet)
+        || packet.version != 1U || packet.capture_id == 0U
+        || packet.capture_generation == 0U || packet.interleaved_samples == nullptr
+        || packet.frame_count == 0U || packet.frame_count > 8192U
+        || packet.sample_rate < 8000U || packet.sample_rate > 192000U
+        || packet.channel_count == 0U || packet.channel_count > 8U
+        || packet.first_frame_index
+            > std::numeric_limits<uint64_t>::max() - packet.frame_count) {
+        return WEBSCENE_MEDIA_CAPTURE_INVALID_ARGUMENT_V1;
+    }
+    std::lock_guard lock(impl_->native_audio_input_mutex);
+    const auto found = impl_->native_audio_inputs.find(packet.capture_id);
+    if (found == impl_->native_audio_inputs.end())
+        return WEBSCENE_MEDIA_CAPTURE_NOT_FOUND_V1;
+    auto& input = *found->second;
+    if (input.generation != packet.capture_generation)
+        return WEBSCENE_MEDIA_CAPTURE_STALE_GENERATION_V1;
+    if (input.ended)
+        return WEBSCENE_MEDIA_CAPTURE_RETIRED_V1;
+    if (input.sample_rate != packet.sample_rate
+        || input.channels != packet.channel_count)
+        return WEBSCENE_MEDIA_CAPTURE_FORMAT_MISMATCH_V1;
+    if (input.next_frame != packet.first_frame_index
+        || (input.next_frame != 0U
+            && packet.monotonic_timestamp_ns < input.last_timestamp))
+        return WEBSCENE_MEDIA_CAPTURE_OUT_OF_ORDER_V1;
+    input.source->write_interleaved(
+        packet.interleaved_samples, packet.frame_count, packet.channel_count);
+    input.next_frame += packet.frame_count;
+    input.last_timestamp = packet.monotonic_timestamp_ns;
+    return WEBSCENE_MEDIA_CAPTURE_OK_V1;
+#else
+    static_cast<void>(packet);
+    return WEBSCENE_MEDIA_CAPTURE_RETIRED_V1;
+#endif
+}
+uint32_t v8_dom_runtime::submit_media_capture_event(
+    const webscene_media_capture_event_v1& event) {
+#if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
+    if (impl_ == nullptr || event.struct_size < sizeof(event)
+        || event.version != 1U || event.capture_id == 0U
+        || event.capture_generation == 0U
+        || event.kind < WEBSCENE_MEDIA_CAPTURE_EVENT_MUTE_V1
+        || event.kind > WEBSCENE_MEDIA_CAPTURE_EVENT_ENDED_V1) {
+        return WEBSCENE_MEDIA_CAPTURE_INVALID_ARGUMENT_V1;
+    }
+    {
+        std::lock_guard lock(impl_->native_audio_input_mutex);
+        const auto found = impl_->native_audio_inputs.find(event.capture_id);
+        if (found == impl_->native_audio_inputs.end())
+            return WEBSCENE_MEDIA_CAPTURE_NOT_FOUND_V1;
+        auto& input = *found->second;
+        if (input.generation != event.capture_generation)
+            return WEBSCENE_MEDIA_CAPTURE_STALE_GENERATION_V1;
+        if (input.ended)
+            return WEBSCENE_MEDIA_CAPTURE_RETIRED_V1;
+        if (impl_->pending_audio_input_events.size()
+            >= impl_->maximum_pending_audio_input_events)
+            return WEBSCENE_MEDIA_CAPTURE_QUEUE_FULL_V1;
+        if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_MUTE_V1)
+            input.muted = true;
+        else if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_UNMUTE_V1)
+            input.muted = false;
+        else {
+            input.ended = true;
+            input.source->end();
+        }
+        impl_->pending_audio_input_events.push_back({
+            event.capture_id, event.capture_generation, event.kind, event.detail});
+    }
+    impl_->media_work_ready.store(true, std::memory_order_release);
+    if (impl_->runtime_work_available) impl_->runtime_work_available();
+    return WEBSCENE_MEDIA_CAPTURE_OK_V1;
+#else
+    static_cast<void>(event);
+    return WEBSCENE_MEDIA_CAPTURE_RETIRED_V1;
+#endif
+}
 bool v8_dom_runtime::discard_host_request() {
     return impl_->discard_host_request();
 }

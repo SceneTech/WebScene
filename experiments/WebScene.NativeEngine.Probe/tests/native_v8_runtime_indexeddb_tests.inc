@@ -388,6 +388,16 @@ void test_indexeddb_persistence_and_transaction_contract()
         write.objectStore('ItemTable').put('second', 'beta');
         await transactionDone(write);
 
+        stage = 'concurrent-writes';
+        const concurrentWrites = [];
+        for (let index = 0; index < 12; ++index) {
+          const transaction = database.transaction('ItemTable', 'readwrite');
+          transaction.objectStore('ItemTable').put(
+            `value-${index}`, `parallel-${index}`);
+          concurrentWrites.push(transactionDone(transaction));
+        }
+        await Promise.all(concurrentWrites);
+
         stage = 'abort-v1';
         const rolledBack = database.transaction('ItemTable', 'readwrite');
         rolledBack.objectStore('ItemTable').put('must-not-commit', 'alpha');
@@ -441,7 +451,9 @@ void test_indexeddb_persistence_and_transaction_contract()
         "indexedDbProbe.upgradeOld===0&&indexedDbProbe.abortName==='AbortError'"
         "&&indexedDbProbe.versionChange==='1->2'&&indexedDbProbe.version===2"
         "&&indexedDbProbe.stores.join(',')==='ItemTable,SecondTable'"
-        "&&indexedDbProbe.cursorValues.length===2"
+        "&&indexedDbProbe.cursorValues.length===14"
+        "&&indexedDbProbe.cursorValues.filter(item=>"
+        "item[0].startsWith('parallel-')).length===12"
         "&&indexedDbProbe.cursorValues[0][0]==='alpha'"
         "&&indexedDbProbe.cursorValues[0][1].nested.enabled"
         "&&indexedDbProbe.cursorValues[0][1].bytes[2]===255"

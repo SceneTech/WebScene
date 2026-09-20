@@ -11,6 +11,7 @@ inline constexpr std::string_view indexeddb_compatibility_source = R"JS(
   if (typeof nativeStorage !== 'function') return;
   const openConnections = new Map();
   const loadedDatabases = new Map();
+  const writeTails = new Map();
   const clone = value => structuredClone(value);
   const failure = (message, name) => new DOMException(message, name);
   const event = (type, fields = {}) => Object.assign({
@@ -233,6 +234,7 @@ R"JS(  class IDBTransaction extends EventTarget {
       this._active = true;
       this._pending = 0;
       this._finishScheduled = false;
+      this._commitQueued = false;
       this._mutations = [];
       this._settled = versionchange ? new Promise((resolve, reject) => {
         this._settleResolve = resolve;
@@ -289,7 +291,23 @@ R"JS(  class IDBTransaction extends EventTarget {
         else this._commit();
       }, 0);
     }
-    async _commit(attempt = 0) {
+    async _commit() {
+      if (this._commitQueued) return;
+      this._commitQueued = true;
+      const name = this.db.name;
+      const previous = writeTails.get(name) ?? Promise.resolve();
+      let release;
+      const current = new Promise(resolve => { release = resolve; });
+      writeTails.set(name, current);
+      await previous.catch(() => {});
+      try {
+        if (this._active) await this._commitNow();
+      } finally {
+        release();
+        if (writeTails.get(name) === current) writeTails.delete(name);
+      }
+    }
+    async _commitNow(attempt = 0) {
       try {
         const revision = await nativeStorage(
           'store', this.db.name, this._revision, this._state);
@@ -321,7 +339,7 @@ R"JS(  class IDBTransaction extends EventTarget {
             }
             this._state = state;
             this._revision = latest.revision;
-            return this._commit(attempt + 1);
+            return this._commitNow(attempt + 1);
           } catch (reloadError) { error = reloadError; }
         }
         this._fail(error);

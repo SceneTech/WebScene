@@ -7051,6 +7051,7 @@ struct v8_dom_runtime::implementation final {
         if (window_close_lifecycle_dispatching) return true;
         if (!reserve_typed_host_request_capacity()) return false;
         terminal_handoff_task_budget = maximum_terminal_handoff_tasks;
+        promote_terminal_handoff_persistence_work();
         struct lifecycle_dispatch_guard final {
             bool& dispatching;
             explicit lifecycle_dispatch_guard(bool& value) : dispatching(value)
@@ -7083,6 +7084,21 @@ struct v8_dom_runtime::implementation final {
             [](const auto& entry) {
                 return entry.second.terminal_handoff_critical;
             });
+    }
+
+    void promote_terminal_handoff_persistence_work() noexcept
+    {
+        for (auto& timer : timers) {
+            if (!timer.terminal_handoff_candidate
+                || timer.terminal_handoff_critical
+                || terminal_handoff_task_budget == 0U) continue;
+            timer.terminal_handoff_critical = true;
+            --terminal_handoff_task_budget;
+        }
+        for (auto& [id, pending] : pending_indexeddb_promises) {
+            static_cast<void>(id);
+            pending.terminal_handoff_critical = true;
+        }
     }
 
     bool drain_terminal_host_request_task()

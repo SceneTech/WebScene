@@ -49,7 +49,10 @@
         info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(info.GetIsolate(), id));
     }
 
-    static void schedule_timer(const v8::FunctionCallbackInfo<v8::Value>& info, bool repeating)
+    static void schedule_timer(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        bool repeating,
+        bool terminal_handoff_candidate = false)
     {
         if (info.Length() < 1 || !info[0]->IsFunction()) return;
         auto* self = current(info.GetIsolate());
@@ -106,7 +109,8 @@
             v8::Global<v8::Function>(info.GetIsolate(), info[0].As<v8::Function>()),
             std::move(arguments),
             -1,
-            terminal_handoff_critical});
+            terminal_handoff_critical,
+            terminal_handoff_candidate});
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         self->inspector_async_task_scheduled(
             repeating ? "setInterval" : "setTimeout",

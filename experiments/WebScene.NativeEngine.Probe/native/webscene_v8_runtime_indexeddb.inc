@@ -597,6 +597,12 @@
         info.GetReturnValue().Set(resolver->GetPromise());
     }
 
+    static void indexeddb_schedule_task(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        schedule_timer(info, false, true);
+    }
+
     void install_indexeddb(v8::Local<v8::Context> realm)
     {
         if (indexeddb == nullptr) return;
@@ -605,6 +611,11 @@
             realm,
             js_string(isolate, "__webSceneIndexedDBStorage"),
             v8::Function::New(realm, indexeddb_storage_operation).ToLocalChecked(),
+            v8::PropertyAttribute::DontEnum).Check();
+        global->DefineOwnProperty(
+            realm,
+            js_string(isolate, "__webSceneIndexedDBTask"),
+            v8::Function::New(realm, indexeddb_schedule_task).ToLocalChecked(),
             v8::PropertyAttribute::DontEnum).Check();
         auto script = v8::Script::Compile(
             realm,

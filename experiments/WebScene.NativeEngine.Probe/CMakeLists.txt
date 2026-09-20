@@ -256,12 +256,15 @@ if(BUILD_TESTING)
     target_compile_features(webscene_graphics_dxgi_contract_tests PRIVATE cxx_std_20)
     target_include_directories(webscene_graphics_dxgi_contract_tests PRIVATE native)
     add_test(NAME webscene_graphics_dxgi_contract_tests COMMAND webscene_graphics_dxgi_contract_tests)
-    add_executable(webscene_graphics_linux_external_image_contract_tests
+    # Keep the build target short enough for MSVC's generated object path when
+    # the full parser/snapshot/graphics variant suffix is present. The public
+    # CTest name remains descriptive and stable below.
+    add_executable(webscene_graphics_linux_image_tests
         tests/graphics_linux_external_image_contract_tests.cpp)
-    target_compile_features(webscene_graphics_linux_external_image_contract_tests PRIVATE cxx_std_20)
-    target_include_directories(webscene_graphics_linux_external_image_contract_tests PRIVATE native)
+    target_compile_features(webscene_graphics_linux_image_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_graphics_linux_image_tests PRIVATE native)
     add_test(NAME webscene_graphics_linux_external_image_contract_tests
-        COMMAND webscene_graphics_linux_external_image_contract_tests)
+        COMMAND webscene_graphics_linux_image_tests)
     set_tests_properties(webscene_graphics_linux_external_image_contract_tests PROPERTIES
         LABELS "graphics;linux;abi;lifecycle;security" TIMEOUT 10)
     add_executable(webscene_graphics_resource_tests tests/graphics_resource_tests.cpp)

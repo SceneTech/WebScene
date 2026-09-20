@@ -17,7 +17,10 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#if defined(__APPLE__) || defined(__linux__)
 #include <sys/resource.h>
+#endif
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -62,12 +65,16 @@ uint64_t current_rss_bytes()
 
 uint64_t peak_rss_bytes()
 {
+#if defined(__APPLE__) || defined(__linux__)
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) != 0) return 0U;
 #if defined(__APPLE__)
     return static_cast<uint64_t>(usage.ru_maxrss);
 #else
     return static_cast<uint64_t>(usage.ru_maxrss) * 1024U;
+#endif
+#else
+    return 0U;
 #endif
 }
 

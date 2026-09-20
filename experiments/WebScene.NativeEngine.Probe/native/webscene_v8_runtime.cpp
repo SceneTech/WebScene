@@ -9885,11 +9885,13 @@ uint32_t v8_dom_runtime::submit_media_capture_event(
         if (impl_->pending_audio_input_events.size()
             >= impl_->maximum_pending_audio_input_events)
             return WEBSCENE_MEDIA_CAPTURE_QUEUE_FULL_V1;
-        if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_MUTE_V1)
+        if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_MUTE_V1) {
             input.muted = true;
-        else if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_UNMUTE_V1)
+            input.source->set_muted(true);
+        } else if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_UNMUTE_V1) {
             input.muted = false;
-        else {
+            input.source->set_muted(false);
+        } else {
             input.ended = true;
             input.source->end();
         }

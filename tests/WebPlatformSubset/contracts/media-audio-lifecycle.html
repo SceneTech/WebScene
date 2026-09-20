@@ -47,6 +47,7 @@ promise_test(async t=>{
 <script>
 promise_test(async t=>{
  const c=new AudioContext();const destination=c.createMediaStreamDestination();const stream=destination.stream,track=stream.getAudioTracks()[0],clone=track.clone();
+ const source=c.createMediaStreamSource(stream);assert_true(source instanceof MediaStreamAudioSourceNode);assert_equals(Object.prototype.toString.call(source),'[object MediaStreamAudioSourceNode]');assert_equals(source.numberOfInputs,0);assert_equals(source.numberOfOutputs,1);assert_throws_dom('InvalidStateError',()=>c.createMediaStreamSource(new MediaStream()));
  assert_true(stream instanceof MediaStream);assert_true(track instanceof MediaStreamTrack);assert_equals(track.kind,'audio');assert_true(track.id!==clone.id);assert_equals(track.readyState,'live');track.stop();assert_equals(track.readyState,'ended');assert_equals(clone.readyState,'live');assert_false(stream.active);const copy=new MediaStream([clone]);assert_true(copy.active);await c.close();assert_equals(clone.readyState,'ended');assert_false(copy.active);
 },'Native mixed audio tracks clone and stop independently and end on context close');
 promise_test(async t=>{

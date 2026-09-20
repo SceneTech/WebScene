@@ -1,5 +1,6 @@
 #include "audio_graph.h"
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -139,6 +140,85 @@ int main() {
                 check(stereo[index * 2U] == mono[index]
                           && stereo[index * 2U + 1U] == mono[index],
                     "Interleaved mono capture was not duplicated to stereo");
+        }
+        {
+            audio_graph live(false, 48000);
+            auto source = std::make_shared<audio_capture>(16000);
+            auto track = std::make_shared<audio_track>(source);
+            const auto input = live.create(audio_graph::kind::track);
+            const auto meter = live.create(audio_graph::kind::analyser);
+            live.set_track(input, track);
+            live.connect(input, meter);
+            live.resume();
+            std::array<float, 64> mono{};
+            mono.fill(.4F);
+            source->write_interleaved(mono.data(), mono.size(), 1U);
+            std::array<float, 256> output{};
+            live.render(output.data(), 128U);
+            for (const auto sample : output)
+                check(sample == 0.F, "Unconnected microphone source echoed to output");
+            std::array<float, 128> analysed{};
+            live.analyser(meter, analysed);
+            for (const auto sample : analysed)
+                check(std::abs(sample - .4F) < 1e-6F,
+                    "16 kHz microphone source did not resample into analyser");
+
+            track->enabled = false;
+            source->write_interleaved(mono.data(), mono.size(), 1U);
+            live.render(output.data(), 128U);
+            live.analyser(meter, analysed);
+            for (const auto sample : analysed)
+                check(sample == 0.F, "Disabled microphone track was not silent");
+            track->enabled = true;
+            source->set_muted(true);
+            source->write_interleaved(mono.data(), mono.size(), 1U);
+            live.render(output.data(), 128U);
+            live.analyser(meter, analysed);
+            for (const auto sample : analysed)
+                check(sample == 0.F, "Muted microphone capture was not silent");
+            source->set_muted(false);
+
+            for (size_t index = 0U; index < 300U; ++index)
+                source->write_interleaved(mono.data(), mono.size(), 1U);
+            live.render(output.data(), 128U);
+            auto metrics = live.track_metrics(input);
+            check(metrics.rendered_frames == 512U && metrics.dropped_frames != 0U,
+                "Microphone graph source did not report its bounded-ring overrun");
+            source->end();
+            live.render(output.data(), 128U);
+            metrics = live.track_metrics(input);
+            check(metrics.ended, "Microphone graph source did not observe track end");
+            live.close();
+        }
+        {
+            audio_graph gate(false, 48000);
+            auto source = std::make_shared<audio_capture>(48000);
+            auto track = std::make_shared<audio_track>(source);
+            const auto input = gate.create(audio_graph::kind::track);
+            const auto meter = gate.create(audio_graph::kind::analyser);
+            gate.set_track(input, track);
+            gate.connect(input, meter);
+            gate.resume();
+            std::array<float, 128> mono{};
+            std::array<float, 256> output{};
+            const auto started = std::chrono::steady_clock::now();
+            for (size_t quantum = 0U; quantum < 4096U; ++quantum) {
+                source->write_interleaved(mono.data(), mono.size(), 1U);
+                gate.render(output.data(), 128U);
+            }
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            check(elapsed < 2000,
+                "Live microphone graph gate exceeded two seconds");
+            gate.close();
+        }
+        for (size_t cycle = 0U; cycle < 100U; ++cycle) {
+            audio_graph graph_cycle(false, 48000);
+            auto source = std::make_shared<audio_capture>(48000);
+            auto track = std::make_shared<audio_track>(source);
+            const auto input = graph_cycle.create(audio_graph::kind::track);
+            graph_cycle.set_track(input, track);
+            graph_cycle.close();
         }
         std::cout << "Audio graph: native mixing, gain automation, analyser/capture, suspend/mute, "
                      "cycle/limit and teardown passed\n";

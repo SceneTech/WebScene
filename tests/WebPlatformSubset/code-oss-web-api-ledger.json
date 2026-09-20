@@ -359,15 +359,16 @@
         "WebScene#770",
         "WebScene#773",
         "WebScene#775",
+        "WebScene#776",
         "AppScene#289",
         "WebScene#261"
       ],
       "evidence": [],
       "limits": [
-        "WebScene exposes bounded secure-context MediaDevices enumeration, audio getUserMedia host handoff, microphone MediaStreamTrack lifecycle, and packet/event ingress, but MediaStreamAudioSourceNode and the AudioWorklet PCM path remain unavailable.",
+        "WebScene exposes bounded MediaDevices enumeration, audio getUserMedia host handoff, microphone track lifecycle, packet/event ingress, and MediaStreamAudioSourceNode graph delivery, but the AudioWorklet PCM path remains unavailable.",
         "AppScene provides the bounded transport and macOS provider; Windows/Linux providers and physical-device evidence remain open."
       ],
-      "reason": "Unchanged Code OSS has 43 statically reachable media-capture references across 10 files. Enumeration and microphone track capture are implemented with authored but unexecuted gates; PCM graph/worklet delivery, display capture, Windows/Linux providers, device loss, and exact-package Chat/host acceptance remain incomplete or unqualified.",
+      "reason": "Unchanged Code OSS has 43 statically reachable media-capture references across 10 files. Enumeration, microphone track capture, and analyser graph delivery are implemented with authored but unexecuted gates; AudioWorklet PCM delivery, display capture, Windows/Linux providers, device loss, and exact-package Chat/host acceptance remain incomplete or unqualified.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

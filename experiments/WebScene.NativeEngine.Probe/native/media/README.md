@@ -68,7 +68,11 @@ Production Avalonia 11 remains supported; Frameforge can opt into Avalonia 12.
   V8 on the producer thread. A fixed 16,384-frame stereo ring feeds independent
   `MediaStreamTrack` clone cursors; mute/unmute/end events are delivered on the
   runtime worker, and the host lease stops after the final clone or realm ends.
-  Display/video capture remains explicitly unsupported.
+  `MediaStreamAudioSourceNode` adds an independent fixed-storage reader to the
+  existing audio graph. It linearly converts the negotiated input rate to the
+  context rate, exposes samples to analysers without an implicit destination
+  connection, silences disabled/muted/ended tracks immediately, and counts ring
+  overruns. Display/video capture remains explicitly unsupported.
 
 ## Dependency decision and platform scope
 

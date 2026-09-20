@@ -502,9 +502,15 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
         }
         if (op == "node") {
             auto kind = static_cast<webscene::media::audio_graph::kind>(static_cast<int>(number(2)));
-            if (number(2) < 1 || number(2) > 4)
+            if (number(2) < 1 || number(2) > 5)
                 throw std::invalid_argument("Invalid audio node kind");
             info.GetReturnValue().Set(c.graph->create(kind));
+            return;
+        }
+        if (op == "trackSource") {
+            if (info.Length() < 4)
+                throw std::invalid_argument("MediaStreamTrack required");
+            c.graph->set_track(number(2), self->resolve_audio_track(info[3]));
             return;
         }
         if (op == "connect") {

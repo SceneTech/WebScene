@@ -12,12 +12,23 @@ double now() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 constexpr uint32_t nodes = 64, quantum = 128, history = 32768, capacity = 1024;
+struct live_track_state {
+    static constexpr uint32_t capacity = 8192;
+    std::shared_ptr<audio_track> track;
+    uint64_t cursor{};
+    std::array<float, capacity * 2U> samples{};
+    uint32_t head{}, count{};
+    double phase{};
+    std::atomic<uint64_t> rendered{}, dropped{};
+    std::atomic<bool> ended{};
+};
 struct command {
-    enum class operation { create, connect, disconnect, gain, source } op;
+    enum class operation { create, connect, disconnect, gain, source, track } op;
     uint32_t a{}, b{};
     double value{}, start{}, tau{};
     const audio_buffer *pcm{};
     playback_control *control{};
+    live_track_state *live{};
 };
 } // namespace
 void playback_control::set(double time, double speed, bool play, double gain, bool mute) {
@@ -70,6 +81,7 @@ struct audio_graph::implementation {
         uint32_t event_count{};
         const audio_buffer *pcm{};
         playback_control *control{};
+        live_track_state *live{};
         std::shared_ptr<audio_capture> capture;
         uint64_t control_version{UINT64_MAX};
         double cursor{};
@@ -90,6 +102,8 @@ struct audio_graph::implementation {
     ma_device device{};
     std::vector<std::shared_ptr<const audio_buffer>> keep_pcm;
     std::vector<std::shared_ptr<playback_control>> keep_controls;
+    std::vector<std::unique_ptr<live_track_state>> keep_live_tracks;
+    std::array<live_track_state*, nodes> owner_live_tracks{};
     uint64_t pcm_bytes{};
     implementation(bool output, uint32_t sample_rate) : rate(sample_rate), use_device(output) {
         graph[0].type = kind::destination;
@@ -138,6 +152,9 @@ struct audio_graph::implementation {
             case command::operation::source:
                 n.pcm = c.pcm;
                 n.control = c.control;
+                break;
+            case command::operation::track:
+                n.live = c.live;
                 break;
             }
         }
@@ -195,6 +212,53 @@ struct audio_graph::implementation {
                 }
                 n.cursor += double(size) * speed * p.sample_rate / rate;
             }
+        }
+        if (n.type == kind::track && n.live) {
+            auto& live = *n.live;
+            const auto ratio = static_cast<double>(live.track->sample_rate()) / rate;
+            const auto required = std::min<uint32_t>(
+                live_track_state::capacity,
+                static_cast<uint32_t>(std::ceil(
+                    live.phase + static_cast<double>(size) * ratio)) + 1U);
+            while (live.count < required) {
+                const auto tail = (live.head + live.count)
+                    % live_track_state::capacity;
+                const auto available = live_track_state::capacity - live.count;
+                const auto contiguous = std::min(
+                    available, live_track_state::capacity - tail);
+                const auto requested = std::min(
+                    contiguous, required - live.count);
+                auto result = live.track->read_at(live.cursor,
+                    std::span<float>(live.samples.data() + tail * 2U,
+                                     requested * 2U));
+                live.count += static_cast<uint32_t>(result.frames);
+                live.dropped.fetch_add(result.dropped, std::memory_order_relaxed);
+                if (result.ended)
+                    live.ended.store(true, std::memory_order_release);
+                if (result.frames < requested) break;
+            }
+            if (!live.track->silent())
+                for (uint32_t i = 0U; i < size; ++i) {
+                    const auto position = live.phase + static_cast<double>(i) * ratio;
+                    const auto first = static_cast<uint32_t>(position);
+                    if (first >= live.count) continue;
+                    const auto second = std::min(first + 1U, live.count - 1U);
+                    const auto fraction = static_cast<float>(position - first);
+                    const auto a = (live.head + first) % live_track_state::capacity;
+                    const auto b = (live.head + second) % live_track_state::capacity;
+                    n.data[i * 2U] = live.samples[a * 2U]
+                        + (live.samples[b * 2U] - live.samples[a * 2U]) * fraction;
+                    n.data[i * 2U + 1U] = live.samples[a * 2U + 1U]
+                        + (live.samples[b * 2U + 1U] - live.samples[a * 2U + 1U])
+                            * fraction;
+                }
+            const auto advanced = live.phase + static_cast<double>(size) * ratio;
+            const auto consumed = std::min<uint32_t>(
+                static_cast<uint32_t>(advanced), live.count);
+            live.head = (live.head + consumed) % live_track_state::capacity;
+            live.count -= consumed;
+            live.phase = advanced - std::floor(advanced);
+            live.rendered.fetch_add(size, std::memory_order_relaxed);
         }
         for (uint32_t input = 0; input < rt_count.load(); ++input)
             if (n.edges[input]) {
@@ -254,7 +318,10 @@ void audio_graph::connect(uint32_t source, uint32_t dest) {
     auto &p = *impl_;
     p.check(source);
     p.check(dest);
-    if (p.owner_types[source] == kind::destination || p.owner_types[source] == kind::stream || p.owner_types[dest] == kind::source)
+    if (p.owner_types[source] == kind::destination
+        || p.owner_types[source] == kind::stream
+        || p.owner_types[dest] == kind::source
+        || p.owner_types[dest] == kind::track)
         throw std::invalid_argument("Audio node has no such input/output port");
     if (source == dest)
         throw std::invalid_argument("Unsupported zero-delay audio cycle");
@@ -321,6 +388,38 @@ void audio_graph::set_source(uint32_t id, std::shared_ptr<const audio_buffer> pc
         throw;
     }
 }
+void audio_graph::set_track(uint32_t id, std::shared_ptr<audio_track> track) {
+    auto &p = *impl_;
+    p.check(id);
+    if (p.owner_types[id] != kind::track || p.owner_live_tracks[id] != nullptr
+        || !track || track->ended())
+        throw std::invalid_argument("Invalid live audio track");
+    auto state = std::make_unique<live_track_state>();
+    state->cursor = track->reader_cursor();
+    state->track = std::move(track);
+    auto* published = state.get();
+    p.keep_live_tracks.push_back(std::move(state));
+    p.owner_live_tracks[id] = published;
+    try {
+        command c{command::operation::track, id};
+        c.live = published;
+        p.push(c);
+    } catch (...) {
+        p.owner_live_tracks[id] = nullptr;
+        p.keep_live_tracks.pop_back();
+        throw;
+    }
+}
+audio_graph::source_metrics audio_graph::track_metrics(uint32_t id) const {
+    auto &p = *impl_;
+    p.check(id);
+    if (p.owner_types[id] != kind::track || p.owner_live_tracks[id] == nullptr)
+        throw std::invalid_argument("Invalid live audio track node");
+    const auto& live = *p.owner_live_tracks[id];
+    return {live.rendered.load(std::memory_order_acquire),
+            live.dropped.load(std::memory_order_acquire),
+            live.ended.load(std::memory_order_acquire)};
+}
 void audio_graph::resume() {
     auto &p = *impl_;
     if (p.closed)
@@ -369,8 +468,12 @@ void audio_graph::close() {
     for (auto &n : p.graph)
         if (n.capture)
             n.capture->end();
+        else if (n.type == kind::track)
+            n.live = nullptr;
     p.keep_pcm.clear();
     p.keep_controls.clear();
+    p.owner_live_tracks.fill(nullptr);
+    p.keep_live_tracks.clear();
 }
 double audio_graph::time() const noexcept { return double(impl_->frames.load()) / impl_->rate; }
 uint32_t audio_graph::sample_rate() const noexcept { return impl_->rate; }

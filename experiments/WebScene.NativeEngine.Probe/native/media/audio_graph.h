@@ -18,7 +18,11 @@ struct playback_control {
 };
 class audio_graph {
   public:
-    enum class kind { destination, gain, analyser, source, stream };
+    enum class kind { destination, gain, analyser, source, stream, track };
+    struct source_metrics {
+        uint64_t rendered_frames{}, dropped_frames{};
+        bool ended{};
+    };
     explicit audio_graph(bool device_output = true, uint32_t sample_rate = 48000);
     ~audio_graph();
     audio_graph(const audio_graph &) = delete;
@@ -27,6 +31,8 @@ class audio_graph {
     void disconnect(uint32_t source);
     void set_gain(uint32_t, float value, double start, double time_constant);
     void set_source(uint32_t, std::shared_ptr<const audio_buffer>, std::shared_ptr<playback_control>);
+    void set_track(uint32_t, std::shared_ptr<audio_track>);
+    source_metrics track_metrics(uint32_t) const;
     void resume();
     void suspend();
     void close();

@@ -780,6 +780,7 @@
     bool document_visible{true};
     bool document_focused{true};
     bool terminal_pagehide_dispatched{false};
+    bool terminal_pagehide_pending{false};
     bool window_close_lifecycle_dispatching{false};
     bool desktop_environment_initialized{false};
     webscene_desktop_environment_v1 desktop_environment{};

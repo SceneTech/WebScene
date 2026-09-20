@@ -7027,6 +7027,7 @@ struct v8_dom_runtime::implementation final {
         const auto count = pending_terminal_host_requests.size();
         pending_terminal_host_requests.clear();
         terminal_handoff_task_budget = 0U;
+        terminal_pagehide_pending = false;
         reserved_host_request_count = count > reserved_host_request_count
             ? 0U : reserved_host_request_count - count;
     }
@@ -7073,7 +7074,6 @@ struct v8_dom_runtime::implementation final {
 
     bool has_terminal_handoff_persistence_work() const noexcept
     {
-        if (pending_terminal_host_requests.empty()) return false;
         if (std::any_of(timers.begin(), timers.end(), [](const auto& timer) {
                 return timer.terminal_handoff_critical;
             })) return true;
@@ -7092,6 +7092,7 @@ struct v8_dom_runtime::implementation final {
             std::lock_guard lock(host_request_mutex);
             if (pending_terminal_host_requests.empty()) {
                 terminal_handoff_task_budget = 0U;
+                terminal_pagehide_pending = false;
                 return true;
             }
             while (!pending_terminal_host_requests.empty()) {
@@ -7109,6 +7110,7 @@ struct v8_dom_runtime::implementation final {
                 notify = true;
             }
             terminal_handoff_task_budget = 0U;
+            terminal_pagehide_pending = false;
         }
         if (notify && host_request_available) host_request_available();
         return true;

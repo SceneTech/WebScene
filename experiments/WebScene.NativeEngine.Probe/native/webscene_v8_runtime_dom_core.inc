@@ -2007,6 +2007,7 @@
         std::erase_if(detached_document_roots, [&](const auto id) {
             return node_ids.contains(static_cast<uint32_t>(id));
         });
+        for (const auto id : node_ids) node_document_roots.erase(id);
         std::erase_if(hidden_frame_document_roots, [&](const auto id) {
             return node_ids.contains(id);
         });
@@ -4944,6 +4945,7 @@
             "html-element");
         auto& node = self->document.create_element(std::move(tag));
         node.xml_mode = xml_mode;
+        if (document_root != nullptr) self->bind_node_to_document(node, *document_root);
         self->apply_css_rules(node);
         info.GetReturnValue().Set(self->wrap_node(node));
     }
@@ -4959,6 +4961,12 @@
             {},
             "html-element");
         auto& node = self->document.create_element(std::move(tag));
+        auto* document_root = info.This()->InternalFieldCount() > 0
+            ? static_cast<dom_node*>(info.This()->GetAlignedPointerFromInternalField(
+                0,
+                v8::kEmbedderDataTypeTagDefault))
+            : nullptr;
+        if (document_root != nullptr) self->bind_node_to_document(node, *document_root);
         node.set_namespace(info.Length() > 0
             ? to_utf8(info.GetIsolate(), info[0])
             : "http://www.w3.org/2000/svg");
@@ -4976,6 +4984,7 @@
                 v8::kEmbedderDataTypeTagDefault))
             : nullptr;
         node.xml_mode = document_root != nullptr && document_root->xml_mode;
+        if (document_root != nullptr) self->bind_node_to_document(node, *document_root);
         node.text_content = info.Length() > 0 ? to_wtf8(info.GetIsolate(), info[0]) : std::string{};
         info.GetReturnValue().Set(self->wrap_node(node));
     }
@@ -5007,6 +5016,7 @@
                 v8::kEmbedderDataTypeTagDefault))
             : nullptr;
         node.xml_mode = document_root != nullptr && document_root->xml_mode;
+        if (document_root != nullptr) self->bind_node_to_document(node, *document_root);
         node.visible = false;
         node.text_content = info.Length() > 0 ? to_wtf8(info.GetIsolate(), info[0]) : std::string{};
         info.GetReturnValue().Set(self->wrap_node(node));
@@ -5410,6 +5420,7 @@
                 v8::kEmbedderDataTypeTagDefault))
             : nullptr;
         node.xml_mode = document_root != nullptr && document_root->xml_mode;
+        if (document_root != nullptr) self->bind_node_to_document(node, *document_root);
         node.visible = false;
         info.GetReturnValue().Set(self->wrap_node(node));
     }
@@ -5491,6 +5502,12 @@
         const auto deep = info.Length() > 1
             && info[1]->BooleanValue(info.GetIsolate());
         auto& clone = clone_dom_subtree(*self, *source, deep);
+        auto* document_root = info.This()->InternalFieldCount() > 0
+            ? static_cast<dom_node*>(info.This()->GetAlignedPointerFromInternalField(
+                0,
+                v8::kEmbedderDataTypeTagDefault))
+            : nullptr;
+        if (document_root != nullptr) self->bind_node_to_document(clone, *document_root);
         info.GetReturnValue().Set(self->wrap_node(clone));
     }
 

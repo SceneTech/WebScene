@@ -187,6 +187,10 @@
     bool service_worker_realm{false};
     std::unordered_set<uint64_t> detached_document_roots;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> detached_documents;
+    // DOM ownership survives removal from the tree. Keep the creating/adopting
+    // document separate from parent links so detached nodes remain valid Range
+    // endpoints, as required by Monaco's reusable measurement Range.
+    std::unordered_map<uint32_t, uint32_t> node_document_roots;
     std::unordered_map<uint32_t, window_selection_state> window_selections;
     static constexpr size_t maximum_live_ranges = 4096U;
     std::vector<std::unique_ptr<range_binding>> range_bindings;

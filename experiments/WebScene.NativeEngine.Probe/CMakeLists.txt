@@ -1128,6 +1128,8 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_recursive_selector_cache
             COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_indexeddb_contract COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_terminal_indexeddb_navigation
+            COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_panel_listener_lifecycle COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_navigation_realm COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_query_iframe_worker_bootstrap
@@ -1222,6 +1224,10 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         set_tests_properties(webscene_native_indexeddb_contract PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=indexeddb"
             LABELS "storage;indexeddb;durability" TIMEOUT 60)
+        set_tests_properties(webscene_native_terminal_indexeddb_navigation PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=terminal-indexeddb-navigation"
+            LABELS "native;runtime;navigation;storage;indexeddb;durability;performance"
+            TIMEOUT 30)
         set_tests_properties(webscene_native_panel_listener_lifecycle PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=panel-subtree-reclamation"
             LABELS "native;runtime;dom;lifecycle" TIMEOUT 30)

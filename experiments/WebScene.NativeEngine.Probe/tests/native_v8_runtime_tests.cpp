@@ -163,6 +163,10 @@ int main()
             test_indexeddb_runtime_contract();
             return 0;
         }
+        if (selected == "terminal-indexeddb-navigation") {
+            test_terminal_navigation_waits_for_indexeddb_commit();
+            return 0;
+        }
         if (selected == "web-storage") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr,

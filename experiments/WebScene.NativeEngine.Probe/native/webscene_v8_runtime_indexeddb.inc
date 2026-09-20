@@ -187,6 +187,9 @@
         if (found == pending_indexeddb_promises.end()) return;
         auto pending = std::move(found->second);
         pending_indexeddb_promises.erase(found);
+        terminal_handoff_task_scope terminal_scope(
+            terminal_handoff_task_active,
+            pending.terminal_handoff_critical);
         auto realm = pending.context.Get(isolate);
         auto resolver = pending.resolver.Get(isolate);
         if (realm.IsEmpty() || resolver.IsEmpty()) return;
@@ -240,6 +243,9 @@
         if (found == pending_indexeddb_promises.end()) return;
         auto pending = std::move(found->second);
         pending_indexeddb_promises.erase(found);
+        terminal_handoff_task_scope terminal_scope(
+            terminal_handoff_task_active,
+            pending.terminal_handoff_critical);
         auto realm = pending.context.Get(isolate);
         auto resolver = pending.resolver.Get(isolate);
         if (realm.IsEmpty() || resolver.IsEmpty()) return;
@@ -549,6 +555,9 @@
         pending.context.Reset(info.GetIsolate(), realm);
         pending.resolver.Reset(info.GetIsolate(), resolver);
         pending.deserialize_data = operation == "load";
+        pending.terminal_handoff_critical =
+            self->window_close_lifecycle_dispatching
+            || self->terminal_handoff_task_active;
         pending.origin = origin;
         pending.database = database;
         if (operation == "load") {

@@ -621,9 +621,162 @@ void test_indexeddb_quota_and_corruption_failures()
     std::filesystem::remove_all(root, error);
 }
 
+void test_terminal_navigation_waits_for_indexeddb_commit()
+{
+    const auto root = std::filesystem::temp_directory_path()
+        / ("webscene-terminal-indexeddb-"
+            + std::to_string(std::chrono::steady_clock::now()
+                .time_since_epoch().count()));
+    std::filesystem::create_directories(root);
+    const auto cleanup = [&] {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+    };
+
+    auto* engine = create_indexeddb_engine(
+        root, "terminal-navigation-profile", 44001U);
+    require(engine != nullptr,
+        "terminal IndexedDB navigation engine creation failed");
+    execute_and_wait(engine, R"JS(
+      globalThis.terminalIndexedDb = {
+        ready: false, committed: false, continuation: false, error: null
+      };
+      (async () => {
+        const database = await new Promise((resolve, reject) => {
+          const request = indexedDB.open('terminal-navigation', 1);
+          request.onupgradeneeded = () => request.result.createObjectStore('state');
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+        });
+        addEventListener('beforeunload', () => {
+          // An unrelated interval and future timer must not hold navigation.
+          setInterval(() => {}, 60000);
+          setTimeout(() => {}, 60000);
+          // Browser storage commonly enters IndexedDB from a lifecycle task.
+          setTimeout(() => {
+            const transaction = database.transaction('state', 'readwrite');
+            transaction.objectStore('state').put('durable', 'mcpInputs');
+            transaction.onerror = transaction.onabort = () => {
+              terminalIndexedDb.error = String(transaction.error);
+            };
+            transaction.oncomplete = () => {
+              terminalIndexedDb.committed = true;
+              // Promise/timer work descended from the native completion also
+              // remains ahead of the terminal host handoff.
+              Promise.resolve().then(() => setTimeout(() => {
+                terminalIndexedDb.continuation = true;
+              }, 0));
+            };
+          }, 0);
+        });
+        terminalIndexedDb.ready = true;
+      })().catch(error => {
+        terminalIndexedDb.error = `${error?.name}:${error?.message}`;
+      });
+    )JS", "terminal-indexeddb-setup.js");
+    wait_for_indexeddb_flag(engine, "terminalIndexedDb.ready===true");
+
+    const auto started = std::chrono::steady_clock::now();
+    require(evaluate(engine, "location.reload(); true",
+                "terminal-indexeddb-reload.js") == "true",
+        "terminal IndexedDB reload request failed");
+    typed_host_request_snapshot request;
+    for (int attempt = 0; attempt < 1250 && !request; ++attempt) {
+        request = take_typed_host_request(engine);
+        if (!request) {
+            (void)evaluate(engine, "true", "terminal-indexeddb-pump.js");
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
+        "terminal reload was not published after IndexedDB persistence");
+    const auto terminal_state = evaluate(engine,
+        "JSON.stringify(terminalIndexedDb)",
+        "terminal-indexeddb-before-handoff.js");
+    require(evaluate(engine,
+            "terminalIndexedDb.ready===true"
+            "&&terminalIndexedDb.committed===true"
+            "&&terminalIndexedDb.continuation===true"
+            "&&terminalIndexedDb.error===null",
+            "terminal-indexeddb-before-handoff-result.js") == "true",
+        "terminal reload preceded IndexedDB completion: " + terminal_state);
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 2.0,
+        "terminal IndexedDB persistence boundary exceeded two seconds");
+    webscene_engine_destroy(engine);
+
+    engine = create_indexeddb_engine(
+        root, "terminal-navigation-profile", 44002U);
+    require(engine != nullptr,
+        "terminal IndexedDB restart engine creation failed");
+    execute_and_wait(engine, R"JS(
+      globalThis.terminalIndexedDbRestart = { done: false, value: null, error: null };
+      (async () => {
+        const database = await new Promise((resolve, reject) => {
+          const request = indexedDB.open('terminal-navigation');
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+        });
+        const transaction = database.transaction('state', 'readonly');
+        const request = transaction.objectStore('state').get('mcpInputs');
+        transaction.onerror = transaction.onabort = () => {
+          terminalIndexedDbRestart.error = String(transaction.error);
+          terminalIndexedDbRestart.done = true;
+        };
+        transaction.oncomplete = () => {
+          terminalIndexedDbRestart.value = request.result;
+          terminalIndexedDbRestart.done = true;
+        };
+      })().catch(error => {
+        terminalIndexedDbRestart.error = `${error?.name}:${error?.message}`;
+        terminalIndexedDbRestart.done = true;
+      });
+    )JS", "terminal-indexeddb-restart.js");
+    wait_for_indexeddb_flag(engine, "terminalIndexedDbRestart.done===true");
+    require(evaluate(engine,
+        "terminalIndexedDbRestart.value==='durable'"
+        "&&!terminalIndexedDbRestart.error",
+        "terminal-indexeddb-restart-result.js") == "true",
+        "terminal IndexedDB value was not durable at host handoff");
+
+    execute(engine, R"JS(
+      globalThis.terminalRefillCount = 0;
+      addEventListener('pagehide', () => {
+        const refill = () => {
+          ++terminalRefillCount;
+          setTimeout(refill, 0);
+        };
+        setTimeout(refill, 0);
+      });
+      location.reload();
+    )JS", "terminal-indexeddb-refill-bound.js");
+    request = {};
+    for (int attempt = 0; attempt < 1250 && !request; ++attempt) {
+        request = take_typed_host_request(engine);
+        if (!request) {
+            (void)evaluate(engine, "true", "terminal-indexeddb-refill-pump.js");
+        }
+    }
+    const auto refill_count = evaluate(engine, "terminalRefillCount",
+        "terminal-indexeddb-refill-result.js");
+    const auto refill_count_value = static_cast<unsigned>(
+        std::stoul(refill_count));
+    require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1
+            && refill_count_value >= 1024U
+            && refill_count_value <= 1152U,
+        "a self-refilling lifecycle task starved or escaped its handoff budget: kind="
+            + std::to_string(request.kind) + " count=" + refill_count);
+    std::cout << "Terminal IndexedDB navigation gate: elapsed="
+              << elapsed << "s\n";
+    webscene_engine_destroy(engine);
+    cleanup();
+}
+
 void test_indexeddb_runtime_contract()
 {
     test_indexeddb_persistence_and_transaction_contract();
     test_indexeddb_quota_and_corruption_failures();
     test_indexeddb_file_system_handle_persistence();
+    test_terminal_navigation_waits_for_indexeddb_commit();
 }

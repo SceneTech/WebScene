@@ -72,6 +72,7 @@
         std::vector<v8::Global<v8::Value>> arguments;
         double animation_timestamp_ms{-1};
         bool terminal_handoff_critical{false};
+        bool terminal_handoff_candidate{false};
     };
 
     struct terminal_handoff_task_scope final {

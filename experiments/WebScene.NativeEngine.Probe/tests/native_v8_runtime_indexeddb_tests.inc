@@ -649,6 +649,7 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
           request.onerror = () => reject(request.error);
           request.onsuccess = () => resolve(request.result);
         });
+        globalThis.terminalIndexedDbDatabase = database;
         let pendingFlushTimer = 0;
         addEventListener('beforeunload', () => {
           terminalIndexedDb.order.push('beforeunload');
@@ -679,6 +680,9 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
           terminalIndexedDb.order.push('pagehide');
           // Model VS Code disposing its delayed storage flush during pagehide.
           clearTimeout(pendingFlushTimer);
+          if (globalThis.terminalIndexedDbPendingTransaction?._active) {
+            globalThis.terminalIndexedDbPendingTransaction.abort();
+          }
         });
         terminalIndexedDb.ready = true;
       })().catch(error => {
@@ -688,7 +692,17 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
     wait_for_indexeddb_flag(engine, "terminalIndexedDb.ready===true");
 
     const auto started = std::chrono::steady_clock::now();
-    require(evaluate(engine, "location.reload(); true",
+    require(evaluate(engine, R"JS(
+          globalThis.terminalIndexedDbPendingTransaction =
+            terminalIndexedDbDatabase.transaction('state', 'readwrite');
+          terminalIndexedDbPendingTransaction.objectStore('state')
+            .put('already-pending', 'pendingBeforeReload');
+          terminalIndexedDbPendingTransaction.oncomplete = () => {
+            terminalIndexedDb.order.push('preexisting-commit');
+          };
+          location.reload();
+          true;
+        )JS",
                 "terminal-indexeddb-reload.js") == "true",
         "terminal IndexedDB reload request failed");
     typed_host_request_snapshot request;
@@ -708,8 +722,17 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
             "terminalIndexedDb.ready===true"
             "&&terminalIndexedDb.committed===true"
             "&&terminalIndexedDb.continuation===true"
-            "&&terminalIndexedDb.order.join(',')==="
-                "'beforeunload,flush-timer,commit,continuation,pagehide'"
+            "&&terminalIndexedDb.order[0]==='beforeunload'"
+            "&&terminalIndexedDb.order.indexOf('preexisting-commit')>0"
+            "&&terminalIndexedDb.order.indexOf('flush-timer')>0"
+            "&&terminalIndexedDb.order.indexOf('commit')>"
+                "terminalIndexedDb.order.indexOf('flush-timer')"
+            "&&terminalIndexedDb.order.indexOf('continuation')>"
+                "terminalIndexedDb.order.indexOf('commit')"
+            "&&terminalIndexedDb.order.indexOf('pagehide')>"
+                "terminalIndexedDb.order.indexOf('preexisting-commit')"
+            "&&terminalIndexedDb.order.indexOf('pagehide')>"
+                "terminalIndexedDb.order.indexOf('continuation')"
             "&&terminalIndexedDb.error===null",
             "terminal-indexeddb-before-handoff-result.js") == "true",
         "terminal reload preceded IndexedDB completion: " + terminal_state);
@@ -724,7 +747,9 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
     require(engine != nullptr,
         "terminal IndexedDB restart engine creation failed");
     execute_and_wait(engine, R"JS(
-      globalThis.terminalIndexedDbRestart = { done: false, value: null, error: null };
+      globalThis.terminalIndexedDbRestart = {
+        done: false, value: null, pendingValue: null, error: null
+      };
       (async () => {
         const database = await new Promise((resolve, reject) => {
           const request = indexedDB.open('terminal-navigation');
@@ -733,12 +758,14 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
         });
         const transaction = database.transaction('state', 'readonly');
         const request = transaction.objectStore('state').get('mcpInputs');
+        const pendingRequest = transaction.objectStore('state').get('pendingBeforeReload');
         transaction.onerror = transaction.onabort = () => {
           terminalIndexedDbRestart.error = String(transaction.error);
           terminalIndexedDbRestart.done = true;
         };
         transaction.oncomplete = () => {
           terminalIndexedDbRestart.value = request.result;
+          terminalIndexedDbRestart.pendingValue = pendingRequest.result;
           terminalIndexedDbRestart.done = true;
         };
       })().catch(error => {
@@ -749,10 +776,10 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
     wait_for_indexeddb_flag(engine, "terminalIndexedDbRestart.done===true");
     require(evaluate(engine,
         "terminalIndexedDbRestart.value==='durable'"
+        "&&terminalIndexedDbRestart.pendingValue==='already-pending'"
         "&&!terminalIndexedDbRestart.error",
         "terminal-indexeddb-restart-result.js") == "true",
         "terminal IndexedDB value was not durable at host handoff");
-
     execute(engine, R"JS(
       globalThis.terminalRefillCount = 0;
       addEventListener('pagehide', () => {

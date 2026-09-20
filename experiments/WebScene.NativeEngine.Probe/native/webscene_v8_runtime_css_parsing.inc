@@ -2091,7 +2091,7 @@
         result.compiled_compounds.reserve(result.compounds.size());
         for (const auto& compound : result.compounds) {
             result.compiled_compounds.push_back(
-                compile_css_compound_selector(compound, namespaces));
+                css::compile_css_compound_selector(compound, namespaces));
         }
         return result;
 #endif

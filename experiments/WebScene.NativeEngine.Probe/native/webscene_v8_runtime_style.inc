@@ -1055,7 +1055,7 @@
             } decision;
             css::apply_will_change_value(*node, name, value, decision);
         } else if (name == "caret-color") {
-            auto normalized = ascii_lower(trim_value(specified_value));
+            auto normalized = css::ascii_lower(css::trim_value(specified_value));
             auto& effects = node->style.mutable_textual().effect_values;
             if (normalized == "inherit" || normalized == "unset") {
                 effects.erase("caret-color");
@@ -1832,6 +1832,135 @@
             *node, "style", old_value, node->attributes.at("style"));
     }
 
+    static void get_computed_text_style_property(
+        dom_node& node,
+        std::string_view name,
+        std::string& value)
+    {
+        const auto serialize_color = [](uint32_t color) {
+            std::ostringstream stream;
+            const auto red = static_cast<unsigned>((color >> 24U) & 0xFFU);
+            const auto green = static_cast<unsigned>((color >> 16U) & 0xFFU);
+            const auto blue = static_cast<unsigned>((color >> 8U) & 0xFFU);
+            const auto alpha = static_cast<unsigned>(color & 0xFFU);
+            if (alpha == 0xFFU) {
+                stream << "rgb(" << red << ", " << green << ", " << blue << ')';
+            } else {
+                stream << "rgba(" << red << ", " << green << ", " << blue << ", "
+                    << std::setprecision(6)
+                    << static_cast<double>(alpha) / 255.0 << ')';
+            }
+            return stream.str();
+        };
+        if (name == "color") {
+            auto color = node.color_animation_active_value()
+                ? node.painted_foreground_value()
+                : (node.style.foreground_rgba & 0xFFU) != 0U
+                    ? node.painted_foreground_value()
+                    : 0U;
+            for (auto* ancestor = node.parent;
+                 (color & 0xFFU) == 0U && ancestor != nullptr;
+                 ancestor = ancestor->parent) {
+                color = ancestor->color_animation_active_value()
+                    ? ancestor->painted_foreground_value()
+                    : (ancestor->style.foreground_rgba & 0xFFU) != 0U
+                        ? ancestor->painted_foreground_value()
+                        : 0U;
+            }
+            if ((color & 0xFFU) == 0U) color = 0x000000FFU;
+            value = serialize_color(color);
+        } else if (name == "colorScheme") {
+            value = "normal";
+            for (auto* current = &node; current != nullptr;
+                 current = current->parent) {
+                if (!current->style.textual().color_scheme.empty()) {
+                    value = current->style.textual().color_scheme;
+                    break;
+                }
+            }
+        } else if (name == "accentColor") {
+            auto accent = std::string{};
+            for (auto* current = &node; current != nullptr;
+                 current = current->parent) {
+                if (!current->style.textual().accent_color.empty()) {
+                    accent = current->style.textual().accent_color;
+                    break;
+                }
+            }
+            value = accent.empty() || accent == "auto"
+                ? "auto" : serialize_color(native_document::parse_color(accent));
+        } else if (css::is_effect_property(canonical_css_property_name(name))) {
+            value = computed_effect_value(node, name);
+        } else if (name == "fontSize") {
+            value = serialize_css_number(node.style.font_size >= 0
+                ? node.style.font_size : inherited_font_size(node)) + "px";
+        } else if (name == "fontFamily") {
+            value = resolved_font_family(node);
+        } else if (name == "webkitFontSmoothing") {
+            value = resolved_font_smoothing(node);
+        } else if (name == "fontWeight") {
+            value = std::to_string(resolved_font_weight(node));
+        } else if (name == "letterSpacing") {
+            value = serialize_css_number(resolved_letter_spacing(node)) + "px";
+        } else if (name == "wordSpacing") {
+            value = serialize_css_number(resolved_word_spacing(node)) + "px";
+        } else if (name == "lineHeight") {
+            const auto& authored_style = node.authored_style().declarations;
+            const auto authored = authored_style.find("line-height");
+            if ((node.style.important_property_mask & inline_line_height) == 0U
+                && authored != authored_style.end()
+                && authored->second == "normal") {
+                value = "normal";
+                return;
+            }
+            auto line_height = node.style.line_height;
+            for (auto* ancestor = node.parent;
+                 line_height == -1.0F && ancestor != nullptr;
+                 ancestor = ancestor->parent) {
+                line_height = ancestor->style.line_height;
+            }
+            if (line_height <= -3.0F) {
+                value = serialize_css_number(
+                    (-3.0F - line_height) * (node.style.font_size >= 0
+                        ? node.style.font_size : inherited_font_size(node))) + "px";
+            } else if (line_height == -2.0F) {
+                value = "normal";
+            } else if (line_height < 0) {
+                const auto font_size = node.style.font_size >= 0
+                    ? node.style.font_size : inherited_font_size(node);
+                value = serialize_css_number(font_size * 1.125F) + "px";
+            } else {
+                value = serialize_css_number(line_height) + "px";
+            }
+        } else if (name == "textAlign") {
+            value = node.style.textual().text_align;
+        } else if (name == "whiteSpace") {
+            value = node.style.textual().white_space;
+        } else if (name == "textWrap") {
+            value = std::string(resolved_text_wrap_mode(node));
+        } else if (name == "wordBreak") {
+            value = resolved_line_break_property(node, false);
+        } else if (name == "overflowWrap" || name == "wordWrap") {
+            value = resolved_line_break_property(node, true);
+        } else if (name == "visibility") {
+            auto* current = &node;
+            while (current != nullptr && !current->style.visibility_specified) {
+                current = current->parent;
+            }
+            value = current != nullptr && current->style.visibility_hidden
+                ? "hidden" : "visible";
+        } else if (name == "pointerEvents") {
+            const auto* current = &node;
+            while (current != nullptr && !current->style.pointer_events_specified) {
+                current = current->parent;
+            }
+            value = current != nullptr && current->style.pointer_events_none
+                ? "none" : "auto";
+        } else if (name == "cursor") {
+            value = resolved_cursor(node);
+        }
+    }
+
     static void get_style_property(
         v8::Local<v8::Name> property,
         const v8::PropertyCallbackInfo<v8::Value>& info)
@@ -2368,115 +2497,8 @@
             value = serialize_overflow_mode(computed_overflow(node->style).first);
         } else if (name == "overflowY") {
             value = serialize_overflow_mode(computed_overflow(node->style).second);
-        } else if (name == "color") {
-            auto color = node->color_animation_active_value()
-                ? node->painted_foreground_value()
-                : (node->style.foreground_rgba & 0xFFU) != 0U
-                    ? node->painted_foreground_value()
-                    : 0U;
-            for (auto* ancestor = node->parent; (color & 0xFFU) == 0U && ancestor != nullptr;
-                 ancestor = ancestor->parent) {
-                color = ancestor->color_animation_active_value()
-                    ? ancestor->painted_foreground_value()
-                    : (ancestor->style.foreground_rgba & 0xFFU) != 0U
-                        ? ancestor->painted_foreground_value()
-                        : 0U;
-            }
-            if ((color & 0xFFU) == 0U) color = 0x000000FFU;
-            value = serialize_color(color);
-        } else if (name == "colorScheme") {
-            value = "normal";
-            for (auto* current = node; current != nullptr; current = current->parent) {
-                if (!current->style.textual().color_scheme.empty()) {
-                    value = current->style.textual().color_scheme;
-                    break;
-                }
-            }
-        } else if (name == "accentColor") {
-            auto accent = std::string{};
-            for (auto* current = node; current != nullptr; current = current->parent) {
-                if (!current->style.textual().accent_color.empty()) {
-                    accent = current->style.textual().accent_color;
-                    break;
-                }
-            }
-            value = accent.empty() || accent == "auto"
-                ? "auto" : serialize_color(native_document::parse_color(accent));
-        } else if (css::is_effect_property(canonical_css_property_name(name))) {
-            value = computed_effect_value(*node, name);
-        } else if (name == "fontSize") {
-            value = serialize_css_number(node->style.font_size >= 0
-                ? node->style.font_size : inherited_font_size(*node)) + "px";
-        } else if (name == "fontFamily") {
-            value = resolved_font_family(*node);
-        } else if (name == "webkitFontSmoothing") {
-            value = resolved_font_smoothing(*node);
-        } else if (name == "fontWeight") {
-            value = std::to_string(resolved_font_weight(*node));
-        } else if (name == "letterSpacing") {
-            value = serialize_css_number(resolved_letter_spacing(*node)) + "px";
-        } else if (name == "wordSpacing") {
-            value = serialize_css_number(resolved_word_spacing(*node)) + "px";
-        } else if (name == "lineHeight") {
-            const auto& authored_style = node->authored_style().declarations;
-            const auto authored = authored_style.find("line-height");
-            if ((node->style.important_property_mask & inline_line_height) == 0U
-                && authored != authored_style.end()
-                && authored->second == "normal") {
-                value = "normal";
-                info.GetReturnValue().Set(js_string(info.GetIsolate(), value.c_str()));
-                return;
-            }
-            auto line_height = node->style.line_height;
-            for (auto* ancestor = node->parent;
-                line_height == -1.0F && ancestor != nullptr;
-                ancestor = ancestor->parent) {
-                line_height = ancestor->style.line_height;
-            }
-            if (line_height <= -3.0F) {
-                value = serialize_css_number(
-                    (-3.0F - line_height) * (node->style.font_size >= 0
-                        ? node->style.font_size : inherited_font_size(*node))) + "px";
-            } else if (line_height == -2.0F) {
-                value = "normal";
-            } else if (line_height < 0) {
-                const auto font_size = node->style.font_size >= 0
-                    ? node->style.font_size : inherited_font_size(*node);
-                line_height = font_size * 1.125F;
-                value = serialize_css_number(line_height) + "px";
-            } else {
-                value = serialize_css_number(line_height) + "px";
-            }
-        } else if (name == "textAlign") {
-            value = node->style.textual().text_align;
-        } else if (name == "whiteSpace") {
-            value = node->style.textual().white_space;
-        } else if (name == "textWrap") {
-            value = computed ? std::string(resolved_text_wrap_mode(*node))
-                : node->style.textual().text_wrap;
-        } else if (name == "wordBreak") {
-            value = computed
-                ? resolved_line_break_property(*node, false)
-                : node->style.textual().word_break;
-        } else if (name == "overflowWrap" || name == "wordWrap") {
-            value = computed
-                ? resolved_line_break_property(*node, true)
-                : node->style.textual().overflow_wrap;
-        } else if (name == "visibility") {
-            auto* current = node;
-            while (current != nullptr && !current->style.visibility_specified) {
-                current = current->parent;
-            }
-            value = current != nullptr && current->style.visibility_hidden
-                ? "hidden" : "visible";
-        } else if (name == "pointerEvents") {
-            const auto* current = node;
-            while (current != nullptr && !current->style.pointer_events_specified) {
-                current = current->parent;
-            }
-            value = current != nullptr && current->style.pointer_events_none ? "none" : "auto";
-        } else if (name == "cursor") {
-            value = resolved_cursor(*node);
+        } else {
+            get_computed_text_style_property(*node, name, value);
         }
         if (computed && value.empty()
             && inline_style_mask(canonical_css_property_name(name)) == 0U) {
@@ -2823,7 +2845,7 @@
             } decision;
             css::apply_will_change_value(*node, "will-change", value, decision);
         } else if (name == "caretColor") {
-            auto normalized = ascii_lower(trim_value(specified_value));
+            auto normalized = css::ascii_lower(css::trim_value(specified_value));
             auto& effects = node->style.mutable_textual().effect_values;
             if (normalized == "inherit" || normalized == "unset") {
                 effects.erase("caret-color");

@@ -46,17 +46,38 @@ void apply_matched_declarations(dom_node& node,const cascaded_rule_order& order,
                     || (group != 0U && (inline_groups & group) != 0U);
                 inline_groups |= group;
             });
+        const auto author_important_wins = [&](std::string_view inline_name) {
+            for (const auto* rule : order.important()) {
+                for (const auto& declaration : rule->declarations()) {
+                    if (!declaration.important || declaration.name.starts_with("--")) {
+                        continue;
+                    }
+                    auto wins = false;
+                    for_each_effective_property_component(
+                        declaration.name,
+                        declaration.value,
+                        [&](std::string_view name, std::string_view) {
+                            wins = wins || name == "all" || name == inline_name;
+                        });
+                    if (wins) return true;
+                }
+            }
+            return false;
+        };
         node.authored_style().for_each_declaration(
             [&](const std::string& name, const std::string& value) {
             const auto inline_important =
                 node.authored_style().important_declarations.contains(name);
             const auto inherited_dimension = (name == "width" || name == "height")
                 && trim_css_view(value) == "inherit";
+            const auto property_mask = css::property_mask(name);
+            const auto cold_inline = property_mask == 0U;
             if (name.starts_with("--") || inline_important
                 || (!ordered_inline_replay
+                    && !cold_inline
                     && value.find("var(") == std::string::npos
-                    && !inherited_dimension)) return;
-            const auto property_mask = css::property_mask(name);
+                    && !inherited_dimension)
+                || (cold_inline && author_important_wins(name))) return;
             const auto retained_inline_mask = node.style.inline_property_mask;
             node.style.inline_property_mask &= ~property_mask;
             apply({name, value, false}, true);

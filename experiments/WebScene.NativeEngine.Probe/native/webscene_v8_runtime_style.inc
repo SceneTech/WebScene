@@ -58,7 +58,7 @@
         if (token == "auto" || token == "currentcolor") {
             color = resolved_current_color_for_cssom(node);
         } else {
-            color = native_document::parse_color(token);
+            color = native_document::parse_color(std::string(token));
         }
         std::ostringstream stream;
         const auto red = static_cast<unsigned>((color >> 24U) & 0xFFU);

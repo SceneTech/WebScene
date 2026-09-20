@@ -729,7 +729,7 @@ uint32_t resolved_caret_color(const dom_node& node)
     if (value == "auto" || value == "currentcolor") {
         return resolved_foreground(node);
     }
-    return native_document::parse_color(value);
+    return native_document::parse_color(std::string(value));
 }
 
 void append_xml_escaped(std::string_view value, std::string& output, bool attribute)

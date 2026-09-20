@@ -180,9 +180,21 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
             [self, id, &cancelled_animation_frames](const auto& timer) {
 #else
-            [id, &cancelled_animation_frames](const auto& timer) {
+            [self, id, &cancelled_animation_frames](const auto& timer) {
 #endif
                 if (timer.id != id) return false;
+                // Browser workbenches can synchronously dispose their timer
+                // scheduler after accepting a terminal storage flush from a
+                // beforeunload listener. The public handle is then canceled,
+                // but the native handoff still owes the already accepted,
+                // bounded persistence callback before pagehide tears storage
+                // down. Only zero-delay one-shot timers created by that active
+                // terminal lifecycle carry this flag; ordinary cancellation,
+                // future timers, intervals, and animation frames are unchanged.
+                if (timer.terminal_handoff_critical
+                    && self->window_close_lifecycle_dispatching) {
+                    return false;
+                }
                 if (timer.animation_frame) ++cancelled_animation_frames;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
                 self->inspector_async_task_canceled(id);

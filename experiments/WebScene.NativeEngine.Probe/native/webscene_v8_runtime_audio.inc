@@ -1,8 +1,19 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
+struct audio_worklet_binding {
+    std::shared_ptr<webscene::media::audio_track> track;
+    v8::Global<v8::Object> processor;
+    v8::Global<v8::ArrayBuffer> input_buffer;
+    v8::Global<v8::Array> inputs;
+    v8::Global<v8::Array> outputs;
+    v8::Global<v8::Object> parameters;
+    uint64_t dropped_frames{};
+    bool active{true};
+};
 struct audio_context_binding {
     std::unique_ptr<webscene::media::audio_graph> graph;
     std::unordered_map<uint64_t, uint32_t> sources;
     std::unordered_map<uint64_t, const webscene::media::audio_buffer *> attached;
+    std::unordered_map<uint32_t, audio_worklet_binding> worklets;
 };
 std::unordered_map<uint32_t, audio_context_binding> audio_contexts;
 std::unordered_set<uint64_t> media_audio_source_elements;
@@ -179,6 +190,67 @@ void drain_audio_input_events() {
             if (event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_ENDED_V1
                 || event.kind == WEBSCENE_MEDIA_CAPTURE_EVENT_ERROR_V1)
                 track.object.Reset();
+        }
+    }
+}
+void drain_audio_worklets() {
+    constexpr size_t maximum_quanta_per_pump = 32U;
+    for (auto& [context_id, context] : audio_contexts) {
+        static_cast<void>(context_id);
+        context.graph->begin_worklet_drain();
+        for (auto& [node_id, binding] : context.worklets) {
+            static_cast<void>(node_id);
+            if (!binding.active) continue;
+            auto processor = binding.processor.Get(isolate);
+            if (processor.IsEmpty()) {
+                binding.active = false;
+                continue;
+            }
+            v8::Local<v8::Context> realm;
+            if (!processor->GetCreationContext().ToLocal(&realm)) {
+                binding.active = false;
+                continue;
+            }
+            v8::Context::Scope scope(realm);
+            v8::Local<v8::Value> process_value;
+            if (!processor->Get(realm, js_string(isolate, "process"))
+                    .ToLocal(&process_value)
+                || !process_value->IsFunction()) {
+                binding.active = false;
+                continue;
+            }
+            size_t quantum = 0U;
+            for (; quantum < maximum_quanta_per_pump; ++quantum) {
+                std::array<float, 256U> stereo{};
+                auto packet = binding.track->read(stereo);
+                binding.dropped_frames += packet.dropped;
+                if (packet.frames < 128U) {
+                    if (packet.ended) binding.active = false;
+                    break;
+                }
+                auto mono_buffer = binding.input_buffer.Get(isolate);
+                if (mono_buffer.IsEmpty() || mono_buffer->WasDetached()) {
+                    binding.active = false;
+                    break;
+                }
+                auto* mono = static_cast<float*>(mono_buffer->GetBackingStore()->Data());
+                for (size_t frame = 0U; frame < 128U; ++frame)
+                    mono[frame] = (stereo[frame * 2U] + stereo[frame * 2U + 1U]) * .5F;
+                v8::Local<v8::Value> arguments[] = {
+                    binding.inputs.Get(isolate), binding.outputs.Get(isolate),
+                    binding.parameters.Get(isolate)};
+                v8::Local<v8::Value> keep_running;
+                if (!process_value.As<v8::Function>()->Call(
+                        realm, processor, 3, arguments).ToLocal(&keep_running)
+                    || keep_running->IsFalse()) {
+                    binding.active = false;
+                    break;
+                }
+            }
+            if (quantum == maximum_quanta_per_pump) {
+                media_work_ready.store(true, std::memory_order_release);
+                if (runtime_work_available) runtime_work_available();
+            }
         }
     }
 }
@@ -437,9 +509,13 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
                 throw std::length_error("Audio context limit");
             auto id = self->next_audio_context++;
             auto rate = info.Length() > 1 ? info[1]->Uint32Value(realm).FromMaybe(48000) : 48000;
-            self->audio_contexts.emplace(
-                id,
-                audio_context_binding{std::make_unique<webscene::media::audio_graph>(true, rate), {}, {}});
+            auto graph = std::make_unique<webscene::media::audio_graph>(true, rate);
+            graph->set_worklet_available([self] {
+                self->media_work_ready.store(true, std::memory_order_release);
+                if (self->runtime_work_available) self->runtime_work_available();
+            });
+            self->audio_contexts.emplace(id, audio_context_binding{
+                std::move(graph), {}, {}, {}});
             info.GetReturnValue().Set(id);
             return;
         }
@@ -502,9 +578,69 @@ static void audio_native_call(const v8::FunctionCallbackInfo<v8::Value> &info) {
         }
         if (op == "node") {
             auto kind = static_cast<webscene::media::audio_graph::kind>(static_cast<int>(number(2)));
-            if (number(2) < 1 || number(2) > 5)
+            if (number(2) < 1 || number(2) > 6)
                 throw std::invalid_argument("Invalid audio node kind");
             info.GetReturnValue().Set(c.graph->create(kind));
+            return;
+        }
+        if (op == "workletModule") {
+            if (info.Length() < 3 || !info[2]->IsString())
+                throw std::invalid_argument("AudioWorklet module source required");
+            const auto source = to_utf8(info.GetIsolate(), info[2]);
+            if (source.empty() || source.size() > 64U * 1024U
+                || source.find("class PcmCaptureProcessor extends AudioWorkletProcessor")
+                    == std::string::npos
+                || source.find("new Float32Array(this._chunkSize)") == std::string::npos
+                || source.find("process(inputs)") == std::string::npos
+                || source.find("vscode-pcm-flush") == std::string::npos
+                || source.find("vscode-pcm-flushed") == std::string::npos
+                || source.find("postMessage(chunk") == std::string::npos
+                || source.find("registerProcessor('vscode-pcm-capture', PcmCaptureProcessor)")
+                    == std::string::npos)
+                throw std::invalid_argument("Unsupported AudioWorklet module");
+            constexpr std::string_view marker{"this._chunkSize = "};
+            const auto begin = source.find(marker);
+            if (begin == std::string::npos)
+                throw std::invalid_argument("Invalid PCM worklet chunk size");
+            const auto first = source.data() + begin + marker.size();
+            uint32_t chunk_size{};
+            const auto parsed = std::from_chars(first, source.data() + source.size(), chunk_size);
+            if (parsed.ec != std::errc{} || chunk_size < 128U
+                || chunk_size > 65536U || chunk_size % 128U != 0U)
+                throw std::invalid_argument("Invalid PCM worklet chunk size");
+            info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+                info.GetIsolate(), chunk_size));
+            return;
+        }
+        if (op == "workletBind") {
+            if (info.Length() < 4 || !info[3]->IsObject())
+                throw std::invalid_argument("AudioWorklet processor required");
+            const auto node_id = static_cast<uint32_t>(number(2));
+            if (c.worklets.size() >= 16U || c.worklets.contains(node_id))
+                throw std::length_error("AudioWorklet node limit");
+            audio_worklet_binding binding;
+            binding.track = c.graph->capture_worklet(node_id);
+            binding.processor.Reset(info.GetIsolate(), info[3].As<v8::Object>());
+            auto input_buffer = v8::ArrayBuffer::New(
+                info.GetIsolate(), 128U * sizeof(float));
+            auto input_channels = v8::Array::New(info.GetIsolate(), 1);
+            input_channels->Set(realm, 0U,
+                v8::Float32Array::New(input_buffer, 0U, 128U)).Check();
+            auto inputs = v8::Array::New(info.GetIsolate(), 1);
+            inputs->Set(realm, 0U, input_channels).Check();
+            auto output_buffer = v8::ArrayBuffer::New(
+                info.GetIsolate(), 128U * sizeof(float));
+            auto output_channels = v8::Array::New(info.GetIsolate(), 1);
+            output_channels->Set(realm, 0U,
+                v8::Float32Array::New(output_buffer, 0U, 128U)).Check();
+            auto outputs = v8::Array::New(info.GetIsolate(), 1);
+            outputs->Set(realm, 0U, output_channels).Check();
+            binding.input_buffer.Reset(info.GetIsolate(), input_buffer);
+            binding.inputs.Reset(info.GetIsolate(), inputs);
+            binding.outputs.Reset(info.GetIsolate(), outputs);
+            binding.parameters.Reset(
+                info.GetIsolate(), v8::Object::New(info.GetIsolate()));
+            c.worklets.emplace(node_id, std::move(binding));
             return;
         }
         if (op == "trackSource") {

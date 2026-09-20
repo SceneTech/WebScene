@@ -51,6 +51,16 @@ promise_test(async t=>{
  assert_true(stream instanceof MediaStream);assert_true(track instanceof MediaStreamTrack);assert_equals(track.kind,'audio');assert_true(track.id!==clone.id);assert_equals(track.readyState,'live');track.stop();assert_equals(track.readyState,'ended');assert_equals(clone.readyState,'live');assert_false(stream.active);const copy=new MediaStream([clone]);assert_true(copy.active);await c.close();assert_equals(clone.readyState,'ended');assert_false(copy.active);
 },'Native mixed audio tracks clone and stop independently and end on context close');
 promise_test(async t=>{
+ const c=new AudioContext({sampleRate:16000});t.add_cleanup(()=>c.state==='closed'?undefined:c.close());
+ const source=`class PcmCaptureProcessor extends AudioWorkletProcessor {constructor(){super();this._chunkSize = 512;this._buffer=new Float32Array(this._chunkSize);this._offset=0;this.port.onmessage=e=>{if(e.data?.type==='vscode-pcm-flush'){this.port.postMessage({type:'vscode-pcm-flushed'});}};}process(inputs){const chunk=this._buffer.slice(0,0);this.port.postMessage(chunk,[chunk.buffer]);return true;}}\nregisterProcessor('vscode-pcm-capture', PcmCaptureProcessor);`;
+ const url=URL.createObjectURL(new Blob([source],{type:'application/javascript'}));try{await c.audioWorklet.addModule(url)}finally{URL.revokeObjectURL(url)}
+ const destination=c.createMediaStreamDestination(),input=c.createMediaStreamSource(destination.stream),node=new AudioWorkletNode(c,'vscode-pcm-capture',{numberOfInputs:1,numberOfOutputs:1,channelCount:1});input.connect(node);node.connect(c.destination);
+ assert_equals(Object.prototype.toString.call(c.audioWorklet),'[object AudioWorklet]');assert_equals(Object.prototype.toString.call(node),'[object AudioWorkletNode]');assert_true(node.port instanceof MessagePort);assert_equals(node.numberOfInputs,1);assert_equals(node.numberOfOutputs,1);assert_equals(node.channelCount,1);
+ const ack=new Promise(resolve=>{node.port.onmessage=event=>{if(event.data?.type==='vscode-pcm-flushed')resolve()};});node.port.postMessage({type:'vscode-pcm-flush'});await ack;
+ const invalid=URL.createObjectURL(new Blob(['registerProcessor(\'other\', class {})'],{type:'application/javascript'}));let error;try{await c.audioWorklet.addModule(invalid)}catch(value){error=value}finally{URL.revokeObjectURL(invalid)}assert_equals(error.name,'NotSupportedError');
+ await c.close();
+},'Bounded Code OSS PCM AudioWorklet module, node and flush port lifecycle');
+promise_test(async t=>{
  const audio=new Audio('resources/media/stereo.wav');t.add_cleanup(()=>audio.removeAttribute('src'));const playing=audio.play();audio.pause();let error;try{await playing;}catch(e){error=e;}assert_equals(error.name,'AbortError');assert_true(audio.paused);assert_equals(audio.played.length,0);
  const controller=new AbortController();controller.abort();let aborted;try{await fetch('resources/media/stereo.wav',{signal:controller.signal});}catch(e){aborted=e;}assert_equals(aborted.name,'AbortError');
 },'Pause before play resolves rejects and aborted resource requests settle');

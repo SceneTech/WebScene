@@ -35,6 +35,6 @@ ring window and reports the discontinuity rather than blocking the provider.
 
 These gates are authored but were not executed under the active rapid-integration
 directive. Accepted latency, CPU/RSS, physical-device, exact-package, and
-cross-platform evidence remains zero. #777 must implement the bounded AudioWorklet
+cross-platform evidence remains zero. #777 implements the bounded AudioWorklet
 PCM processor/message path used by unchanged Code OSS; AppScene #294 and #295
 still own Windows and Linux microphone providers.

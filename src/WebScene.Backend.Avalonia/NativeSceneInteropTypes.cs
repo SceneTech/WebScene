@@ -60,6 +60,38 @@ internal enum NativeAccessibilityPreferences : uint
     MoreContrast = 1 << 2
 }
 
+[Flags]
+internal enum NativeDesktopEnvironmentFlags : uint
+{
+    None = 0,
+    ForcedColors = 1 << 0,
+    HighContrast = 1 << 1,
+    Suspended = 1 << 2,
+    DisplayAvailable = 1 << 3,
+    SessionLocked = 1 << 4,
+    SessionEnding = 1 << 5
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeDesktopEnvironmentV1
+{
+    internal uint StructSize;
+    internal uint Version;
+    internal NativeDesktopEnvironmentFlags Flags;
+    internal NativePreferredColorScheme PreferredColorScheme;
+    internal uint DpiX;
+    internal uint DpiY;
+    internal uint ScaleMilli;
+    internal uint Reserved0;
+    internal ulong DisplayGeneration;
+    internal uint AccentRgba;
+    internal uint AccentTextRgba;
+    internal uint CanvasRgba;
+    internal uint CanvasTextRgba;
+    internal uint HighlightRgba;
+    internal uint HighlightTextRgba;
+}
+
 /// <summary>Host accessibility preferences published to CSS media queries.</summary>
 [Flags]
 public enum WebSceneAccessibilityPreferences : uint

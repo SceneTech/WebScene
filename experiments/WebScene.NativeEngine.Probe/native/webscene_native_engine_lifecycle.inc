@@ -503,6 +503,80 @@
         return true;
     }
 
+    bool set_desktop_environment(
+        const webscene_desktop_environment_v1& environment)
+    {
+        constexpr auto supported_flags =
+            WEBSCENE_DESKTOP_ENVIRONMENT_FORCED_COLORS_V1
+            | WEBSCENE_DESKTOP_ENVIRONMENT_HIGH_CONTRAST_V1
+            | WEBSCENE_DESKTOP_ENVIRONMENT_SUSPENDED_V1
+            | WEBSCENE_DESKTOP_ENVIRONMENT_DISPLAY_AVAILABLE_V1
+            | WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_LOCKED_V1
+            | WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_ENDING_V1;
+        if (environment.struct_size != sizeof(webscene_desktop_environment_v1)
+            || environment.version != WEBSCENE_DESKTOP_ENVIRONMENT_VERSION_1
+            || (environment.flags & ~supported_flags) != 0U
+            || environment.reserved0 != 0U
+            || (environment.preferred_color_scheme
+                    != WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT
+                && environment.preferred_color_scheme
+                    != WEBSCENE_PREFERRED_COLOR_SCHEME_DARK)
+            || environment.dpi_x == 0U || environment.dpi_x > 10000U
+            || environment.dpi_y == 0U || environment.dpi_y > 10000U
+            || environment.scale_milli < 100U
+            || environment.scale_milli > 10000U) {
+            return false;
+        }
+
+        {
+            std::lock_guard lock(desktop_environment_mutex_);
+            if (std::memcmp(
+                    &desktop_environment_, &environment,
+                    sizeof(webscene_desktop_environment_v1)) == 0) {
+                return true;
+            }
+            desktop_environment_ = environment;
+        }
+
+        preferred_color_scheme_.store(
+            environment.preferred_color_scheme, std::memory_order_release);
+        auto accessibility = accessibility_preference_flags_.load(
+            std::memory_order_acquire);
+        accessibility &= ~(
+            WEBSCENE_ACCESSIBILITY_PREFERENCE_FORCED_COLORS_V1
+            | WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1);
+        if ((environment.flags
+                & WEBSCENE_DESKTOP_ENVIRONMENT_FORCED_COLORS_V1) != 0U) {
+            accessibility |= WEBSCENE_ACCESSIBILITY_PREFERENCE_FORCED_COLORS_V1;
+        }
+        if ((environment.flags
+                & WEBSCENE_DESKTOP_ENVIRONMENT_HIGH_CONTRAST_V1) != 0U) {
+            accessibility |= WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1;
+        }
+        accessibility_preference_flags_.store(
+            accessibility, std::memory_order_release);
+        desktop_accent_rgba_.store(environment.accent_rgba, std::memory_order_release);
+        desktop_accent_text_rgba_.store(
+            environment.accent_text_rgba, std::memory_order_release);
+        desktop_canvas_rgba_.store(environment.canvas_rgba, std::memory_order_release);
+        desktop_canvas_text_rgba_.store(
+            environment.canvas_text_rgba, std::memory_order_release);
+        desktop_highlight_rgba_.store(
+            environment.highlight_rgba, std::memory_order_release);
+        desktop_highlight_text_rgba_.store(
+            environment.highlight_text_rgba, std::memory_order_release);
+        desktop_environment_published_.store(true, std::memory_order_release);
+        desktop_environment_changed_.store(true, std::memory_order_release);
+        signal_worker();
+        return true;
+    }
+
+    webscene_desktop_environment_v1 desktop_environment() const
+    {
+        std::lock_guard lock(desktop_environment_mutex_);
+        return desktop_environment_;
+    }
+
     uint32_t cursor() const noexcept
     {
         return current_cursor_.load(std::memory_order_acquire);

@@ -1573,6 +1573,93 @@
         return true;
     }
 
+    bool apply_desktop_environment(
+        const webscene_desktop_environment_v1& environment)
+    {
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        const auto previous = desktop_environment;
+        const auto initialized = desktop_environment_initialized;
+        desktop_environment = environment;
+        desktop_environment_initialized = true;
+        if (!initialized) return true;
+
+        std::array<const char*, 6U> events{};
+        size_t event_count = 0U;
+        const auto transitioned = [&](uint32_t flag) {
+            return ((previous.flags ^ environment.flags) & flag) != 0U;
+        };
+        if (transitioned(WEBSCENE_DESKTOP_ENVIRONMENT_SUSPENDED_V1)) {
+            events[event_count++] = (environment.flags
+                & WEBSCENE_DESKTOP_ENVIRONMENT_SUSPENDED_V1) != 0U
+                ? "suspend" : "resume";
+        }
+        if (transitioned(WEBSCENE_DESKTOP_ENVIRONMENT_DISPLAY_AVAILABLE_V1)) {
+            events[event_count++] = "displayavailabilitychange";
+        }
+        if (transitioned(WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_LOCKED_V1)) {
+            events[event_count++] = (environment.flags
+                & WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_LOCKED_V1) != 0U
+                ? "sessionlock" : "sessionunlock";
+        }
+        if (transitioned(WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_ENDING_V1)
+            && (environment.flags
+                & WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_ENDING_V1) != 0U) {
+            events[event_count++] = "sessionending";
+        }
+        if (previous.display_generation != environment.display_generation
+            || previous.dpi_x != environment.dpi_x
+            || previous.dpi_y != environment.dpi_y
+            || previous.scale_milli != environment.scale_milli) {
+            events[event_count++] = "displaychange";
+        }
+        if (event_count == 0U) return true;
+
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) return true;
+        v8::Context::Scope context_scope(local_context);
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            last_error = "Desktop environment dispatcher is unavailable";
+            return false;
+        }
+        for (size_t index = 0U; index < event_count; ++index) {
+            auto event = create_event_instance(local_context);
+            event->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, events[index])).Check();
+            event->Set(local_context, js_string(isolate, "bubbles"),
+                v8::False(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "cancelable"),
+                v8::False(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "displayAvailable"),
+                v8::Boolean::New(isolate, (environment.flags
+                    & WEBSCENE_DESKTOP_ENVIRONMENT_DISPLAY_AVAILABLE_V1) != 0U)).Check();
+            event->Set(local_context, js_string(isolate, "dpiX"),
+                v8::Integer::NewFromUnsigned(isolate, environment.dpi_x)).Check();
+            event->Set(local_context, js_string(isolate, "dpiY"),
+                v8::Integer::NewFromUnsigned(isolate, environment.dpi_y)).Check();
+            event->Set(local_context, js_string(isolate, "scale"),
+                v8::Number::New(isolate,
+                    static_cast<double>(environment.scale_milli) / 1000.0)).Check();
+            v8::TryCatch try_catch(isolate);
+            v8::Local<v8::Value> arguments[] = {event};
+            if (dispatcher.As<v8::Function>()->Call(
+                    local_context, target, 1, arguments).IsEmpty()) {
+                last_error = std::string("Desktop environment ") + events[index]
+                    + " dispatch failed: "
+                    + describe_reported_exception(try_catch, local_context);
+                ++frame_script_error_count;
+                return false;
+            }
+        }
+        perform_microtask_checkpoint();
+        return true;
+    }
+
     bool set_focused(bool focused)
     {
         if (document_focused == focused) return true;

@@ -7753,6 +7753,13 @@ bool v8_dom_runtime::set_visible(bool visible)
         && impl_->promote_pending_promise_error();
 }
 
+bool v8_dom_runtime::apply_desktop_environment(
+    const webscene_desktop_environment_v1& environment)
+{
+    return impl_->apply_desktop_environment(environment)
+        && impl_->promote_pending_promise_error();
+}
+
 bool v8_dom_runtime::set_focused(bool focused)
 {
     return impl_->set_focused(focused)

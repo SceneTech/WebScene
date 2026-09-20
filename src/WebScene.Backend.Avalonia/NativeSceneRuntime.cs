@@ -2108,6 +2108,13 @@ public static unsafe partial class NativeWebSceneApi
         IntPtr engine,
         NativeAccessibilityPreferences preferences);
 
+    [DllImport(
+        LibraryName,
+        EntryPoint = "webscene_engine_set_desktop_environment_v1")]
+    internal static extern byte EngineSetDesktopEnvironmentV1(
+        IntPtr engine,
+        in NativeDesktopEnvironmentV1 environment);
+
     [DllImport(LibraryName, EntryPoint = "webscene_scene_release")]
     public static extern void SceneRelease(IntPtr scene);
 

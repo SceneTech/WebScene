@@ -406,6 +406,16 @@ bool apply_text_value(dom_node& node,const std::string& name,const std::string& 
             node.style.mutable_textual().white_space =
                 value == "inherit" || value == "unset"
                 ? std::string{} : value;
+        } else if (name == "text-wrap") {
+            auto mode = ascii_lower(trim_value(value));
+            if (mode == "inherit" || mode == "unset") mode.clear();
+            else if (mode == "initial" || mode == "revert"
+                || mode == "revert-layer") mode = "wrap";
+            if (!mode.empty() && mode != "wrap" && mode != "nowrap") {
+                decision.classification = "invalid-authoring";
+            } else {
+                node.style.mutable_textual().text_wrap = std::move(mode);
+            }
         } else if (name == "word-break") {
             node.style.mutable_textual().word_break =
                 value == "inherit" || value == "unset"

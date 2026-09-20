@@ -236,6 +236,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"text-indent", "textIndent"},
     cssom_supported_property_metadata{"text-overflow", "textOverflow"},
     cssom_supported_property_metadata{"text-transform", "textTransform"},
+    cssom_supported_property_metadata{"text-wrap", "textWrap"},
     cssom_supported_property_metadata{"top", "top"},
     cssom_supported_property_metadata{"transform", "transform"},
     cssom_supported_property_metadata{"transform-origin", "transformOrigin"},
@@ -261,4 +262,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 464U;
+inline constexpr auto cssom_style_template_property_accessor_count = 466U;

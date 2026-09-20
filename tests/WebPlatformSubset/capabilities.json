@@ -448,6 +448,14 @@
       "productEvidence": ["Code OSS Quick Input", "Code OSS Action Widget", "Code OSS sessions and mobile views", "Code OSS Chat, counter, voice, and onboarding animation surfaces"],
       "coverage": ["contracts/css-will-change-stacking-context.html", "test_css_will_change_stacking_context", "css-will-change-performance"],
       "gap": "Issue #800 implements the exact will-change slice used by unchanged Code OSS. A normalized bounded list is cold state; one packed derived bit feeds the retained atomic stacking-context predicate for transform, opacity, and other context-establishing hints without allocating a compositor layer. Direct browser/native execution, exact product pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
+    },
+    {
+      "family": "css-text-wrap-mode",
+      "required": ["text-wrap wrap and nowrap CSSOM", "inherited wrap mode", "retained line-layout mutation", "cascade removal fallback"],
+      "candidate": ["unchanged Code OSS product pixels", "cross-RID performance qualification"],
+      "productEvidence": ["Code OSS diff and placeholder text", "Code OSS hover and Changes surfaces", "Code OSS Chat status, anchors, and code pills", "Code OSS notebook content"],
+      "coverage": ["contracts/css-text-wrap-mode.html", "test_css_text_wrap_layout", "css-text-wrap-performance"],
+      "gap": "Issue #802 implements the wrap/nowrap mode used by unchanged Code OSS while keeping computed white-space independent. The inherited cold token feeds the existing retained inline/layout/scene wrapping decision. Balance, pretty, stable, and the complete Text Level 4 shorthand remain outside this slice. Direct browser/native execution, exact product pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
     }
   ]
 }

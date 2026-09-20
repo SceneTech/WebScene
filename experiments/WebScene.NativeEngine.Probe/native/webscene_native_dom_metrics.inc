@@ -341,6 +341,7 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + textual->vertical_align.capacity() + 1U
             + textual->text_transform.capacity() + 1U
             + textual->white_space.capacity() + 1U
+            + textual->text_wrap.capacity() + 1U
             + textual->word_break.capacity() + 1U
             + textual->overflow_wrap.capacity() + 1U
             + textual->object_fit.capacity() + 1U

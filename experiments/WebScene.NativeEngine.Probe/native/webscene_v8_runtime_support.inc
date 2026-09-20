@@ -685,6 +685,9 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
     if (canonical_name == "will-change") {
         return css::normalize_will_change_value(normalized_value).has_value();
     }
+    if (canonical_name == "text-wrap") {
+        return normalized_value == "wrap" || normalized_value == "nowrap";
+    }
 
     if (canonical_name == "position") {
         return normalized_value == "static" || normalized_value == "relative"

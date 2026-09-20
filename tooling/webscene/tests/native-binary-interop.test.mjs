@@ -95,6 +95,9 @@ test('native engine publishes only the versioned leased interop surface', async 
     'webscene_engine_set_window_focused_v1',
     'webscene_engine_set_window_fullscreen_v1',
     'webscene_engine_set_accessibility_preferences_v1',
+    'webscene_engine_set_desktop_environment_v1',
+    'webscene_engine_submit_media_capture_packet_v1',
+    'webscene_engine_submit_media_capture_event_v1',
     'webscene_engine_acquire_semantic_snapshot_v1',
     'webscene_semantic_snapshot_release_v1',
     'webscene_engine_acquire_semantic_snapshot_v2',
@@ -119,9 +122,9 @@ test('native engine publishes only the versioned leased interop surface', async 
     assert.match(exports, new RegExp(`_${symbol}\\b`));
   }
   for (const [name, source] of [['header', header + compiledHeader], ['exports', exports]]) {
-    const legacySymbols = [...source.matchAll(
+    const legacySymbols = [...new Set([...source.matchAll(
       /\b_?(webscene_(?:engine|interop)_[a-z0-9_]+_v[12])\b/g
-    )].map(match => match[1]).filter(symbol => !independentHostApis.has(symbol));
+    )].map(match => match[1]).filter(symbol => !independentHostApis.has(symbol)))];
     assert.deepEqual(legacySymbols, [], `${name} must not expose legacy interop`);
   }
   assert.match(

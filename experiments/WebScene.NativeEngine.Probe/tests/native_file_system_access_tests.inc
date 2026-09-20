@@ -1200,7 +1200,9 @@ void test_native_file_system_access_picker_and_handle_contract()
                     status_case.status),
             "remove operation completed more than once");
     }
-    require(evaluate(engine.get(), R"JS((async()=>{
+    execute(engine.get(), R"JS(
+      globalThis.__removeValidation='pending';
+      (async()=>{
       const values=[];
       for (const [name,options] of [['',{}],['.',{}],['..',{}],['a/b',{}],
         ['a\\b',{}],['ok',1]]) {
@@ -1208,10 +1210,22 @@ void test_native_file_system_access_picker_and_handle_contract()
           values.push('unexpected'); }
         catch(error) { values.push(error.name); }
       }
-      return values.join(':');
-    })())JS", "file-directory-remove-validation.js")
-            == "\"TypeError:TypeError:TypeError:TypeError:TypeError:TypeError\"",
-        "removeEntry WebIDL name/options validation changed");
+      __removeValidation=values.join(':');
+    })().catch(error=>{__removeValidation=`unexpected:${error.name}`});
+    )JS", "file-directory-remove-validation.js");
+    const auto remove_validation = evaluate_until_equals(
+        engine.get(),
+        "__removeValidation",
+        "file-directory-remove-validation-result.js",
+        "\"TypeError:TypeError:TypeError:TypeError:TypeError:TypeError\"");
+    const auto expected_remove_validation =
+        "\"TypeError:TypeError:TypeError:TypeError:TypeError:TypeError\"";
+    if (remove_validation != expected_remove_validation) {
+        fail("removeEntry WebIDL name/options validation changed: "
+            + remove_validation);
+    }
+    require(webscene_engine_take_file_grant_remove_request_v2(engine.get()) == nullptr,
+        "invalid removeEntry call published a native removal request");
     if (std::getenv("WEBSCENE_TEST_FILE_GRANT_REMOVE_ONLY") != nullptr)
         return;
 

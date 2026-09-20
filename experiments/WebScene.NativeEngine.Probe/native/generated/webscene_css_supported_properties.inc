@@ -253,6 +253,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"white-space", "whiteSpace"},
     cssom_supported_property_metadata{"widows", "widows"},
     cssom_supported_property_metadata{"width", "width"},
+    cssom_supported_property_metadata{"will-change", "willChange"},
     cssom_supported_property_metadata{"word-break", "wordBreak"},
     cssom_supported_property_metadata{"word-spacing", "wordSpacing"},
     cssom_supported_property_metadata{"word-wrap", "wordWrap"},
@@ -260,4 +261,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 462U;
+inline constexpr auto cssom_style_template_property_accessor_count = 464U;

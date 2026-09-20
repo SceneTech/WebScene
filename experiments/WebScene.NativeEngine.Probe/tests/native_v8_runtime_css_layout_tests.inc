@@ -281,6 +281,46 @@ void test_css_isolation_performance_gate(webscene_engine* engine)
             + std::to_string(elapsed) + " ms");
 }
 
+void test_css_will_change_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      document.body.innerHTML = '<div id="will-change-grid"></div>';
+      globalThis.willChangeGrid = document.getElementById('will-change-grid');
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < 4096; ++index) {
+        fragment.appendChild(document.createElement('div'));
+      }
+      willChangeGrid.appendChild(fragment);
+    )JS", "native-css-will-change-performance-setup.js");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          const value = cycle % 2 === 0 ? 'transform, opacity' : 'auto';
+          for (const node of willChangeGrid.children) node.style.willChange = value;
+        }
+        return [willChangeGrid.children.length,
+          willChangeGrid.lastElementChild.style.willChange];
+      })()
+    )JS", "native-css-will-change-performance-gate.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(result == R"JSON([4096,"auto"])JSON",
+        "CSS will-change performance fixture regressed: " + result);
+    require(after.layout_passes == before.layout_passes,
+        "CSS will-change transitions performed layout");
+    require(after.published_scenes <= before.published_scenes + 1U,
+        "CSS will-change transitions published unbounded scenes");
+    require(elapsed < 5000.0,
+        "4,096-node CSS will-change gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);
@@ -5051,6 +5091,36 @@ void test_css_isolation_stacking_context(webscene_engine* engine)
     )JS", "native-css-isolation-auto.js");
     require(released == R"JSON(["auto","escape"])JSON",
         "CSS isolation auto mutation retained an atomic context: " + released);
+}
+
+void test_css_will_change_stacking_context(webscene_engine* engine)
+{
+    resize(engine, 320, 180, 79'600U);
+    const auto hinted = evaluate(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `<style>
+          body { margin:0; }
+          #hinted { will-change:transform, opacity; width:100px; height:40px; }
+          #escape { position:relative; z-index:100; width:100px; height:40px; }
+          #sibling { position:relative; z-index:1; width:100px; height:40px;
+            margin-top:-40px; }
+        </style><div id="hinted"><div id="escape"></div></div><div id="sibling"></div>`;
+        return [getComputedStyle(document.getElementById('hinted')).willChange,
+          document.elementFromPoint(10,10).id];
+      })()
+    )JS", "native-css-will-change-stacking.js");
+    require(hinted == R"JSON(["transform, opacity","sibling"])JSON",
+        "CSS will-change did not establish an atomic context: " + hinted);
+    const auto released = evaluate(engine, R"JS(
+      (() => {
+        const hinted = document.getElementById('hinted');
+        hinted.style.willChange = 'background-position';
+        return [getComputedStyle(hinted).willChange,
+          document.elementFromPoint(10,10).id];
+      })()
+    )JS", "native-css-will-change-auto.js");
+    require(released == R"JSON(["background-position","escape"])JSON",
+        "Non-context will-change hint retained an atomic context: " + released);
 }
 
 void test_z_index_orders_positioned_siblings_in_scene(webscene_engine* engine)

@@ -281,6 +281,11 @@
             }
         } else if (name == "isolation") {
             node.style.isolation_stacking_context = false;
+        } else if (name == "willChange" || name == "will-change") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->will_change.clear();
+            }
+            node.style.will_change_stacking_context = false;
         } else if (name == "boxSizing" || name == "box-sizing") {
             node.style.border_box = false;
             node.style.inline_property_mask &= ~inline_box_sizing;
@@ -1001,6 +1006,12 @@
                 std::string semantic_slice;
             } decision;
             css::apply_isolation_value(*node, name, value, decision);
+        } else if (name == "will-change") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_will_change_value(*node, name, value, decision);
         } else if (name == "box-sizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;
@@ -1622,6 +1633,9 @@
                     node->style.textual().overscroll_y);
             } else if (name == "isolation") {
                 value = node->style.isolation_stacking_context ? "isolate" : "auto";
+            } else if (name == "will-change") {
+                value = node->style.textual().will_change.empty()
+                    ? "auto" : node->style.textual().will_change;
             } else if (name == "cursor") {
                 value = resolved_cursor(*node);
             } else if (name == "font-size") {
@@ -2100,6 +2114,9 @@
                 node->style.textual().overscroll_y);
         } else if (name == "isolation") {
             value = node->style.isolation_stacking_context ? "isolate" : "auto";
+        } else if (name == "willChange") {
+            value = node->style.textual().will_change.empty()
+                ? "auto" : node->style.textual().will_change;
         } else if (name == "boxSizing") {
             value = node->style.border_box ? "border-box" : "content-box";
         } else if (name == "borderRadius") {
@@ -2705,6 +2722,12 @@
                 std::string semantic_slice;
             } decision;
             css::apply_isolation_value(*node, name, value, decision);
+        } else if (name == "willChange") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_will_change_value(*node, "will-change", value, decision);
         } else if (name == "boxSizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;

@@ -120,6 +120,7 @@ internal static class CssGeneratedPropertyMetadata
         "overscroll-behavior-x",
         "overscroll-behavior-y",
         "isolation",
+        "will-change",
     ];
 
     internal static readonly string[] SupportedNames =
@@ -372,6 +373,7 @@ internal static class CssGeneratedPropertyMetadata
         "white-space",
         "widows",
         "width",
+        "will-change",
         "word-break",
         "word-spacing",
         "word-wrap",
@@ -498,6 +500,7 @@ internal static class CssGeneratedPropertyMetadata
             "overscroll-behavior-x" => 112,
             "overscroll-behavior-y" => 113,
             "isolation" => 114,
+            "will-change" => 115,
             _ => -1,
         };
         return id >= 0;

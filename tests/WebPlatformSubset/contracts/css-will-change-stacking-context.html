@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Will-change establishes the hinted stacking context</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  body { margin: 0; }
+  #hinted { will-change: transform, opacity; width: 100px; height: 40px; }
+  #escape { position: relative; z-index: 100; width: 100px; height: 40px; }
+  #sibling { position: relative; z-index: 1; width: 100px; height: 40px; margin-top: -40px; }
+</style>
+<div id="hinted"><div id="escape"></div></div>
+<div id="sibling"></div>
+<script>
+  test(() => {
+    assert_equals(getComputedStyle(hinted).willChange, 'transform, opacity');
+    assert_equals(document.elementFromPoint(10, 10), sibling);
+    hinted.style.willChange = 'background-position';
+    assert_equals(getComputedStyle(hinted).willChange, 'background-position');
+    assert_equals(document.elementFromPoint(10, 10), escape);
+    hinted.style.willChange = 'auto, transform';
+    assert_equals(hinted.style.willChange, 'background-position');
+    hinted.style.removeProperty('will-change');
+    assert_equals(getComputedStyle(hinted).willChange, 'transform, opacity');
+  }, 'transform and opacity hints scope z-index before the real property changes');
+</script>

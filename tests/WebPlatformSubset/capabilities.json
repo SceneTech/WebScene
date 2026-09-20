@@ -440,6 +440,14 @@
       "productEvidence": ["Code OSS pixel spinner", "Code OSS sessions workbench and part", "Code OSS Chat session container", "Code OSS voice glow"],
       "coverage": ["contracts/css-isolation-stacking-context.html", "test_css_isolation_stacking_context", "css-isolation-performance"],
       "gap": "Issue #795 implements the exact isolation:isolate slice used by unchanged Code OSS. One packed computed-style bit feeds the retained atomic stacking-context predicate, so a positive-z descendant remains scoped below a later sibling and CSSOM mutation changes paint and hit order without relayout. Direct browser/native execution, exact product pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
+    },
+    {
+      "family": "css-will-change-stacking-context",
+      "required": ["will-change auto and bounded custom-ident list CSSOM", "hinted atomic stacking context", "retained paint and hit-order mutation", "cascade removal fallback"],
+      "candidate": ["unchanged Code OSS product pixels", "cross-RID performance qualification"],
+      "productEvidence": ["Code OSS Quick Input", "Code OSS Action Widget", "Code OSS sessions and mobile views", "Code OSS Chat, counter, voice, and onboarding animation surfaces"],
+      "coverage": ["contracts/css-will-change-stacking-context.html", "test_css_will_change_stacking_context", "css-will-change-performance"],
+      "gap": "Issue #800 implements the exact will-change slice used by unchanged Code OSS. A normalized bounded list is cold state; one packed derived bit feeds the retained atomic stacking-context predicate for transform, opacity, and other context-establishing hints without allocating a compositor layer. Direct browser/native execution, exact product pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
     }
   ]
 }

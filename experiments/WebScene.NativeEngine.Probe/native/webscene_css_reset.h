@@ -251,6 +251,10 @@ inline void apply_all_unset(
     if (has_inline({"isolation"})) {
         reset.isolation_stacking_context = previous.isolation_stacking_context;
     }
+    if (has_inline({"will-change"})) {
+        reset.mutable_textual().will_change = previous.textual().will_change;
+        reset.will_change_stacking_context = previous.will_change_stacking_context;
+    }
 
     // These modeled properties do not yet have dedicated inline-mask
     // bits, so preserve their applied values by authored declaration.

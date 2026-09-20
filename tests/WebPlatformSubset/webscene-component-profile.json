@@ -2850,6 +2850,13 @@
       "capabilities": ["isolation-cssom", "atomic-stacking-context", "descendant-z-index-containment", "paint-order-mutation"],
       "evidence": ["focused-native-hit-order-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #795 contract for the five isolation:isolate declarations in unchanged Code OSS. It covers initial/computed CSSOM, mutation/removal, invalid writes, descendant z-index containment, and retained hit order without relayout. Direct browser/native execution, exact product pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-will-change-stacking-context.html",
+      "type": "testharness",
+      "capabilities": ["will-change-cssom", "hinted-atomic-stacking-context", "descendant-z-index-containment", "paint-order-mutation"],
+      "evidence": ["focused-native-hit-order-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #800 contract for 16 will-change declarations across 12 unchanged Code OSS CSS files. It covers bounded list CSSOM, mutation/removal, invalid writes, hinted descendant z-index containment, and retained hit order without relayout or eager layer allocation. Direct browser/native execution, exact product pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

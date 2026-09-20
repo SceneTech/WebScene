@@ -2229,6 +2229,10 @@ inline bool resolved_right_to_left(const dom_node& node) noexcept
     return false;
 }
 
+// Shared by retained layout/paint and the V8-free CSS service contract so the
+// contract exercises the production marker-suppression path.
+std::string list_marker_text(const dom_node& node);
+
 class native_document final {
 public:
     struct custom_highlight_range final {

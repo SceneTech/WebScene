@@ -1964,10 +1964,9 @@
     static range_binding* unwrap_range(v8::Local<v8::Object> object)
     {
         if (object.IsEmpty() || object->InternalFieldCount() == 0) return nullptr;
-        auto field = object->GetInternalField(0);
-        return field->IsExternal()
-            ? static_cast<range_binding*>(field.As<v8::External>()->Value())
-            : nullptr;
+        return static_cast<range_binding*>(
+            object->GetAlignedPointerFromInternalField(
+                0, v8::kEmbedderDataTypeTagDefault));
     }
 
     dom_node* range_root_for_context(v8::Local<v8::Context> local_context)
@@ -2325,8 +2324,8 @@
         binding->start_node_id = root->id;
         binding->end_node_id = root->id;
         auto* raw = binding.get();
-        info.This()->SetInternalField(
-            0, v8::External::New(info.GetIsolate(), raw));
+        info.This()->SetAlignedPointerInInternalField(
+            0, raw, v8::kEmbedderDataTypeTagDefault);
         raw->wrapper.Reset(info.GetIsolate(), info.This());
         raw->wrapper.SetWeak(raw, range_collected, v8::WeakCallbackType::kParameter);
         self->range_bindings.push_back(std::move(binding));
@@ -3587,7 +3586,7 @@
                 if (converted.IsNothing()) return;
                 const auto index = converted.FromJust();
                 if (index >= 0) {
-                    const auto options = form_or_select_items(*select);
+                    const auto options = self->form_or_select_items(*select);
                     if (static_cast<size_t>(index) < options.size()) {
                         reference = options[static_cast<size_t>(index)];
                     }

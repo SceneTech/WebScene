@@ -2996,8 +2996,13 @@
         }
         nested_history_states.erase(frame_id);
         if (const auto root = frame_documents.find(frame_id);
-            root != frame_documents.end() && root->second != nullptr)
-            pending_form_restores.erase(root->second->id);
+            root != frame_documents.end() && !root->second.IsEmpty()) {
+            auto root_object = root->second.Get(isolate);
+            auto* root_node = static_cast<dom_node*>(
+                root_object->GetAlignedPointerFromInternalField(
+                    0, v8::kEmbedderDataTypeTagDefault));
+            if (root_node != nullptr) pending_form_restores.erase(root_node->id);
+        }
         frame_reload_navigations.erase(frame_id);
         frame_history_traversals.erase(frame_id);
         frame_history_replace_navigations.erase(frame_id);

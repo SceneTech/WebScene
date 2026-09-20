@@ -679,6 +679,9 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
         };
         return valid(first) && (second.empty() || valid(second)) && extra.empty();
     }
+    if (canonical_name == "isolation") {
+        return normalized_value == "auto" || normalized_value == "isolate";
+    }
 
     if (canonical_name == "position") {
         return normalized_value == "static" || normalized_value == "relative"

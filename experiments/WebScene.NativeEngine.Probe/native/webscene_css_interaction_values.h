@@ -110,4 +110,25 @@ bool apply_overscroll_behavior_value(dom_node& node,const std::string& name,
     textual.overscroll_y = y;
     return true;
 }
+
+template<typename Decision>
+bool apply_isolation_value(dom_node& node,const std::string& name,
+    const std::string& raw_value,Decision& decision)
+{
+    if (canonical_property_name(name) != "isolation") return false;
+    auto value = ascii_lower(trim_value(raw_value));
+    if (value == "inherit") {
+        node.style.isolation_stacking_context = node.parent != nullptr
+            && node.parent->style.isolation_stacking_context;
+        return true;
+    }
+    if (value == "initial" || value == "unset" || value == "revert"
+        || value == "revert-layer") value = "auto";
+    if (value != "auto" && value != "isolate") {
+        decision.classification = "invalid-authoring";
+        return true;
+    }
+    node.style.isolation_stacking_context = value == "isolate";
+    return true;
+}
 } // namespace webscene_native::css

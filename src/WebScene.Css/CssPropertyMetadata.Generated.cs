@@ -119,6 +119,7 @@ internal static class CssGeneratedPropertyMetadata
         "overscroll-behavior",
         "overscroll-behavior-x",
         "overscroll-behavior-y",
+        "isolation",
     ];
 
     internal static readonly string[] SupportedNames =
@@ -276,6 +277,7 @@ internal static class CssGeneratedPropertyMetadata
         "inset-inline",
         "inset-inline-end",
         "inset-inline-start",
+        "isolation",
         "justify-content",
         "left",
         "letter-spacing",
@@ -495,6 +497,7 @@ internal static class CssGeneratedPropertyMetadata
             "overscroll-behavior" => 111,
             "overscroll-behavior-x" => 112,
             "overscroll-behavior-y" => 113,
+            "isolation" => 114,
             _ => -1,
         };
         return id >= 0;

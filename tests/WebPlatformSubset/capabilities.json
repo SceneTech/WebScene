@@ -432,6 +432,14 @@
       "productEvidence": ["Code OSS session workbench part entry", "Code OSS phone sidebar drawer"],
       "coverage": ["contracts/css-starting-style-entry-transition.html", "webscene_css_parser_tests", "native_web_css_service", "test_starting_style_entry_and_discrete_display_transitions"],
       "gap": "Issue #749 implements the exact entry-transition slice used by unchanged Code OSS. Static nodes retain only two lifecycle bits; temporary starting snapshots exist only during entry cascade and admitted transitions reuse host-clock runtime state. Product pixels, broader discrete properties, margin/border transition machines, and view transitions remain separate work."
+    },
+    {
+      "family": "css-isolation-stacking-context",
+      "required": ["isolation auto and isolate CSSOM", "atomic descendant z-index containment", "retained paint and hit-order mutation", "cascade removal fallback"],
+      "candidate": ["unchanged Code OSS product pixels", "cross-RID performance qualification"],
+      "productEvidence": ["Code OSS pixel spinner", "Code OSS sessions workbench and part", "Code OSS Chat session container", "Code OSS voice glow"],
+      "coverage": ["contracts/css-isolation-stacking-context.html", "test_css_isolation_stacking_context", "css-isolation-performance"],
+      "gap": "Issue #795 implements the exact isolation:isolate slice used by unchanged Code OSS. One packed computed-style bit feeds the retained atomic stacking-context predicate, so a positive-z descendant remains scoped below a later sibling and CSSOM mutation changes paint and hit order without relayout. Direct browser/native execution, exact product pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
     }
   ]
 }

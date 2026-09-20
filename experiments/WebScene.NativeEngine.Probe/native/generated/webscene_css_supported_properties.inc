@@ -158,6 +158,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"inset-inline", "insetInline"},
     cssom_supported_property_metadata{"inset-inline-end", "insetInlineEnd"},
     cssom_supported_property_metadata{"inset-inline-start", "insetInlineStart"},
+    cssom_supported_property_metadata{"isolation", "isolation"},
     cssom_supported_property_metadata{"justify-content", "justifyContent"},
     cssom_supported_property_metadata{"left", "left"},
     cssom_supported_property_metadata{"letter-spacing", "letterSpacing"},
@@ -259,4 +260,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 461U;
+inline constexpr auto cssom_style_template_property_accessor_count = 462U;

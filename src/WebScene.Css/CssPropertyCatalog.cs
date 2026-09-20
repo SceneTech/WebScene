@@ -90,6 +90,7 @@ public static class CssPropertyCatalog
             "overscroll-behavior-x" or "overscroll-behavior-y"
                 => normalizedValue is "auto" or "contain" or "none",
             "overscroll-behavior" => IsOverscrollBehavior(normalizedValue),
+            "isolation" => normalizedValue is "auto" or "isolate",
             "font-size" => IsFontSize(normalizedValue),
             "color-scheme" => normalizedValue is "normal" or "light" or "dark"
                 or "light dark" or "dark light" or "only light" or "only dark",

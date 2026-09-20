@@ -248,6 +248,9 @@ inline void apply_all_unset(
     if (has_inline({"overscroll-behavior", "overscroll-behavior-y"})) {
         reset.mutable_textual().overscroll_y = previous.textual().overscroll_y;
     }
+    if (has_inline({"isolation"})) {
+        reset.isolation_stacking_context = previous.isolation_stacking_context;
+    }
 
     // These modeled properties do not yet have dedicated inline-mask
     // bits, so preserve their applied values by authored declaration.

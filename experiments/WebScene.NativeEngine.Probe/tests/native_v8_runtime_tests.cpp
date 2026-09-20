@@ -808,6 +808,10 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "top-level-navigation-lifecycle") {
+            test_top_level_navigation_lifecycle();
+            return 0;
+        }
         if (selected == "host-driven-close-veto") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr,
@@ -1563,6 +1567,7 @@ int main()
     test_touch_action_pointer_device_and_pan(engine);
     test_overscroll_behavior_wheel_chaining(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
+    test_top_level_navigation_lifecycle();
     test_nested_drag_drop_routing_and_retirement();
     test_outbound_drag_browser_contract_and_retirement(engine);
     test_typed_window_host_request_performance(engine);

@@ -1155,6 +1155,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             LABELS "native;resource;http;script;css;fetch;security"
             TIMEOUT 30)
         add_test(NAME webscene_native_host_close_decision COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_top_level_navigation_lifecycle
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_top_level_navigation_lifecycle PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=top-level-navigation-lifecycle"
+            LABELS "native;runtime;navigation;storage;lifecycle;performance"
+            TIMEOUT 30)
         add_test(NAME webscene_native_service_worker_parser_resources
             COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_markdown_resources

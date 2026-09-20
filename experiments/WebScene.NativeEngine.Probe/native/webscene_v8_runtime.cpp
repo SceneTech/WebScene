@@ -7368,6 +7368,12 @@ struct v8_dom_runtime::implementation final {
         uint32_t kind)
     {
         if (local_context != context.Get(isolate)) return true;
+        if (kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1) {
+            const auto disposition =
+                request_window_close_in_current_realm(local_context);
+            if (disposition == WEBSCENE_WINDOW_CLOSE_ERROR_V1) return false;
+            if (disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1) return true;
+        }
         auto request = std::make_unique<native_host_request>();
         request->view.kind = kind;
         return enqueue_typed_host_request(std::move(request));
@@ -7392,6 +7398,10 @@ struct v8_dom_runtime::implementation final {
         }
         const auto scheme = resource_scheme(resolved);
         if (scheme != "http" && scheme != "https") return false;
+        const auto disposition =
+            request_window_close_in_current_realm(local_context);
+        if (disposition == WEBSCENE_WINDOW_CLOSE_ERROR_V1) return false;
+        if (disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1) return true;
         auto request = std::make_unique<native_host_request>();
         request->view.kind = WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1;
         request->view.flags = replace

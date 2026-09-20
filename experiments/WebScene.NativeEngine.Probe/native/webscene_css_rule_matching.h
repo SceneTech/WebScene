@@ -43,7 +43,15 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
             if (pseudo_kind != 0) {
                 const auto& origin = rule.payload->compiled_pseudo_origin;
                 if (!origin.compounds.empty() && match_selector(node,rule,origin)) {
-                    result.pseudo.emplace_back(pseudo_kind, &rule);
+                    if (pseudo_kind == 11 && !node.scrollbar_thumb_hovered) continue;
+                    if (pseudo_kind == 12 && !node.scrollbar_thumb_active) continue;
+                    // All active thumb-state selectors target the same pseudo
+                    // box. Folding them into kind 4 before sorting preserves
+                    // specificity, source order, layers and !important across
+                    // base, :hover and :active rules.
+                    result.pseudo.emplace_back(
+                        pseudo_kind == 11 || pseudo_kind == 12 ? 4 : pseudo_kind,
+                        &rule);
                 }
                 continue;
             }

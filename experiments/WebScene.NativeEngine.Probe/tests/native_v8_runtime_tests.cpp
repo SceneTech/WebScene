@@ -813,6 +813,13 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "scrollbar-state-scale") {
+            auto* focused_engine = webscene_engine_create(64);
+            require(focused_engine != nullptr, "focused scrollbar scale engine creation failed");
+            test_scrollbar_thumb_state_scaling(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "toolbar-overflow-navigation") {
             auto* focused_engine = webscene_engine_create(64);
             require(focused_engine != nullptr, "focused engine creation failed");

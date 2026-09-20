@@ -291,9 +291,18 @@ void test_authored_scrollbar_style_and_thumb_drag(webscene_engine* engine)
             }
             #styled::-webkit-scrollbar-thumb {
               background-color:rgb(18,52,86); background-clip:content-box;
-              border:1px solid transparent; border-radius:3px;
+              border:1px solid transparent; border-radius:3px; min-height:28px;
             }
-            #content { height:320px; }
+            #styled::-webkit-scrollbar-thumb:hover {
+              background-color:rgb(101,102,103);
+            }
+            #styled::-webkit-scrollbar-thumb:active {
+              background-color:rgb(201,202,203);
+            }
+            #styled::-webkit-scrollbar-corner {
+              display:none; background-color:rgb(9,8,7);
+            }
+            #content { width:320px; height:320px; }
           </style><div id="styled"><div id="content"></div></div>`;
           const styled = document.getElementById('styled');
           globalThis.__styledScrollbar = styled;
@@ -301,22 +310,67 @@ void test_authored_scrollbar_style_and_thumb_drag(webscene_engine* engine)
           styled.addEventListener('scroll', () => __styledScrollbarEvents++);
           return {
             clientHeight:styled.clientHeight,
+            scrollWidth:styled.scrollWidth,
             scrollHeight:styled.scrollHeight,
             scrollTop:styled.scrollTop
           };
         })()
     )JS", "native-authored-scrollbar-setup.js");
     require(
-        initial == R"JSON({"clientHeight":80,"scrollHeight":320,"scrollTop":0})JSON",
+        initial == R"JSON({"clientHeight":80,"scrollWidth":320,"scrollHeight":320,"scrollTop":0})JSON",
         "authored scrollbar fixture did not establish its overflow range: " + initial);
 
+    const auto observe_thumb = [&](uint32_t expected_rgba, const char* state) {
+        webscene_engine_request_scene_checkpoint(engine);
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            if (const auto* scene = webscene_engine_acquire_latest_scene(engine);
+                scene != nullptr) {
+                auto matched = false;
+                auto leaked_corner = false;
+                for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    leaked_corner = leaked_corner || command.rgba == 0x090807FFU;
+                    if (command.rgba != expected_rgba) continue;
+                    matched = std::abs(command.width - 3.0F) < 0.1F
+                        && std::abs(command.height - 26.0F) < 0.1F;
+                }
+                webscene_scene_acknowledge(scene);
+                webscene_scene_release(scene);
+                require(!leaked_corner,
+                    "display:none scrollbar corner emitted retained paint");
+                if (matched) return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(std::string("authored scrollbar thumb did not paint its ")
+            + state + " state with the authored minimum extent");
+    };
+
+    observe_thumb(0x123456FFU, "normal");
+
+    webscene_engine_metrics interaction_before{};
+    webscene_engine_get_metrics(engine, &interaction_before);
     const auto consumed_before_drag = consumed_input_count(engine);
-    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 117, 10, 5801U, true);
-    pointer_move(engine, 117, 65, 5802U, true);
-    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 117, 65, 5803U, false);
+    pointer_move(engine, 117, 10, 5801U, false);
+    wait_for_consumed_inputs(
+        engine, consumed_before_drag + 1,
+        "authored scrollbar hover input was not consumed");
+    observe_thumb(0x656667FFU, "hover");
+    webscene_engine_metrics after_hover{};
+    webscene_engine_get_metrics(engine, &after_hover);
+    require(
+        after_hover.layout_passes == interaction_before.layout_passes,
+        "scrollbar thumb hover reran document layout");
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 117, 10, 5802U, true);
+    wait_for_consumed_inputs(
+        engine, consumed_before_drag + 2,
+        "authored scrollbar active input was not consumed");
+    observe_thumb(0xC9CACBFFU, "active");
+    pointer_move(engine, 117, 65, 5803U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 117, 65, 5804U, false);
     wait_for_consumed_inputs(
         engine,
-        consumed_before_drag + 3,
+        consumed_before_drag + 4,
         "authored scrollbar thumb drag inputs were not consumed");
     const auto dragged = evaluate(engine, R"JS(
         ({
@@ -325,10 +379,84 @@ void test_authored_scrollbar_style_and_thumb_drag(webscene_engine* engine)
         })
     )JS", "native-authored-scrollbar-drag-result.js");
     require(
-        dragged == R"JSON({"scrollTop":220,"scrollEvents":1})JSON",
+        dragged == R"JSON({"scrollTop":240,"scrollEvents":1})JSON",
         "dragging the authored scrollbar thumb did not update the finite scroll owner: "
             + dragged);
+    webscene_engine_metrics interaction_after{};
+    webscene_engine_get_metrics(engine, &interaction_after);
+    require(
+        interaction_after.layout_passes == interaction_before.layout_passes,
+        "scrollbar thumb hover/active/drag reran document layout");
+    require(
+        interaction_after.applied_animation_frames
+            == interaction_before.applied_animation_frames,
+        "settled scrollbar interaction introduced animation-frame demand");
 
+}
+
+void test_scrollbar_thumb_state_scaling(webscene_engine* engine)
+{
+    resize(engine, 640, 240, 5850U);
+    const auto setup = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `<style>
+            html,body { margin:0; }
+            .scrollbar-scale { width:120px; height:80px; overflow:auto; }
+            .scrollbar-scale::-webkit-scrollbar { width:5px; }
+            .scrollbar-scale::-webkit-scrollbar-thumb { background:#123456; }
+            .scrollbar-scale::-webkit-scrollbar-thumb:hover { background:#abcdef; }
+          </style><div id="scrollbar-scale-root"></div>`;
+          const root = document.getElementById('scrollbar-scale-root');
+          const fragment = document.createDocumentFragment();
+          for (let index = 0; index < 4096; ++index) {
+            const scroller = document.createElement('div');
+            if (index === 0) {
+              scroller.className = 'scrollbar-scale';
+              const content = document.createElement('div');
+              content.style.height = '320px';
+              scroller.appendChild(content);
+            } else {
+              scroller.className = 'scrollbar-unrelated';
+              scroller.style.display = 'none';
+            }
+            fragment.appendChild(scroller);
+          }
+          root.appendChild(fragment);
+          return [root.children.length, root.firstElementChild.scrollHeight];
+        })()
+    )JS", "native-scrollbar-state-scale-setup.js");
+    require(setup == "[4096,320]",
+        "scrollbar state scale fixture did not create 4,096 retained scrollers: " + setup);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    auto expected_inputs = consumed_input_count(engine);
+    for (uint64_t cycle = 0; cycle < 100U; ++cycle) {
+        pointer_move(engine, 117, 10, 5851U + cycle * 2U, false);
+        ++expected_inputs;
+        wait_for_consumed_inputs(
+            engine, expected_inputs,
+            "scrollbar state scale hover input was not consumed");
+        pointer_move(engine, 300, 10, 5852U + cycle * 2U, false);
+        ++expected_inputs;
+        wait_for_consumed_inputs(
+            engine, expected_inputs,
+            "scrollbar state scale exit input was not consumed");
+    }
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(elapsed < 5000.0,
+        "4,096-scroller hover state gate exceeded 5 seconds: "
+            + std::to_string(elapsed));
+    require(after.layout_passes == before.layout_passes,
+        "4,096-scroller hover state gate reran document layout");
+    require(after.applied_animation_frames == before.applied_animation_frames,
+        "4,096-scroller hover state gate introduced animation-frame demand");
+    require(after.published_scenes <= before.published_scenes + 200U,
+        "scrollbar hover state published more than one bounded scene per transition");
 }
 
 void test_absolute_virtualized_rows_follow_ancestor_scroll_container(

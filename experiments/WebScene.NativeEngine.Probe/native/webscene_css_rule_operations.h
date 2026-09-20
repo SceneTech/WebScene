@@ -310,7 +310,7 @@ void for_each_cascaded_pseudo_declaration(
         // kind prevents a high-priority ::before declaration from affecting
         // ::after while reusing the same layer/importance/rollback machinery
         // as the originating element.
-        std::array<std::vector<const css_rule*>, 11> rules_by_kind;
+        std::array<std::vector<const css_rule*>, 13> rules_by_kind;
         for (const auto& [kind, rule] : matched_rules) {
             if (kind > 0 && static_cast<size_t>(kind) < rules_by_kind.size())
                 rules_by_kind[static_cast<size_t>(kind)].push_back(rule);

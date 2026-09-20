@@ -38,6 +38,12 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         if (const auto kind = split_suffix("::details-content", 9); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-details-marker", 10); kind != 0) return kind;
         if (const auto kind = split_suffix("::backdrop", 7); kind != 0) return kind;
+        // Scrollbar-part interaction belongs to the retained part rather than
+        // the originating DOM element. Keep distinct parse kinds so matching
+        // can admit them only while that exact native thumb state is active,
+        // then fold them back into the thumb's single cascade.
+        if (const auto kind = split_suffix("::-webkit-scrollbar-thumb:hover", 11); kind != 0) return kind;
+        if (const auto kind = split_suffix("::-webkit-scrollbar-thumb:active", 12); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-thumb", 4); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-track", 5); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-corner", 6); kind != 0) return kind;
@@ -324,6 +330,11 @@ inline void apply_scrollbar_declaration(
             if (declaration.name == "background" || declaration.name == "background-color") {
                 scrollbar.thumb_rgba = lower == "initial" ? 0U
                     : native_document::parse_color(value);
+            } else if (declaration.name == "min-height") {
+                const auto length = native_document::parse_length(value);
+                if (length.unit == length_unit::pixels) {
+                    scrollbar.thumb_min_height = std::max(0.0F, length.value);
+                }
             } else if (declaration.name == "border-radius") {
                 scrollbar.thumb_radius = std::max(
                     0.0F, native_document::parse_length(value).value);
@@ -348,6 +359,7 @@ inline void apply_scrollbar_declaration(
                 scrollbar.track_radius = std::max(
                     0.0F, native_document::parse_length(value).value);
             }
+            return;
         }
     }
 

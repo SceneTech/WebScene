@@ -1511,6 +1511,7 @@ mod selector_syntax {
                 | "-webkit-scrollbar"
                 | "-webkit-scrollbar-thumb"
                 | "-webkit-scrollbar-track"
+                | "-webkit-scrollbar-corner"
         )
     }
 

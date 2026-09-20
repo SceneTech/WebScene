@@ -376,9 +376,12 @@ public static class CssStylesheetCompiler
     {
         return Regex.Replace(
             css,
-            @"::-(webkit-scrollbar(?:-(?:thumb|track|corner))?)",
+            @"::-(webkit-scrollbar(?:-(?:thumb|track|corner))?)(?::(?<state>hover|active))?",
             match => ProtectedScrollbarPseudoClassPrefix
                      + match.Groups[1].Value.Replace('-', '_')
+                     + (match.Groups["state"].Success
+                         ? "-state-" + match.Groups["state"].Value.ToLowerInvariant()
+                         : string.Empty)
                      + "::before",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
@@ -388,9 +391,13 @@ public static class CssStylesheetCompiler
         return Regex.Replace(
             selectorText,
             Regex.Escape(ProtectedScrollbarPseudoClassPrefix)
-            + @"(?<name>webkit_scrollbar(?:_(?:thumb|track|corner))?)::before",
+            + @"(?<name>webkit_scrollbar(?:_(?:thumb|track|corner))?)"
+            + @"(?:-state-(?<state>hover|active))?::before",
             match => "::-"
-                     + match.Groups["name"].Value.Replace('_', '-'),
+                     + match.Groups["name"].Value.Replace('_', '-')
+                     + (match.Groups["state"].Success
+                         ? ":" + match.Groups["state"].Value
+                         : string.Empty),
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 

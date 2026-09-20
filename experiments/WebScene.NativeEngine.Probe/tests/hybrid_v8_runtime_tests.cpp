@@ -1233,12 +1233,18 @@ void test_iframe_worker_extension_host_port_bootstrap() {
         if (event.source !== frame.contentWindow || event.origin !== origin)
           throw Error('iframe message source or origin changed');
         const channel = new MessageChannel();
-        channel.port1.onmessage = response =>
+        globalThis.iframePortSender = channel.port1;
+        channel.port1.onmessage = response => {
+          if (response.data === 'armed') {
+            document.createCompiledTemplate('iframe-port-armed', 'armed');
+            return;
+          }
           document.createCompiledTemplate('iframe-port-result', response.data);
+        };
         event.source.postMessage(
           {type:'vscode.init', port:channel.port2}, '*', [channel.port2]);
-        channel.port1.postMessage(41);
-      });
+        channel.port1.postMessage('arm');
+      }, {once:true});
       const frame = document.createElement('iframe');
       document.body.appendChild(frame);
       const child = frame.contentDocument;
@@ -1254,7 +1260,8 @@ void test_iframe_worker_extension_host_port_bootstrap() {
             throw Error('iframe transfer or same-origin contract changed');
           }
           const port = event.data.port;
-          port.onmessage = message => port.postMessage(message.data + 1);
+          port.onmessage = message => port.postMessage(
+            message.data === 'arm' ? 'armed' : message.data + 1);
           port.start();
         };
         parent.postMessage('vscode.bootstrap.nls', '*');
@@ -1262,6 +1269,8 @@ void test_iframe_worker_extension_host_port_bootstrap() {
       child.close();
       </script>
     )HTML";
+    bool armed = false;
+    std::string arm_stage;
     bool completed = false;
     webscene_native::v8_dom_runtime runtime(document,
         []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};}, {},
@@ -1276,8 +1285,23 @@ void test_iframe_worker_extension_host_port_bootstrap() {
         completed = true;
         return dom.create_element("span");
     });
+    runtime.register_compiled_template("iframe-port-armed", [&](auto& dom, const std::string& value) -> auto& {
+        arm_stage = value;
+        armed = value == R"("armed")";
+        return dom.create_element("span");
+    });
     require(runtime.initialize(), "iframe MessagePort runtime failed");
     require(runtime.load_url(root_url), runtime.last_error().c_str());
+    for (unsigned i = 0; i < 5000 && !armed; ++i) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(armed,
+        ("iframe did not arm its transferred MessagePort: " + arm_stage).c_str());
+    runtime.notify_low_memory();
+    require(runtime.execute(
+        "iframePortSender.postMessage(41)",
+        "iframe-message-port-forced-gc-send.js"), runtime.last_error().c_str());
     for (unsigned i = 0; i < 5000 && !completed; ++i) {
         require(runtime.pump_task(), runtime.last_error().c_str());
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1996,6 +2020,10 @@ int main() {
             }
             if (selected == "messageport-worker-gc") {
                 test_worker_message_port_active_listener_gc();
+                return 0;
+            }
+            if (selected == "messageport-iframe-gc") {
+                test_iframe_worker_extension_host_port_bootstrap();
                 return 0;
             }
             if (selected == "worker-lifecycle-capacity") {

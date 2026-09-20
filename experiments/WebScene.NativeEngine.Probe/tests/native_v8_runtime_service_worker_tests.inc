@@ -561,3 +561,180 @@ void test_service_worker_client_queue_performance_and_memory_gate()
               << " rssAfter=" << rss_after << '\n';
     webscene_engine_destroy(engine);
 }
+
+void test_service_worker_message_port_active_listener_gc()
+{
+    resource_server server{.content = {
+        {"https://service-worker-port-gc.test/index.html",
+            "<!doctype html><title>service worker port gc</title>"},
+        {"https://service-worker-port-gc.test/service-worker.js", R"JS(
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+            self.addEventListener('message', event => {
+              const message = event.data;
+              if (message.kind === 'attach') {
+                const port = event.ports[0];
+                const receive = received => {
+                  port.postMessage({sequence:received.data});
+                  if (message.mode === 0) port.onmessage = null;
+                  else port.removeEventListener('message', receive);
+                  port.close();
+                };
+                if (message.mode === 0) port.onmessage = receive;
+                else {
+                  port.addEventListener('message', receive);
+                  port.start();
+                }
+                event.source.postMessage({kind:'armed', sequence:message.sequence});
+                return;
+              }
+              if (message.kind === 'gc-barrier') {
+                event.source.postMessage({kind:'gc-barrier', sequence:message.sequence});
+              }
+            });
+        )JS"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "service worker MessagePort GC engine creation failed");
+    constexpr std::string_view address{
+        "https://service-worker-port-gc.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "service worker MessagePort GC navigation failed");
+    require(evaluate_until_equals(
+        engine, "location.href", "service-worker-port-gc-navigation.js",
+        R"("https://service-worker-port-gc.test/index.html")", 2'500)
+            == R"("https://service-worker-port-gc.test/index.html")",
+        "service worker MessagePort GC document did not become ready");
+
+    execute(engine, R"JS(
+        globalThis.__serviceWorkerPortGc = {
+          ready:false, armed:0, barriers:0, delivered:0, error:null
+        };
+        (async () => {
+          try {
+            const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+              'controllerchange', resolve, {once:true}));
+            await navigator.serviceWorker.register(
+              'service-worker.js', {type:'module'});
+            if (!navigator.serviceWorker.controller) await changed;
+            navigator.serviceWorker.addEventListener('message', event => {
+              if (event.data.kind === 'armed') {
+                __serviceWorkerPortGc.armed = event.data.sequence + 1;
+              } else if (event.data.kind === 'gc-barrier') {
+                __serviceWorkerPortGc.barriers = event.data.sequence + 1;
+              }
+            });
+            globalThis.__attachServiceWorkerGcPort = sequence => {
+              const channel = new MessageChannel();
+              globalThis.__serviceWorkerGcSender = channel.port1;
+              let reply;
+              if ((sequence & 1) === 0) {
+                reply = new Promise(resolve => {
+                  channel.port1.onmessage = resolve;
+                  channel.port1.start();
+                });
+              } else {
+                reply = new Promise(resolve => {
+                  const listener = event => {
+                    channel.port1.removeEventListener('message', listener);
+                    resolve(event);
+                  };
+                  channel.port1.addEventListener('message', listener);
+                  channel.port1.start();
+                });
+              }
+              reply.then(event => {
+                if (event.data.sequence !== sequence) {
+                  throw new Error(`cycle ${sequence} delivered ${event.data.sequence}`);
+                }
+                channel.port1.onmessage = null;
+                channel.port1.close();
+                globalThis.__serviceWorkerGcSender = null;
+                __serviceWorkerPortGc.delivered = sequence + 1;
+              }).catch(error => {
+                __serviceWorkerPortGc.error = String(error && error.stack || error);
+              });
+              navigator.serviceWorker.controller.postMessage(
+                {kind:'attach', sequence, mode:sequence & 1}, [channel.port2]);
+            };
+            __serviceWorkerPortGc.ready = true;
+          } catch (error) {
+            __serviceWorkerPortGc.error = String(error && error.stack || error);
+          }
+        })();
+    )JS", "service-worker-port-gc-bootstrap.js");
+    require(evaluate_until_equals(
+        engine, "__serviceWorkerPortGc.ready",
+        "service-worker-port-gc-ready.js", "true", 2'500) == "true",
+        "service worker MessagePort GC controller did not become ready");
+
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "service worker MessagePort GC memory baseline was unavailable");
+    const auto rss_before = service_worker_test_peak_rss_bytes();
+    constexpr unsigned cycles = 100U;
+    for (unsigned cycle = 0; cycle < cycles; ++cycle) {
+        execute(engine,
+            "__attachServiceWorkerGcPort(" + std::to_string(cycle) + ")",
+            "service-worker-port-gc-attach.js");
+        require(evaluate_until_equals(
+            engine,
+            "__serviceWorkerPortGc.armed",
+            "service-worker-port-gc-armed.js",
+            std::to_string(cycle + 1U),
+            2'500) == std::to_string(cycle + 1U),
+            "service worker did not arm its transferred MessagePort");
+        require(webscene_engine_request_low_memory(engine) != 0,
+            "service worker MessagePort GC request was rejected");
+        execute(engine,
+            "navigator.serviceWorker.controller.postMessage({kind:'gc-barrier',sequence:"
+                + std::to_string(cycle) + "})",
+            "service-worker-port-gc-barrier.js");
+        require(evaluate_until_equals(
+            engine,
+            "__serviceWorkerPortGc.barriers",
+            "service-worker-port-gc-barrier-ready.js",
+            std::to_string(cycle + 1U),
+            2'500) == std::to_string(cycle + 1U),
+            "service worker did not cross the forced-GC barrier");
+        execute(engine,
+            "__serviceWorkerGcSender.postMessage(" + std::to_string(cycle) + ")",
+            "service-worker-port-gc-send.js");
+        require(evaluate_until_equals(
+            engine,
+            "__serviceWorkerPortGc.delivered",
+            "service-worker-port-gc-delivered.js",
+            std::to_string(cycle + 1U),
+            2'500) == std::to_string(cycle + 1U),
+            "service worker lost an active MessagePort listener after forced GC");
+        require(evaluate(engine,
+            "__serviceWorkerPortGc.error",
+            "service-worker-port-gc-error.js") == "null",
+            "service worker MessagePort GC cycle failed: " + evaluate(engine,
+                "__serviceWorkerPortGc.error",
+                "service-worker-port-gc-error-detail.js"));
+    }
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "service worker MessagePort final GC request was rejected");
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "service worker MessagePort final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "service worker MessagePort cycles retained more than 8 MiB of parent heap");
+    const auto rss_after = service_worker_test_peak_rss_bytes();
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "service worker MessagePort cycles grew peak RSS by more than 64 MiB");
+    webscene_engine_destroy(engine);
+}

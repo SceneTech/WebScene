@@ -161,6 +161,7 @@
     bool message_port_has_local_peer(const message_port_binding& binding) const
     {
         if (binding.endpoint == nullptr) return false;
+        const auto realm = binding.context.Get(isolate);
         return std::any_of(
             message_port_bindings.begin(),
             message_port_bindings.end(),
@@ -169,6 +170,7 @@
                     && !peer->transferred && peer->endpoint != nullptr
                     && peer->endpoint->channel == binding.endpoint->channel
                     && peer->endpoint->side != binding.endpoint->side
+                    && peer->context.Get(isolate) == realm
                     && !peer->wrapper.IsEmpty();
             });
     }

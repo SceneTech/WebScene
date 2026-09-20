@@ -293,6 +293,11 @@ int main()
         if (selected == "service-worker-clients") {
             test_service_worker_client_navigation_generation_gate();
             test_service_worker_client_queue_performance_and_memory_gate();
+            test_service_worker_message_port_active_listener_gc();
+            return 0;
+        }
+        if (selected == "service-worker-messageport-gc") {
+            test_service_worker_message_port_active_listener_gc();
             return 0;
         }
         if (selected == "service-worker-fetch") {

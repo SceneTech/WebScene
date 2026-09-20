@@ -1155,6 +1155,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             LABELS "native;resource;http;script;css;fetch;security"
             TIMEOUT 30)
         add_test(NAME webscene_native_host_close_decision COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_top_level_navigation_lifecycle
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_top_level_navigation_lifecycle PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=top-level-navigation-lifecycle"
+            LABELS "native;runtime;navigation;storage;lifecycle;performance"
+            TIMEOUT 30)
         add_test(NAME webscene_native_service_worker_parser_resources
             COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_markdown_resources
@@ -1737,6 +1743,15 @@ if(BUILD_TESTING AND WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             ENVIRONMENT "WEBSCENE_HYBRID_V8_RUNTIME_TEST_FILTER=worker-messageport"
             TIMEOUT 30
             LABELS "hybrid;runtime;worker;security;performance")
+    add_test(
+        NAME webscene_worker_navigation_replacement_tests
+        COMMAND webscene_hybrid_v8_runtime_tests)
+    set_tests_properties(
+        webscene_worker_navigation_replacement_tests
+        PROPERTIES
+            ENVIRONMENT "WEBSCENE_HYBRID_V8_RUNTIME_TEST_FILTER=worker-navigation-replacement"
+            TIMEOUT 10
+            LABELS "hybrid;runtime;worker;navigation;performance")
     foreach(webcrypto_filter IN ITEMS aes-gcm aes-cbc hmac)
         string(REPLACE "-" "_" webcrypto_test_suffix "${webcrypto_filter}")
         add_test(

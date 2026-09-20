@@ -2939,6 +2939,66 @@ void test_same_document_history_state_and_url_mutation(webscene_engine* engine)
     std::filesystem::remove_all(fixture_root);
 }
 
+void test_top_level_navigation_lifecycle()
+{
+    const auto exercise = [](const char* script, uint32_t expected_kind,
+                             const char* fixture_name) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr,
+            "top-level navigation lifecycle engine creation failed");
+        execute(engine, R"JS(
+            globalThis.__topLevelNavigationLifecycle = [];
+            addEventListener('beforeunload', event => {
+              __topLevelNavigationLifecycle.push(
+                [event.type, event.bubbles, event.cancelable]);
+            });
+            addEventListener('pagehide', event => {
+              __topLevelNavigationLifecycle.push(
+                [event.type, event.bubbles, event.cancelable, event.persisted]);
+            });
+        )JS", "top-level-navigation-lifecycle-setup.js");
+        require(evaluate(engine, script, fixture_name) == "true",
+            "top-level navigation request did not drain through the engine worker");
+        const auto request = take_typed_host_request(engine);
+        require(request.kind == expected_kind,
+            "top-level navigation did not emit the expected host request");
+        const auto lifecycle = evaluate(engine,
+            "__topLevelNavigationLifecycle",
+            "top-level-navigation-lifecycle-result.js");
+        require(lifecycle
+                    == R"([["beforeunload",false,true],["pagehide",false,false,false]])",
+            "top-level navigation did not publish the terminal document lifecycle: "
+                + lifecycle);
+        webscene_engine_destroy(engine);
+    };
+
+    exercise("location.reload(); true",
+        WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
+        "top-level-reload-lifecycle.js");
+    exercise("location.href='?folder=/private/tmp/webscene-fixture'; true",
+        WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1,
+        "top-level-location-lifecycle.js");
+
+    auto* veto_engine = webscene_engine_create(0);
+    require(veto_engine != nullptr,
+        "top-level navigation veto engine creation failed");
+    execute(veto_engine, R"JS(
+        globalThis.__topLevelNavigationVeto = { beforeunload: 0, pagehide: 0 };
+        addEventListener('beforeunload', event => {
+          ++__topLevelNavigationVeto.beforeunload;
+          event.preventDefault();
+        });
+        addEventListener('pagehide', () => ++__topLevelNavigationVeto.pagehide);
+        location.reload();
+    )JS", "top-level-reload-veto.js");
+    require(evaluate(veto_engine, "__topLevelNavigationVeto",
+                "top-level-reload-veto-result.js")
+                == R"({"beforeunload":1,"pagehide":0})"
+            && !take_typed_host_request(veto_engine),
+        "a canceled top-level reload reached the host or dispatched pagehide");
+    webscene_engine_destroy(veto_engine);
+}
+
 void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engine)
 {
     execute(engine, R"JS(
@@ -3029,7 +3089,6 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     const auto reload_request = take_typed_host_request(engine);
     require(reload_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
         "Location.reload did not emit a typed native reload request");
-
     require(evaluate(engine,
                 "location.href='?folder=/private/tmp/webscene-247-fixture/beta'; true",
                 "native-window-navigate-href.js") == "true",

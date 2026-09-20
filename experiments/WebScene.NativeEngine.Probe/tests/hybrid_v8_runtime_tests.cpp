@@ -1800,32 +1800,105 @@ void test_worker_error_delivery() {
 void test_worker_and_port_navigation_shutdown() {
     webscene_native::native_document document;
     const std::string navigation_url = "https://worker.test/after-navigation.html";
+    const std::string module_url = "https://worker.test/after-navigation-worker.js";
+    bool replacement_worker_replied = false;
+    std::string replacement_worker_result;
+    std::string replacement_worker_error;
     webscene_native::v8_dom_runtime runtime(document,
         []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};}, {},
         [&](uint32_t kind, const std::string& url, const auto&, const std::string&, int64_t,
             webscene_native::v8_dom_runtime::resource_response& response) {
-            if (kind != WEBSCENE_RESOURCE_DOCUMENT || url != navigation_url) return false;
-            response.content = "<!doctype html><title>after navigation</title>";
-            return true;
+            if (kind == WEBSCENE_RESOURCE_DOCUMENT
+                && url.starts_with(navigation_url)) {
+                response.content = "<!doctype html><title>after navigation</title>";
+                return true;
+            }
+            if (kind == WEBSCENE_RESOURCE_SCRIPT && url == module_url) {
+                response.content = R"JS(
+                  globalThis.onmessage = event => postMessage({
+                    type: 1, seq: event.data.req, res: event.data.value + 1
+                  });
+                )JS";
+                return true;
+            }
+            return false;
+        });
+    runtime.register_compiled_template("worker-navigation-error-result",
+        [&](auto& dom, const std::string& value) -> auto& {
+            replacement_worker_error = value;
+            return dom.create_element("span");
+        });
+    runtime.register_compiled_template("worker-navigation-rpc-result",
+        [&](auto& dom, const std::string& value) -> auto& {
+            replacement_worker_result = value;
+            replacement_worker_replied = value == "42";
+            return dom.create_element("span");
         });
     require(runtime.initialize(), "worker navigation runtime failed");
-    require(runtime.execute(R"JS(
-        const url = URL.createObjectURL(new Blob(['while(true) {}'], {type:'text/javascript'}));
-        globalThis.navigationWorker = new Worker(url);
-        URL.revokeObjectURL(url);
-        globalThis.navigationChannel = new MessageChannel();
-        navigationChannel.port1.postMessage('queued before navigation');
-    )JS", "worker-navigation-start"), runtime.last_error().c_str());
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    const auto started = std::chrono::steady_clock::now();
-    require(runtime.load_url(navigation_url), runtime.last_error().c_str());
-    require(std::chrono::steady_clock::now() - started < std::chrono::seconds(2),
-        "Navigation did not cancel worker execution promptly");
-    require(runtime.execute(R"JS(
-        const afterNavigation = new MessageChannel();
-        afterNavigation.port1.close();
-        afterNavigation.port2.close();
-    )JS", "worker-navigation-resources-reset"), runtime.last_error().c_str());
+    const auto stress_started = std::chrono::steady_clock::now();
+    for (unsigned cycle = 0; cycle < 100U; ++cycle) {
+        replacement_worker_replied = false;
+        replacement_worker_result.clear();
+        replacement_worker_error.clear();
+        require(runtime.execute(R"JS(
+            const url = URL.createObjectURL(new Blob(
+              ['while(true) {}'], {type:'text/javascript'}));
+            globalThis.navigationWorker = new Worker(url);
+            URL.revokeObjectURL(url);
+            globalThis.navigationChannel = new MessageChannel();
+            navigationChannel.port1.postMessage('queued before navigation');
+        )JS", "worker-navigation-start"), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const auto navigation_started = std::chrono::steady_clock::now();
+        require(runtime.load_url(
+            navigation_url + "?cycle=" + std::to_string(cycle)),
+            runtime.last_error().c_str());
+        require(std::chrono::steady_clock::now() - navigation_started
+                < std::chrono::seconds(2),
+            "Navigation did not cancel worker execution promptly");
+        require(runtime.execute(R"JS(
+            const afterNavigation = new MessageChannel();
+            afterNavigation.port1.close();
+            afterNavigation.port2.close();
+            const replacementUrl = URL.createObjectURL(new Blob([
+              "await import('https://worker.test/after-navigation-worker.js');",
+              "postMessage({type:'ready'});"
+            ], {type:'application/javascript'}));
+            globalThis.replacementNavigationWorker = new Worker(
+              replacementUrl, {name:'editorWorkerService', type:'module'});
+            URL.revokeObjectURL(replacementUrl);
+            replacementNavigationWorker.onmessage = event => {
+              if (event.data?.type === 'ready') {
+                replacementNavigationWorker.postMessage({
+                  vsWorker: 1, req: '1',
+                  method: '$computeUnicodeHighlights', type: 0, value: 41
+                });
+                return;
+              }
+              document.createCompiledTemplate(
+                'worker-navigation-rpc-result', event.data?.res);
+              replacementNavigationWorker.terminate();
+            };
+            replacementNavigationWorker.onerror = event =>
+              document.createCompiledTemplate(
+                'worker-navigation-error-result',
+                event.message || 'worker error');
+        )JS", "worker-navigation-resources-reset"), runtime.last_error().c_str());
+        for (unsigned index = 0;
+            index < 2000 && !replacement_worker_replied; ++index) {
+            require(runtime.pump_task(), runtime.last_error().c_str());
+            if (!runtime.has_pending_tasks())
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(replacement_worker_replied, replacement_worker_error.empty()
+            ? replacement_worker_result.empty()
+                ? "Replacement-realm Worker did not complete its first RPC"
+                : replacement_worker_result.c_str()
+            : replacement_worker_error.c_str());
+    }
+    require(std::chrono::steady_clock::now() - stress_started
+            < std::chrono::seconds(20),
+        "One hundred Worker navigation/recreation cycles exceeded 20 seconds");
 }
 
 void test_window_messageerror_on_receiver_resource_exhaustion() {
@@ -2004,6 +2077,10 @@ int main() {
             }
             if (selected == "worker-messageport-basic") {
                 test_worker_message_port_transfer_and_throughput();
+                return 0;
+            }
+            if (selected == "worker-navigation-replacement") {
+                test_worker_and_port_navigation_shutdown();
                 return 0;
             }
             if (selected == "messageport-gc") {

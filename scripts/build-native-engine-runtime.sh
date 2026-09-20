@@ -9,6 +9,7 @@ package_version=
 v8_root=
 v8_output_root=
 v8_workspace=
+v8_sdk_output=
 v8_revision=15.3.10
 html_parser=html5ever
 css_parser=cssparser
@@ -23,7 +24,7 @@ graphics_sdk=
 cmake_build_type=Release
 
 usage() {
-  echo "Usage: $0 --rid osx-arm64|osx-x64|linux-arm64|linux-x64 [--output DIR] [--package-version VERSION] [--v8-root DIR] [--v8-output-root DIR] [--v8-workspace DIR] [--v8-revision REVISION] [--html-parser legacy|html5ever] [--css-parser legacy|cssparser] [--selector-parser legacy|servo] [--dom-bindings legacy|generated] [--v8-snapshot none|bootstrap] [--cmake-build-type Release|RelWithDebInfo] [--upstream-v8] [--thin-lto] [--disable-wasm] [--partition-alloc] [--graphics-sdk DIR]" >&2
+  echo "Usage: $0 --rid osx-arm64|osx-x64|linux-arm64|linux-x64 [--output DIR] [--package-version VERSION] [--v8-root DIR] [--v8-output-root DIR] [--v8-workspace DIR] [--v8-sdk-output DIR] [--v8-revision REVISION] [--html-parser legacy|html5ever] [--css-parser legacy|cssparser] [--selector-parser legacy|servo] [--dom-bindings legacy|generated] [--v8-snapshot none|bootstrap] [--cmake-build-type Release|RelWithDebInfo] [--upstream-v8] [--thin-lto] [--disable-wasm] [--partition-alloc] [--graphics-sdk DIR]" >&2
 }
 
 while (($# > 0)); do
@@ -34,6 +35,7 @@ while (($# > 0)); do
     --v8-root) v8_root="${2:-}"; shift 2 ;;
     --v8-output-root) v8_output_root="${2:-}"; shift 2 ;;
     --v8-workspace) v8_workspace="${2:-}"; shift 2 ;;
+    --v8-sdk-output) v8_sdk_output="${2:-}"; shift 2 ;;
     --v8-revision) v8_revision="${2:-}"; shift 2 ;;
     --html-parser) html_parser="${2:-}"; shift 2 ;;
     --css-parser) css_parser="${2:-}"; shift 2 ;;
@@ -307,6 +309,11 @@ if [[ "$partition_alloc" == true \
       || ! grep -Eq '^use_partition_alloc_as_malloc *= *false$' "$v8_args"; }; then
   echo "The V8 SDK at '$v8_root' enables unsafe process-wide allocator interposition." >&2
   exit 1
+fi
+
+if [[ -n "$v8_sdk_output" ]]; then
+  python3 "$repo_root/scripts/stage_v8_sdk.py" \
+    --v8-root "$v8_root" --output "$v8_sdk_output"
 fi
 
 # SDK producers only need the verified V8 inputs, not a second engine build

@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>URL static parse helpers contract</title>
+<body>
+<iframe id="peer" srcdoc="<!doctype html><title>URL peer</title>"></iframe>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const assert = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const test = (name, body) => {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error),
+        stack: error.stack || null
+      });
+    }
+  };
+
+  addEventListener("load", () => {
+    const peerURL = document.querySelector("#peer").contentWindow.URL;
+    test("main and iframe realms expose browser-shaped static helpers", () => {
+      assert(typeof URL.canParse === "function" && URL.canParse.length === 1,
+        "main URL.canParse shape changed");
+      assert(typeof URL.parse === "function" && URL.parse.length === 1,
+        "main URL.parse shape changed");
+      assert(typeof peerURL.canParse === "function" && typeof peerURL.parse === "function",
+        "iframe URL helpers missing");
+    });
+
+    test("absolute and relative inputs preserve parse results", () => {
+      assert(URL.canParse("https://example.test/path"), "absolute URL rejected");
+      assert(URL.canParse("custom:value"), "non-special URL rejected");
+      assert(URL.canParse("../c", "https://example.test/a/b"), "relative URL rejected");
+      const parsed = URL.parse("../c?q=1#x", "https://example.test/a/b");
+      assert(parsed instanceof URL, "parse did not return a URL");
+      assert(parsed.href === "https://example.test/c?q=1#x",
+        `relative result was ${parsed.href}`);
+      assert(peerURL.parse("https://peer.example/path") instanceof peerURL,
+        "iframe parse result has the wrong brand");
+    });
+
+    test("invalid inputs return false or null", () => {
+      assert(!URL.canParse("relative"), "relative URL without base accepted");
+      assert(!URL.canParse("https://example.test", "invalid"), "invalid base accepted");
+      assert(!URL.canParse("http://"), "missing special-scheme authority accepted");
+      assert(URL.parse("relative") === null && URL.parse("http://") === null,
+        "invalid parse did not return null");
+      let canParseError = null;
+      let parseError = null;
+      try { URL.canParse(); } catch (error) { canParseError = error.name; }
+      try { URL.parse(); } catch (error) { parseError = error.name; }
+      assert(canParseError === "TypeError" && parseError === "TypeError",
+        "missing argument errors changed");
+    });
+
+    test("parse converts each input once", () => {
+      let valueConversions = 0;
+      let baseConversions = 0;
+      const value = { toString() { ++valueConversions; return "child"; } };
+      const base = {
+        toString() { ++baseConversions; return "https://example.test/root/"; }
+      };
+      assert(URL.parse(value, base).href === "https://example.test/root/child",
+        "object input parse changed");
+      assert(valueConversions === 1 && baseConversions === 1,
+        `conversion counts were ${valueConversions}/${baseConversions}`);
+    });
+
+    state.harness = state.results.some(result => result.status !== "PASS")
+      ? { status: 1, message: "URL helper contract failed", stack: null }
+      : { status: 0, message: null, stack: null };
+    state.diagnostics.push(JSON.stringify({ tests: state.results.length }));
+    state.complete = true;
+  }, { once: true });
+</script>
+</body>

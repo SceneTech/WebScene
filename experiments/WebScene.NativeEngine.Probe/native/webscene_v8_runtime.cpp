@@ -5228,6 +5228,39 @@ struct v8_dom_runtime::implementation final {
               },
               [Symbol.toStringTag]: {value: 'FormDataEvent', configurable: true}
             });
+            const webSceneURLAbsolute = /^[a-z][a-z0-9+.-]*:/i;
+            const webSceneURLForbidden = /[\u0000-\u001f\u007f]/;
+            const webSceneURLAuthorityEnd = /[/?#]/;
+            const webSceneURLSpecialSchemes = new Set(['http', 'https', 'ws', 'wss', 'ftp']);
+            const isValidAbsoluteWebSceneURL = input => {
+              if (!input || webSceneURLForbidden.test(input)
+                  || !webSceneURLAbsolute.test(input)) return false;
+              const scheme = input.slice(0, input.indexOf(':')).toLowerCase();
+              if (!webSceneURLSpecialSchemes.has(scheme)) {
+                return input.length > scheme.length + 1;
+              }
+              const remainder = input.slice(scheme.length + 1);
+              if (!remainder.startsWith('//')) return false;
+              const authorityAndPath = remainder.slice(2);
+              const authorityEnd = authorityAndPath.search(webSceneURLAuthorityEnd);
+              const authority = authorityEnd < 0
+                ? authorityAndPath : authorityAndPath.slice(0, authorityEnd);
+              return Boolean(authority && !/\s/.test(authority));
+            };
+            const parseWebSceneURLInput = (value, hasBase, base) => {
+              const candidate = String(value).trim();
+              const parsedBase = hasBase ? String(base).trim() : undefined;
+              if ((hasBase && !isValidAbsoluteWebSceneURL(parsedBase))
+                  || (!webSceneURLAbsolute.test(candidate) && !hasBase)) {
+                return { valid: false, candidate, base: parsedBase };
+              }
+              return {
+                valid: isValidAbsoluteWebSceneURL(
+                  __webSceneResolveUrl(candidate, parsedBase || '')),
+                candidate,
+                base: parsedBase
+              };
+            };
             class WebSceneURL {
               constructor(value, base = globalThis.location?.href || '') {
                 __webSceneRecordWebApi(
@@ -5255,6 +5288,23 @@ struct v8_dom_runtime::implementation final {
                   + `${this.pathname}${search}${hash}`;
               }
               toJSON() { return this.toString(); }
+              static canParse(value, base = undefined) {
+                if (arguments.length === 0) {
+                  throw new TypeError("Failed to execute 'canParse' on 'URL': 1 argument required");
+                }
+                __webSceneRecordWebApi('URL.canParse', 'supported', '');
+                return parseWebSceneURLInput(value, arguments.length >= 2, base).valid;
+              }
+              static parse(value, base = undefined) {
+                if (arguments.length === 0) {
+                  throw new TypeError("Failed to execute 'parse' on 'URL': 1 argument required");
+                }
+                __webSceneRecordWebApi('URL.parse', 'supported', '');
+                const parsed = parseWebSceneURLInput(value, arguments.length >= 2, base);
+                return parsed.valid
+                  ? new WebSceneURL(parsed.candidate, parsed.base || '')
+                  : null;
+              }
               static createObjectURL(blob) { return __webSceneCreateObjectUrl(blob); }
               static revokeObjectURL(url) { __webSceneRevokeObjectUrl(String(url)); }
             }

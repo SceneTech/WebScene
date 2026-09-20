@@ -52,8 +52,13 @@ The remaining core pseudo-element inventory is:
   native control-part ownership before their declarations can have an
   observable effect.
 
-The two legacy WebKit/Mozilla placeholder aliases duplicate adjacent standard
-rules and remain unclaimed. Extension-bundled CSS additionally uses named
+The two legacy WebKit/Mozilla placeholder aliases now classify to the same
+bounded pseudo kind and reuse the standard placeholder cascade, retained state,
+invalidation, and paint path. The shared classifier contract covers both
+aliases, while the native V8 scene contract covers their distinct color and
+opacity declarations, live-value suppression, and restoration. They add no
+generated box, visual-tree node, frame demand, or per-node state beyond the
+existing placeholder record. Extension-bundled CSS additionally uses named
 highlights and one `::marker`; shadow-only `::part`/`::slotted`, complete marker
 styling, first-line/first-letter layout, and cumulative browser/package/
 performance evidence remain outside this slice. No Code OSS source changes.

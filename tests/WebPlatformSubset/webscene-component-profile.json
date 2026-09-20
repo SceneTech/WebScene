@@ -1377,9 +1377,9 @@
     {
       "path": "contracts/css-placeholder-pseudo-paint.html",
       "type": "testharness",
-      "capabilities": ["placeholder-pseudo-color", "placeholder-pseudo-opacity", "placeholder-pseudo-mutation", "placeholder-value-suppression"],
+      "capabilities": ["placeholder-pseudo-color", "placeholder-pseudo-opacity", "placeholder-pseudo-mutation", "placeholder-value-suppression", "webkit-input-placeholder-alias", "moz-placeholder-alias"],
       "evidence": ["css-pseudo-elements-4-placeholder", "native-retained-scene-contract", "vscode-oss-645f29c-placeholder-ledger"],
-      "reason": "Implementation-first WebScene #237 slice for the twelve standard ::placeholder selectors in unchanged Code OSS core CSS. Native companion coverage requires custom-property color and fractional opacity to reach retained text paint, class mutation to recascade, live values to suppress placeholder paint, and empty-value restoration without layout or frame demand. Direct browser/native profile execution remains validation debt; additional placeholder properties and vendor aliases remain outside this bounded candidate."
+      "reason": "Implementation-first WebScene #237/#781 slice for standard and legacy placeholder selectors in unchanged Code OSS core CSS. The browser-shaped contract adds the Chromium-reachable ::-webkit-input-placeholder alias; the native companion covers both WebKit and Mozilla aliases with distinct colors/opacities, class recascade, live-value suppression, and empty-value restoration. All aliases reuse the standard retained paint path without layout, generated nodes, or frame demand. Direct browser/native profile execution remains validation debt; additional placeholder properties remain outside this bounded candidate."
     },
     {
       "path": "contracts/css-checkbox-required-validity.html",

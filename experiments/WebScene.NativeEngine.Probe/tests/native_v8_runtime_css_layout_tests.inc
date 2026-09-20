@@ -51,6 +51,14 @@ void test_placeholder_pseudo_color_and_opacity_reach_scene(webscene_engine* engi
             color:#112233;
             opacity:1;
           }
+          #placeholder-probe.webkit::-webkit-input-placeholder {
+            color:#884422;
+            opacity:.75;
+          }
+          #placeholder-probe.mozilla::-moz-placeholder {
+            color:#226644;
+            opacity:.25;
+          }
         </style>
         <input id="placeholder-probe" placeholder="Search workspace">
       `;
@@ -82,8 +90,12 @@ void test_placeholder_pseudo_color_and_opacity_reach_scene(webscene_engine* engi
     expect_color(0x2468AC80U,true);
     execute(engine,"placeholderProbe.className='alternate';","placeholder-pseudo-class.js");
     expect_color(0x112233FFU,true);
+    execute(engine,"placeholderProbe.className='webkit';","placeholder-pseudo-webkit-alias.js");
+    expect_color(0x884422BFU,true);
+    execute(engine,"placeholderProbe.className='mozilla';","placeholder-pseudo-mozilla-alias.js");
+    expect_color(0x22664440U,true);
     execute(engine,"placeholderProbe.value='typed';","placeholder-pseudo-value.js");
-    expect_color(0x112233FFU,false);
+    expect_color(0x22664440U,false);
     execute(engine,
         "placeholderProbe.value='';placeholderProbe.className='';",
         "placeholder-pseudo-restore.js");

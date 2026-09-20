@@ -13,10 +13,16 @@
     color: rgb(17, 34, 51);
     opacity: 1;
   }
+  #webkit-probe::-webkit-input-placeholder {
+    color: rgb(136, 68, 34);
+    opacity: .75;
+  }
 </style>
 <input id="probe" placeholder="Search workspace">
+<textarea id="webkit-probe" placeholder="Describe the task"></textarea>
 <script>
   const probe = document.getElementById('probe');
+  const webkitProbe = document.getElementById('webkit-probe');
   const placeholderStyle = () => getComputedStyle(probe, '::placeholder');
 
   test(() => {
@@ -38,4 +44,10 @@
     probe.value = '';
     assert_equals(placeholderStyle().opacity, '0.5');
   }, 'live values suppress placeholder paint without destroying its computed style');
+
+  test(() => {
+    const style = getComputedStyle(webkitProbe, '::placeholder');
+    assert_equals(style.color, 'rgb(136, 68, 34)');
+    assert_equals(style.opacity, '0.75');
+  }, 'the legacy WebKit input placeholder selector shares standard computed placeholder paint');
 </script>

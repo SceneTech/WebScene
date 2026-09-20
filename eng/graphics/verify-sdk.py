@@ -76,7 +76,7 @@ def verify(sdk, component, rid):
                 raise ValueError("dawn: pinned Windows shader compiler or license mismatch")
         if sha(sdk / "build-info/DawnSymbolBoundary.cmake") != sha(LOCK_PATH.with_name("DawnSymbolBoundary.cmake")):
             raise ValueError("dawn: symbol isolation policy mismatch; rebuild the SDK")
-        if rid.startswith("linux-"):
+        if rid.startswith(("linux-", "win-")):
             bridge_files = {
                 "include/webscene/dawn_native_device.h":
                     ROOT / "experiments/WebScene.NativeEngine.Probe/native/graphics/"

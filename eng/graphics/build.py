@@ -252,7 +252,7 @@ def dawn(args):
          "-DCMAKE_SHARED_LINKER_FLAGS="] + [f"-D{k}={v}" for k, v in settings.items()])
     repair_dawn_dependencies(source)
     bridge = (patched_dawn_native_device_bridge(source)
-              if args.rid.startswith("linux-") else nullcontext())
+              if args.rid.startswith(("linux-", "win-")) else nullcontext())
     with bridge:
         run(["cmake", "--build", output, "--parallel", args.jobs])
     # Old installed headers/libraries must not survive a dependency roll.
@@ -261,7 +261,7 @@ def dawn(args):
     run(["cmake", "--install", output])
     sdk.joinpath("build-info").mkdir()
     shutil.copy2(symbol_policy, sdk / "build-info/DawnSymbolBoundary.cmake")
-    if args.rid.startswith("linux-"):
+    if args.rid.startswith(("linux-", "win-")):
         sdk.joinpath("include/webscene").mkdir()
         shutil.copy2(DAWN_NATIVE_DEVICE_HEADER, sdk / "include/webscene/dawn_native_device.h")
         bridge_info = sdk / "build-info/webscene-dawn-native-device"

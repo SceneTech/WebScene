@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Word breaking CSS keeps long retained text inside used boxes</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  .probe { width: 72px; font: 14px sans-serif; line-height: 18px; white-space: normal; }
+  #normal { word-break: normal; overflow-wrap: normal; }
+  #anywhere { overflow-wrap: anywhere; }
+  #legacy { word-wrap: break-word; }
+  #all { word-break: break-all; }
+  #parent { overflow-wrap: anywhere; }
+</style>
+<div id="normal" class="probe">abcdefghijklmnopqrstuvwxyz</div>
+<div id="anywhere" class="probe">abcdefghijklmnopqrstuvwxyz</div>
+<div id="legacy" class="probe">abcdefghijklmnopqrstuvwxyz</div>
+<div id="all" class="probe">abc😀defghijklmnopqrstuvwxyz</div>
+<div id="parent"><span id="child" class="probe">abcdefghijklmnopqrstuvwxyz</span></div>
+<script>
+  const height = node => node.getBoundingClientRect().height;
+
+  test(() => {
+    assert_greater_than(height(anywhere), height(normal));
+    assert_greater_than(height(legacy), height(normal));
+    assert_greater_than(height(all), height(normal));
+    assert_greater_than(height(child), height(normal));
+    assert_equals(all.textContent, 'abc😀defghijklmnopqrstuvwxyz');
+  }, 'break-all, overflow wrapping, the legacy alias, and inheritance wrap long tokens');
+
+  test(() => {
+    assert_equals(getComputedStyle(anywhere).overflowWrap, 'anywhere');
+    assert_equals(getComputedStyle(legacy).wordWrap, 'break-word');
+    assert_equals(getComputedStyle(all).wordBreak, 'break-all');
+    anywhere.style.overflowWrap = 'normal';
+    assert_equals(height(anywhere), height(normal));
+    anywhere.style.wordWrap = 'break-word';
+    assert_greater_than(height(anywhere), height(normal));
+    anywhere.style.removeProperty('word-wrap');
+    assert_equals(height(anywhere), height(normal));
+  }, 'CSSOM aliases, mutation, and removal update computed style and layout synchronously');
+</script>

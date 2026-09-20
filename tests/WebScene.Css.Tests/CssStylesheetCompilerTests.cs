@@ -39,6 +39,19 @@ public sealed class CssStylesheetCompilerTests
     }
 
     [Fact]
+    public void CanonicalizesLegacyWordWrapAlias()
+    {
+        var result = CssStylesheetCompiler.Compile(
+            ".markdown { word-wrap: break-word; word-break: break-all; }");
+
+        var declarations = Assert.Single(result.Rules).Declarations;
+        Assert.Contains(declarations, static declaration =>
+            declaration.Name == "overflow-wrap" && declaration.Value == "break-word");
+        Assert.Contains(declarations, static declaration =>
+            declaration.Name == "word-break" && declaration.Value == "break-all");
+    }
+
+    [Fact]
     public void CompilerProducesPortableSelectorsDeclarationsAndNestedMedia()
     {
         var result = CssStylesheetCompiler.Compile("""

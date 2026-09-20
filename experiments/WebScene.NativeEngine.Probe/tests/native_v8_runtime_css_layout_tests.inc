@@ -1,3 +1,102 @@
+void test_word_break_and_overflow_wrap_layout(webscene_engine* engine)
+{
+    resize(engine, 480, 360, 1U);
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `<style>
+          .probe { width: 72px; font: 14px sans-serif; line-height: 18px; white-space: normal; }
+          #normal { word-break: normal; overflow-wrap: normal; }
+          #anywhere { overflow-wrap: anywhere; }
+          #legacy { word-wrap: break-word; }
+          #all { word-break: break-all; }
+          #inherited { overflow-wrap: anywhere; }
+        </style>
+        <div id="normal" class="probe">abcdefghijklmnopqrstuvwxyz</div>
+        <div id="anywhere" class="probe">abcdefghijklmnopqrstuvwxyz</div>
+        <div id="legacy" class="probe">abcdefghijklmnopqrstuvwxyz</div>
+        <div id="all" class="probe">abc😀defghijklmnopqrstuvwxyz</div>
+        <div id="inherited"><span id="child" class="probe">abcdefghijklmnopqrstuvwxyz</span></div>`;
+        const normal = document.getElementById('normal');
+        const anywhere = document.getElementById('anywhere');
+        const legacy = document.getElementById('legacy');
+        const all = document.getElementById('all');
+        const child = document.getElementById('child');
+        const height = node => node.getBoundingClientRect().height;
+        const before = {
+          normal: height(normal),
+          anywhere: height(anywhere),
+          legacy: height(legacy),
+          all: height(all),
+          inherited: height(child),
+          overflowWrap: getComputedStyle(anywhere).overflowWrap,
+          wordWrap: getComputedStyle(legacy).wordWrap,
+          wordBreak: getComputedStyle(all).wordBreak,
+          unicode: all.textContent
+        };
+        anywhere.style.overflowWrap = 'normal';
+        const removed = height(anywhere);
+        anywhere.style.wordWrap = 'break-word';
+        const restored = height(anywhere);
+        return {
+          wraps: before.anywhere > before.normal
+            && before.legacy > before.normal
+            && before.all > before.normal
+            && before.inherited > before.normal,
+          cssom: before.overflowWrap === 'anywhere'
+            && before.wordWrap === 'break-word'
+            && before.wordBreak === 'break-all',
+          mutation: removed === before.normal && restored > removed,
+          unicode: before.unicode === 'abc😀defghijklmnopqrstuvwxyz'
+        };
+      })()
+    )JS", "native-word-break-overflow-wrap.js");
+    require(
+        result == R"JSON({"wraps":true,"cssom":true,"mutation":true,"unicode":true})JSON",
+        "word-break/overflow-wrap retained layout diverged: " + result);
+}
+
+void test_word_break_layout_performance_gate(webscene_engine* engine)
+{
+    resize(engine, 1024, 768, 1U);
+    execute(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `<style>
+          #word-wrap-grid { display:grid; grid-template-columns:repeat(64, 12px); }
+          .word-wrap-cell { width:12px; font:10px sans-serif; line-height:11px; }
+          .break .word-wrap-cell { overflow-wrap:anywhere; }
+        </style><div id="word-wrap-grid"></div>`;
+        globalThis.wordWrapGrid = document.getElementById('word-wrap-grid');
+        wordWrapGrid.innerHTML = '<div class="word-wrap-cell">abcdefghi</div>'.repeat(4096);
+        globalThis.wordWrapCells = wordWrapGrid.children;
+        wordWrapCells[4095].getBoundingClientRect();
+      })()
+    )JS", "native-word-break-performance-setup.js");
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        let checksum = 0;
+        for (let cycle = 0; cycle < 10; ++cycle) {
+          wordWrapGrid.className = cycle % 2 === 0 ? 'break' : '';
+          checksum += wordWrapCells[4095].getBoundingClientRect().height;
+        }
+        return { nodes: wordWrapCells.length, checksum };
+      })()
+    )JS", "native-word-break-performance-gate.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(result.find(R"JSON({"nodes":4096,"checksum":)JSON") == 0U,
+        "word-break performance fixture did not retain 4,096 nodes: " + result);
+    require(after.layout_passes <= before.layout_passes + 10U,
+        "word-break style transitions caused redundant layout passes");
+    require(elapsed < 5000.0,
+        "4,096-node word-break transition gate exceeded 5 seconds: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_modal_backdrop_scene(webscene_engine* engine)
 {
     resize(engine,400,300,1);

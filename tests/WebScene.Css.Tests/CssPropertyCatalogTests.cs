@@ -48,6 +48,9 @@ public sealed class CssPropertyCatalogTests
     [InlineData("clipPath")]
     [InlineData("filter")]
     [InlineData("backdropFilter")]
+    [InlineData("wordBreak")]
+    [InlineData("overflowWrap")]
+    [InlineData("wordWrap")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 

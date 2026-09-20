@@ -406,6 +406,14 @@ bool apply_text_value(dom_node& node,const std::string& name,const std::string& 
             node.style.mutable_textual().white_space =
                 value == "inherit" || value == "unset"
                 ? std::string{} : value;
+        } else if (name == "word-break") {
+            node.style.mutable_textual().word_break =
+                value == "inherit" || value == "unset"
+                ? std::string{} : value;
+        } else if (name == "overflow-wrap") {
+            node.style.mutable_textual().overflow_wrap =
+                value == "inherit" || value == "unset"
+                ? std::string{} : value;
         } else if (name == "list-style-position") {
             node.style.mutable_textual().list_style_position = value;
         } else if (name == "list-style-type") {

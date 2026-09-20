@@ -137,6 +137,8 @@
     {"id": "text_align", "name": "text-align", "aliases": ["textalign"]},
     {"id": "text_transform", "name": "text-transform", "aliases": ["texttransform"]},
     {"id": "white_space", "name": "white-space", "aliases": ["whitespace"]},
+    {"id": "word_break", "name": "word-break", "aliases": ["wordbreak"]},
+    {"id": "overflow_wrap", "name": "overflow-wrap", "aliases": ["word-wrap", "overflowwrap", "wordwrap"]},
     {"id": "list_style", "name": "list-style"},
     {"id": "list_style_position", "name": "list-style-position"},
     {"id": "list_style_type", "name": "list-style-type"},
@@ -167,7 +169,7 @@
     "keyword": [
       "all", "display", "position", "floating", "flex_direction", "flex_wrap", "align_items", "align_self",
       "justify_content", "box_sizing", "vertical_align", "grid_auto_flow", "border_collapse", "table_layout", "border_style", "background_repeat",
-      "visibility", "pointer_events", "text_anchor", "font_smoothing", "text_align", "text_transform", "white_space", "list_style_position",
+      "visibility", "pointer_events", "text_anchor", "font_smoothing", "text_align", "text_transform", "white_space", "word_break", "overflow_wrap", "list_style_position",
       "list_style_type", "scrollbar_width", "container", "container_type", "content_visibility"
     ],
     "componentList": [
@@ -205,13 +207,13 @@
   "nativeInheritedProperties": [
     "all", "color", "cursor", "direction", "font", "font-family", "font-size", "font-style",
     "font-weight", "letter-spacing", "line-height", "list-style", "list-style-position", "list-style-type",
-    "text-align", "text-transform", "visibility", "white-space", "word-spacing", "-webkit-font-smoothing"
+    "text-align", "text-transform", "visibility", "white-space", "word-break", "overflow-wrap", "word-spacing", "-webkit-font-smoothing"
   ],
   "nativeMasklessPropertyIds": [
     "content", "aspect_ratio", "vertical_align", "grid_auto_columns", "grid_auto_flow", "table_layout", "border_inline", "border_block",
     "outline", "outline_width", "outline_color", "animation", "animation_name", "animation_duration", "animation_delay",
     "animation_timing_function", "animation_iteration_count", "background_repeat", "background_position", "background_size",
-    "font", "text_transform", "list_style", "list_style_position", "list_style_type"
+    "font", "text_transform", "word_break", "overflow_wrap", "list_style", "list_style_position", "list_style_type"
   ],
   "managedKnownProperties": [
     "align-content", "align-items", "align-self", "all", "background", "background-color",
@@ -230,7 +232,7 @@
     "order", "overflow", "overflow-x", "overflow-y", "padding", "padding-bottom", "padding-left",
     "padding-right", "padding-top", "pointer-events", "position", "right", "row-gap", "stroke",
     "stroke-linecap", "stroke-linejoin", "stroke-width", "text-align", "text-indent", "text-transform",
-    "top", "transform", "visibility", "white-space", "width", "word-spacing", "z-index",
+    "top", "transform", "visibility", "white-space", "word-break", "overflow-wrap", "width", "word-spacing", "z-index",
     "outline", "outline-color", "outline-offset", "outline-style", "outline-width",
     "grid-template-areas", "aspect-ratio"
   ],
@@ -255,7 +257,7 @@
     "moz-transform", "-webkit-transform", "webkit-transform", "-webkit-font-smoothing", "webkit-font-smoothing", "orphans", "resize",
     "scrollbar-color", "scrollbar-width", "table-layout", "text-anchor", "text-decoration", "text-overflow", "vertical-align", "transition", "transition-delay",
     "transition-duration", "transition-property", "transition-timing-function", "transform-origin",
-    "widows", "zoom"
+    "widows", "word-wrap", "zoom"
   ],
   "properties": [
     {"name": "border-block-color", "mask": ["inline_border"], "expansion": ["border-top-color", "border-bottom-color"], "applyExpansion": true},

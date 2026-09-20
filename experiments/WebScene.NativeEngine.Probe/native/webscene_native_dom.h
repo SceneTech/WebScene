@@ -785,6 +785,10 @@ struct node_style final {
         std::string vertical_align;
         std::string text_transform;
         std::string white_space;
+        // Inherited line-breaking policy. Empty values inherit without adding
+        // state to descendants; the root resolves both properties to normal.
+        std::string word_break;
+        std::string overflow_wrap;
         std::string contain_value;
         std::string container_type{"normal"};
         std::string container_name{"none"};
@@ -2733,6 +2737,10 @@ private:
         float available_width,
         const dom_node& node,
         bool allow_wrap) const;
+    std::vector<std::pair<size_t, size_t>> break_text_segments(
+        std::string_view value,
+        float available_width,
+        const dom_node& node) const;
     float resolve_length(
         const dom_node& context,
         css_length value,

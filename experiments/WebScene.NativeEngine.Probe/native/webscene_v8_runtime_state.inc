@@ -320,6 +320,15 @@
     std::vector<std::unique_ptr<message_port_binding>> message_port_bindings;
     size_t message_port_queue_high_water_messages{};
     size_t message_port_queue_high_water_bytes{};
+    static constexpr size_t maximum_broadcast_channel_bindings = 4096U;
+    static constexpr size_t maximum_broadcast_channel_name_bytes = 4096U;
+    static constexpr size_t maximum_broadcast_channel_queue_messages = 256U;
+    static constexpr size_t maximum_broadcast_channel_queue_bytes =
+        16U * 1024U * 1024U;
+    std::vector<std::unique_ptr<broadcast_channel_binding>>
+        broadcast_channel_bindings;
+    size_t broadcast_channel_queue_high_water_messages{};
+    size_t broadcast_channel_queue_high_water_bytes{};
     std::vector<pending_dialog_close_event> pending_dialog_close_events;
     std::vector<pending_programmatic_scroll_event>
         pending_programmatic_scroll_events;

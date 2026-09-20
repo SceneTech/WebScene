@@ -2671,6 +2671,13 @@
       "reason": "Candidate Wave 0 contract for WebScene #253. It derives the HTMLIFrameElement [SameObject, PutForwards=value, Reflect] sandbox shape from pinned WPT interfaces/html.idl and combines it with the DOM ordered-set mutation semantics already covered by the DOMTokenList tranche. The direct Chromium oracle and native gate exercise the exact unchanged Code OSS five-token add statement, live reflection, atomic invalid-token errors, supported-token recognition, opaque-origin parent access denial, allow-scripts enforcement, and 100 attach/detach cycles. Broader src/srcdoc navigation, WindowProxy, messaging, resource/service-worker, focus, and rendering behavior remain separately owned by #265-#268."
     },
     {
+      "path": "contracts/broadcast-channel-origin-partition.html",
+      "type": "contract",
+      "capabilities": ["broadcast-channel-event-target", "broadcast-channel-structured-clone", "broadcast-channel-origin-partition", "broadcast-channel-lifecycle"],
+      "evidence": ["html-broadcasting-to-other-browsing-contexts-derived", "vscode-oss-broadcast-data-channel", "vscode-oss-markdown-diff-scroll-sync"],
+      "reason": "Candidate contract for WebScene #764. It covers the API shape, sender exclusion, cloned FIFO delivery to a same-realm peer and same-origin iframe, MessageEvent metadata, DataCloneError, idempotent close, InvalidStateError after close, and explicit teardown. The native companion adds separate runtime instances, process-registry retirement, storage-partition matching, and bounded queue/fanout ownership. Current installed-package acceptance remains under #81/#264."
+    },
+    {
       "path": "contracts/service-worker-registration-control-plane.html",
       "type": "contract",
       "capabilities": ["service-worker-container-idl", "service-worker-registration-matching", "service-worker-script-admission", "service-worker-update-and-unregister"],

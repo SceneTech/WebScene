@@ -213,6 +213,36 @@
         bool reclaimed{false};
     };
 
+    struct broadcast_channel_message final {
+        clone_packet packet;
+        std::string origin;
+    };
+
+    struct broadcast_channel_endpoint final {
+        std::mutex mutex;
+        std::deque<broadcast_channel_message> incoming;
+        size_t incoming_bytes{};
+        std::string partition;
+        std::string origin;
+        std::string name;
+        std::weak_ptr<message_port_runtime_wake> wake;
+        bool closed{false};
+    };
+
+    struct broadcast_channel_binding final {
+        std::shared_ptr<broadcast_channel_endpoint> endpoint;
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Object> wrapper;
+        uint32_t event_target_id{};
+        bool active_listener_rooted{false};
+        bool reclaimed{false};
+    };
+
+    struct broadcast_channel_registry final {
+        std::mutex mutex;
+        std::vector<std::weak_ptr<broadcast_channel_endpoint>> endpoints;
+    };
+
     struct pending_window_message final {
         v8::Global<v8::Context> target_context;
         v8::Global<v8::Context> source_context;

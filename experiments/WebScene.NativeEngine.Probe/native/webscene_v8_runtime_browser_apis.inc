@@ -691,11 +691,15 @@
                 && target_node_id != std::numeric_limits<uint32_t>::max()
                 && (unwrap_node(info.This()) != nullptr
                     || self->message_port_binding_from_object(
+                        local_context, info.This()) != nullptr
+                    || self->broadcast_channel_binding_from_object(
                         local_context, info.This()) != nullptr)) {
                 self->retain_dom_event_listener(registration, info.This());
             }
             registrations.push_back(std::move(registration));
             self->update_message_port_reachability_from_object(
+                local_context, info.This());
+            self->update_broadcast_channel_reachability_from_object(
                 local_context, info.This());
         } else if (type == "resize") {
             const auto requested = info[1];
@@ -803,6 +807,8 @@
                 break;
             }
             self->update_message_port_reachability_from_object(
+                local_context, info.This());
+            self->update_broadcast_channel_reachability_from_object(
                 local_context, info.This());
             return;
         }

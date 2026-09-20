@@ -1355,6 +1355,7 @@
                 close_message_port_binding(*binding);
             }
         }
+        retire_broadcast_channels_for_context(local_context);
         std::erase_if(
             pending_dialog_close_events,
             [&](const auto& task) {

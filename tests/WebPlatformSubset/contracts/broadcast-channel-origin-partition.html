@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Origin-partitioned BroadcastChannel delivery</title>
+<body>
+<iframe id="peer" srcdoc="<!doctype html><title>peer</title>"></iframe>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const assert = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const test = (name, body) => {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error),
+        stack: error.stack || null
+      });
+    }
+  };
+  const finish = () => {
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+
+  addEventListener("load", () => {
+    const sender = new BroadcastChannel("vscode.profile");
+    const local = new BroadcastChannel("vscode.profile");
+    const remote = new peer.contentWindow.BroadcastChannel("vscode.profile");
+    const localMessages = [];
+    const remoteMessages = [];
+    let senderMessages = 0;
+    sender.onmessage = () => ++senderMessages;
+    local.addEventListener("message", event => localMessages.push(event));
+    remote.onmessage = event => remoteMessages.push(event);
+
+    test("BroadcastChannel has the browser-shaped EventTarget surface", () => {
+      assert(sender instanceof BroadcastChannel, "constructor brand mismatch");
+      assert(sender instanceof EventTarget, "EventTarget inheritance missing");
+      assert(sender.name === "vscode.profile", "name changed");
+      assert(Object.prototype.toString.call(sender) === "[object BroadcastChannel]",
+        "toStringTag changed");
+      assert(BroadcastChannel.length === 1, "constructor length changed");
+      assert(BroadcastChannel.prototype.postMessage.length === 1,
+        "postMessage length changed");
+      assert(BroadcastChannel.prototype.close.length === 0, "close length changed");
+    });
+
+    const bytes = new Uint8Array([3, 1, 4]);
+    sender.postMessage({ sequence: 1, nested: { ok: true }, bytes });
+    bytes[0] = 9;
+    sender.postMessage({ sequence: 2 });
+    sender.postMessage({ sequence: 3 });
+
+    const deadline = performance.now() + 2000;
+    const poll = () => {
+      if ((localMessages.length < 3 || remoteMessages.length < 3)
+          && performance.now() < deadline) {
+        setTimeout(poll, 5);
+        return;
+      }
+      test("matching same-origin realms receive cloned FIFO messages", () => {
+        assert(senderMessages === 0, "sender received its own message");
+        assert(localMessages.length === 3 && remoteMessages.length === 3,
+          "a matching channel missed messages");
+        assert(localMessages.map(event => event.data.sequence).join(",") === "1,2,3",
+          "local FIFO order changed");
+        assert(remoteMessages.map(event => event.data.sequence).join(",") === "1,2,3",
+          "frame FIFO order changed");
+        assert(Array.from(localMessages[0].data.bytes).join(",") === "3,1,4",
+          "sender mutation leaked through structured clone");
+        assert(localMessages[0].data !== remoteMessages[0].data,
+          "recipients shared one mutable object");
+        assert(localMessages.every(event => event.source === null
+          && event.ports.length === 0 && event.origin === location.origin),
+          "MessageEvent metadata changed");
+      });
+      test("clone and closed-state failures remain explicit", () => {
+        let cloneError = null;
+        let closedError = null;
+        try { sender.postMessage(() => {}); } catch (error) { cloneError = error.name; }
+        sender.close();
+        sender.close();
+        try { sender.postMessage("late"); } catch (error) { closedError = error.name; }
+        assert(cloneError === "DataCloneError", `clone error was ${cloneError}`);
+        assert(closedError === "InvalidStateError", `closed error was ${closedError}`);
+      });
+      local.close();
+      remote.close();
+      peer.remove();
+      state.diagnostics.push(JSON.stringify({
+        localMessages: localMessages.length,
+        remoteMessages: remoteMessages.length,
+        senderMessages
+      }));
+      finish();
+    };
+    poll();
+  }, { once: true });
+</script>
+</body>

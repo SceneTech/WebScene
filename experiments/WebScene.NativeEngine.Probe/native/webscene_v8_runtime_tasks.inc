@@ -815,6 +815,7 @@
     {
         if (message_port_wake->consume_reachability_change()) {
             refresh_message_port_reachability();
+            refresh_broadcast_channel_reachability();
         }
         // Native DOM objects are retained by JavaScript wrappers, so report
         // their fixed object storage at browser task boundaries. V8 can then
@@ -862,26 +863,29 @@
         synchronize_media_elements();
         if(drain_media())return true;
 #endif
-        // Worker, ServiceWorker, MessagePort, WebSocket messages, and file
+        // Worker, ServiceWorker, MessagePort, BroadcastChannel, WebSocket
+        // messages, and file
         // reading callbacks are independent browser task sources. Rotate the
         // first eligible source so a self-refilling source cannot strand
         // another source behind its backlog. FileReader must not inherit a
         // large application timer backlog merely because its compatibility
         // implementation needs an asynchronous task boundary.
-        for (uint8_t offset = 0U; offset < 5U; ++offset) {
+        for (uint8_t offset = 0U; offset < 6U; ++offset) {
             const auto source = static_cast<uint8_t>(
-                (next_async_message_task_source + offset) % 5U);
+                (next_async_message_task_source + offset) % 6U);
             const auto ready = source == 0U ? has_worker_messages()
                 : source == 1U ? has_service_worker_messages()
                 : source == 2U ? has_message_port_messages()
-                : source == 3U ? websocket_transport.has_pending_events()
+                : source == 3U ? has_broadcast_channel_messages()
+                : source == 4U ? websocket_transport.has_pending_events()
                 : !pending_file_reading_tasks.empty();
             if (!ready) continue;
-            next_async_message_task_source = static_cast<uint8_t>((source + 1U) % 5U);
+            next_async_message_task_source = static_cast<uint8_t>((source + 1U) % 6U);
             if (source == 0U) return drain_worker_message();
             if (source == 1U) return drain_service_worker_message();
             if (source == 2U) return drain_message_port_message();
-            if (source == 3U) return drain_websocket_event();
+            if (source == 3U) return drain_broadcast_channel_message();
+            if (source == 4U) return drain_websocket_event();
             return drain_file_reading_task();
         }
         if (!pending_window_messages.empty()) {

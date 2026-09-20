@@ -133,6 +133,7 @@
         stop_workers();
         dedicated_workers.clear();
         reset_message_ports_for_navigation();
+        reset_broadcast_channels_for_navigation();
         retire_file_system_handles_for_contexts(retired_contexts);
         terminal_pagehide_dispatched = false;
         file_targets.clear();

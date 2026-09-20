@@ -166,6 +166,7 @@
         dismiss_validation_message();
         for (auto& digest : pending_digests) digest.stop.request_stop();
         for (auto& cipher : pending_ciphers) cipher.stop.request_stop();
+        stop_broadcast_channels();
         stop_message_ports();
         stop_workers();
         // The storage worker never touches V8. Join it before persistent
@@ -290,6 +291,7 @@
         pending_file_reading_tasks.clear();
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;
+        broadcast_channel_bindings.clear();
         message_port_bindings.clear();
         release_all_file_system_handles();
         if (file_grant_releases != nullptr) file_grant_releases->stop();

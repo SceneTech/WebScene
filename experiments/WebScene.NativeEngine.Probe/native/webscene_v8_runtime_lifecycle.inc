@@ -166,6 +166,7 @@
         dismiss_validation_message();
         for (auto& digest : pending_digests) digest.stop.request_stop();
         for (auto& cipher : pending_ciphers) cipher.stop.request_stop();
+        stop_abort_signal_compositions();
         stop_broadcast_channels();
         stop_message_ports();
         stop_workers();
@@ -291,6 +292,7 @@
         pending_file_reading_tasks.clear();
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;
+        abort_signal_compositions.clear();
         broadcast_channel_bindings.clear();
         message_port_bindings.clear();
         release_all_file_system_handles();

@@ -816,6 +816,7 @@
         if (message_port_wake->consume_reachability_change()) {
             refresh_message_port_reachability();
             refresh_broadcast_channel_reachability();
+            refresh_abort_signal_compositions();
         }
         // Native DOM objects are retained by JavaScript wrappers, so report
         // their fixed object storage at browser task boundaries. V8 can then

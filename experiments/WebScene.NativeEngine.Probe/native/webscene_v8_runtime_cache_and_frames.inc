@@ -2064,6 +2064,7 @@
         install_editor_web_platform_globals(local_context);
         install_message_channel(local_context);
         install_broadcast_channel(local_context);
+        install_abort_globals(local_context);
         install_worker_constructor(local_context);
         install_tree_walker_platform(local_context);
         install_custom_elements_platform(local_context);

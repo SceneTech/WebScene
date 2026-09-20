@@ -305,6 +305,7 @@
     std::vector<event_listener_registration> resize_listeners;
     std::vector<std::unique_ptr<media_query_list_state>> media_query_lists;
     std::vector<timer_task> timers;
+    static constexpr size_t maximum_timer_tasks = 65536U;
     static constexpr size_t maximum_pending_file_reading_tasks = 1024U;
     std::deque<timer_task> pending_file_reading_tasks;
     static constexpr size_t maximum_pending_window_messages = 256U;
@@ -329,6 +330,10 @@
         broadcast_channel_bindings;
     size_t broadcast_channel_queue_high_water_messages{};
     size_t broadcast_channel_queue_high_water_bytes{};
+    static constexpr size_t maximum_abort_signal_compositions = 4096U;
+    static constexpr size_t maximum_abort_signal_fan_in = 4096U;
+    std::vector<std::unique_ptr<abort_signal_composition_binding>>
+        abort_signal_compositions;
     std::vector<pending_dialog_close_event> pending_dialog_close_events;
     std::vector<pending_programmatic_scroll_event>
         pending_programmatic_scroll_events;

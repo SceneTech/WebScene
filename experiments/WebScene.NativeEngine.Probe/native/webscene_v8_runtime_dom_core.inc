@@ -1356,6 +1356,7 @@
             }
         }
         retire_broadcast_channels_for_context(local_context);
+        retire_abort_signal_compositions_for_context(local_context);
         std::erase_if(
             pending_dialog_close_events,
             [&](const auto& task) {

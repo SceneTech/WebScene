@@ -977,6 +977,51 @@ int main() {
     d.pointer("pointerdown", bounds.x + 1, bounds.y + 1, 1);
     d.pointer("pointerup", bounds.x + 1, bounds.y + 1, 0);
     check(clicks == 1, "primary button still activates after cancellation");
+
+    unsigned identity_events = 0;
+    bool legacy_identity = false, touch_identity = false;
+    bool pen_identity = false, pen_canceled = false;
+    auto pointer_identity = d.on(target, "pointerdown", [&](event &event) {
+      ++identity_events;
+      legacy_identity = legacy_identity
+          || (event.device == pointer_device::mouse
+              && event.pointer_id == 1 && event.is_primary);
+      touch_identity = touch_identity
+          || (event.device == pointer_device::touch
+              && event.pointer_id == 7 && event.is_primary);
+      pen_identity = pen_identity
+          || (event.device == pointer_device::pen
+              && event.pointer_id == 2 && !event.is_primary);
+    });
+    auto pointer_cancel = d.on(target, "pointercancel", [&](event &event) {
+      pen_canceled = event.device == pointer_device::pen
+          && event.pointer_id == 2 && !event.is_primary;
+    });
+    d.pointer("pointerdown", bounds.x + 1, bounds.y + 1, 1);
+    d.pointer("pointercancel", bounds.x + 1, bounds.y + 1, 0);
+    d.pointer("pointerdown", bounds.x + 1, bounds.y + 1, 1, {},
+              {pointer_device::touch, 7, true});
+    d.pointer("pointerdown", bounds.x + 1, bounds.y + 1, 1, {},
+              {pointer_device::pen, 2, false});
+    d.pointer("pointercancel", bounds.x + 1, bounds.y + 1, 0, {},
+              {pointer_device::pen, 2, false});
+    d.pointer("pointerup", bounds.x + 1, bounds.y + 1, 0, {},
+              {pointer_device::touch, 7, true});
+    check(identity_events == 3 && legacy_identity && touch_identity
+              && pen_identity && pen_canceled,
+          "native pointer metadata preserves legacy/touch/pen identity");
+    bool invalid_pointer_rejected = false;
+    try {
+      d.pointer("pointermove", bounds.x + 1, bounds.y + 1, 0, {},
+                {pointer_device::touch, 0, true});
+    } catch (const std::invalid_argument &) {
+      invalid_pointer_rejected = true;
+    }
+    check(invalid_pointer_rejected,
+          "native pointer metadata rejects an out-of-range ID");
+    for (unsigned index = 0; index < 10000; ++index)
+      d.pointer("pointermove", bounds.x + 1, bounds.y + 1, 0, {},
+                {pointer_device::touch, 7, true});
   }
   check(d.bounds(d.find("numeric-length")).width == 5.f &&
         d.bounds(d.find("numeric-length")).height == .75f,

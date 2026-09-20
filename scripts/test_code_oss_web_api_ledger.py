@@ -95,7 +95,7 @@ class CodeOssWebApiLedgerTests(unittest.TestCase):
         second = ledger_module.render_report(self.catalog, self.snapshot, self.ledger)
         self.assertEqual(first, second)
         self.assertLessEqual(len(first.encode("utf-8")), 131_072)
-        self.assertIn("25/25 catalog entries reachable", first)
+        self.assertIn("26/26 catalog entries reachable", first)
         self.assertIn("Browser assertions: 25 pass, 7 fail", first)
 
 

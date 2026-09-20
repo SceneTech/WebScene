@@ -57,7 +57,14 @@
                     scheme == WEBSCENE_PREFERRED_COLOR_SCHEME_DARK,
                     (accessibility & WEBSCENE_ACCESSIBILITY_PREFERENCE_FORCED_COLORS_V1) != 0U,
                     (accessibility & WEBSCENE_ACCESSIBILITY_PREFERENCE_REDUCED_MOTION_V1) != 0U,
-                    (accessibility & WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1) != 0U});
+                    (accessibility & WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1) != 0U,
+                    desktop_environment_published_.load(std::memory_order_acquire),
+                    desktop_accent_rgba_.load(std::memory_order_acquire),
+                    desktop_accent_text_rgba_.load(std::memory_order_acquire),
+                    desktop_canvas_rgba_.load(std::memory_order_acquire),
+                    desktop_canvas_text_rgba_.load(std::memory_order_acquire),
+                    desktop_highlight_rgba_.load(std::memory_order_acquire),
+                    desktop_highlight_text_rgba_.load(std::memory_order_acquire)});
                 return webscene_native::v8_dom_runtime::viewport_metrics{
                     static_cast<float>(viewport_width_),
                     static_cast<float>(viewport_height_),
@@ -671,8 +678,17 @@
                 const auto accessibility_changed = accessibility_preferences_changed_.exchange(
                     false,
                     std::memory_order_acq_rel);
-                if (!scheme_changed && !accessibility_changed) {
+                const auto desktop_changed = desktop_environment_changed_.exchange(
+                    false,
+                    std::memory_order_acq_rel);
+                if (!scheme_changed && !accessibility_changed && !desktop_changed) {
                     return false;
+                }
+                if (desktop_changed && runtime_ != nullptr
+                    && !runtime_->apply_desktop_environment(
+                        desktop_environment())) {
+                    script_errors_.fetch_add(1, std::memory_order_relaxed);
+                    set_last_error(runtime_->last_error());
                 }
                 if (runtime_ != nullptr
                     && !runtime_->refresh_media_environment()) {
@@ -1941,6 +1957,8 @@
                     || preferred_color_scheme_changed_.load(
                         std::memory_order_acquire)
                     || accessibility_preferences_changed_.load(
+                        std::memory_order_acquire)
+                    || desktop_environment_changed_.load(
                         std::memory_order_acquire)
                     || semantic_actions_pending_.load(
                         std::memory_order_acquire)

@@ -1631,6 +1631,55 @@ void test_preferred_color_scheme_updates_css_and_match_media(webscene_engine* en
     }
 }
 
+void test_desktop_environment_ingress_is_bounded_and_updates_media(
+    webscene_engine* engine)
+{
+    webscene_desktop_environment_v1 environment{
+        sizeof(webscene_desktop_environment_v1),
+        WEBSCENE_DESKTOP_ENVIRONMENT_VERSION_1,
+        WEBSCENE_DESKTOP_ENVIRONMENT_DISPLAY_AVAILABLE_V1,
+        WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT,
+        96U, 96U, 1000U, 0U, 1U,
+        0x0067c0ffU, 0xffffffffU, 0xffffffffU,
+        0x000000ffU, 0x0067c0ffU, 0xffffffffU};
+    require(webscene_engine_set_desktop_environment_v1(engine, &environment) != 0U,
+        "native engine rejected a valid desktop environment");
+    for (uint32_t iteration = 0U; iteration < 10000U; ++iteration) {
+        require(webscene_engine_set_desktop_environment_v1(engine, &environment) != 0U,
+            "native engine rejected a duplicate desktop environment");
+    }
+    auto invalid = environment;
+    invalid.version = WEBSCENE_DESKTOP_ENVIRONMENT_VERSION_1 + 1U;
+    require(webscene_engine_set_desktop_environment_v1(engine, &invalid) == 0U,
+        "native engine accepted a future desktop environment version");
+    invalid = environment;
+    invalid.reserved0 = 1U;
+    require(webscene_engine_set_desktop_environment_v1(engine, &invalid) == 0U,
+        "native engine accepted non-zero reserved desktop environment data");
+
+    environment.flags |= WEBSCENE_DESKTOP_ENVIRONMENT_FORCED_COLORS_V1
+        | WEBSCENE_DESKTOP_ENVIRONMENT_HIGH_CONTRAST_V1;
+    environment.preferred_color_scheme = WEBSCENE_PREFERRED_COLOR_SCHEME_DARK;
+    environment.display_generation = 2U;
+    environment.dpi_x = 144U;
+    environment.dpi_y = 144U;
+    environment.scale_milli = 1500U;
+    require(webscene_engine_set_desktop_environment_v1(engine, &environment) != 0U,
+        "native engine rejected a changed desktop environment");
+    const auto state = evaluate(engine, R"JS(
+        ({ dark: matchMedia('(prefers-color-scheme: dark)').matches,
+           forced: matchMedia('(forced-colors: active)').matches,
+           contrast: matchMedia('(prefers-contrast: more)').matches })
+    )JS", "native-desktop-environment-state.js");
+    require(state == R"({"dark":true,"forced":true,"contrast":true})",
+        "desktop environment did not update media state: " + state);
+
+    environment.flags = WEBSCENE_DESKTOP_ENVIRONMENT_DISPLAY_AVAILABLE_V1;
+    environment.preferred_color_scheme = WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT;
+    require(webscene_engine_set_desktop_environment_v1(engine, &environment) != 0U,
+        "native engine rejected desktop environment restoration");
+}
+
 void test_resize_listener_receives_window_event(webscene_engine* engine)
 {
     execute(engine, R"JS(

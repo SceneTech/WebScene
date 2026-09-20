@@ -99,6 +99,43 @@ typedef enum webscene_accessibility_preference_flags_v1 {
     WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1 = 1U << 2U
 } webscene_accessibility_preference_flags_v1;
 
+#define WEBSCENE_DESKTOP_ENVIRONMENT_VERSION_1 1U
+
+/*
+ * Immutable host-owned desktop state copied synchronously by
+ * webscene_engine_set_desktop_environment_v1. Colors are packed RGBA8. A host
+ * publishes a complete snapshot; omitted transitions are represented by
+ * clearing their flag. display_generation changes when the display topology
+ * changes, while dpi values describe the display containing the surface.
+ */
+typedef enum webscene_desktop_environment_flags_v1 {
+    WEBSCENE_DESKTOP_ENVIRONMENT_NONE_V1 = 0,
+    WEBSCENE_DESKTOP_ENVIRONMENT_FORCED_COLORS_V1 = 1U << 0U,
+    WEBSCENE_DESKTOP_ENVIRONMENT_HIGH_CONTRAST_V1 = 1U << 1U,
+    WEBSCENE_DESKTOP_ENVIRONMENT_SUSPENDED_V1 = 1U << 2U,
+    WEBSCENE_DESKTOP_ENVIRONMENT_DISPLAY_AVAILABLE_V1 = 1U << 3U,
+    WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_LOCKED_V1 = 1U << 4U,
+    WEBSCENE_DESKTOP_ENVIRONMENT_SESSION_ENDING_V1 = 1U << 5U
+} webscene_desktop_environment_flags_v1;
+
+typedef struct webscene_desktop_environment_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t preferred_color_scheme;
+    uint32_t dpi_x;
+    uint32_t dpi_y;
+    uint32_t scale_milli;
+    uint32_t reserved0;
+    uint64_t display_generation;
+    uint32_t accent_rgba;
+    uint32_t accent_text_rgba;
+    uint32_t canvas_rgba;
+    uint32_t canvas_text_rgba;
+    uint32_t highlight_rgba;
+    uint32_t highlight_text_rgba;
+} webscene_desktop_environment_v1;
+
 /*
  * Immutable, host-readable accessibility projection. Strings are UTF-8
  * slices into semantic_snapshot_view.string_bytes. Node and relationship
@@ -2107,6 +2144,15 @@ WEBSCENE_API uint8_t webscene_engine_set_preferred_color_scheme(
 WEBSCENE_API uint8_t webscene_engine_set_accessibility_preferences_v1(
     webscene_engine* engine,
     uint32_t preference_flags);
+/*
+ * Publishes one complete desktop environment snapshot. The call rejects
+ * unknown flags, malformed dimensions, non-zero reserved data, and unsupported
+ * versions; it never retains host memory. Equal snapshots are coalesced and do
+ * not wake the worker.
+ */
+WEBSCENE_API uint8_t webscene_engine_set_desktop_environment_v1(
+    webscene_engine* engine,
+    const webscene_desktop_environment_v1* environment);
 /*
  * Requests an updated semantic publication and acquires the latest completed
  * immutable snapshot. The first call may return null while the engine worker

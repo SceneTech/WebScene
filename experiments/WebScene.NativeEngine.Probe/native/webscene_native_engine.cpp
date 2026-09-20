@@ -85,6 +85,7 @@ static_assert(sizeof(webscene_interop_pool_metrics_v3) == 200);
 static_assert(sizeof(webscene_runtime_work_metrics) == 168);
 static_assert(sizeof(webscene_document_script) == 40);
 static_assert(sizeof(webscene_navigation_options) == 16);
+static_assert(sizeof(webscene_desktop_environment_v1) == 64);
 
 struct queued_input_event : webscene_input_event {
     uint64_t observed_compositor_timestamp = 0;
@@ -1273,6 +1274,23 @@ private:
     std::atomic<uint32_t> accessibility_preference_flags_{
         WEBSCENE_ACCESSIBILITY_PREFERENCE_NONE_V1};
     std::atomic<bool> accessibility_preferences_changed_{false};
+    mutable std::mutex desktop_environment_mutex_;
+    webscene_desktop_environment_v1 desktop_environment_{
+        sizeof(webscene_desktop_environment_v1),
+        WEBSCENE_DESKTOP_ENVIRONMENT_VERSION_1,
+        WEBSCENE_DESKTOP_ENVIRONMENT_DISPLAY_AVAILABLE_V1,
+        WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT,
+        96U, 96U, 1000U, 0U, 0U,
+        0x0067c0ffU, 0xffffffffU, 0xffffffffU,
+        0x000000ffU, 0x0067c0ffU, 0xffffffffU};
+    std::atomic<bool> desktop_environment_changed_{false};
+    std::atomic<bool> desktop_environment_published_{false};
+    std::atomic<uint32_t> desktop_accent_rgba_{0x0067c0ffU};
+    std::atomic<uint32_t> desktop_accent_text_rgba_{0xffffffffU};
+    std::atomic<uint32_t> desktop_canvas_rgba_{0xffffffffU};
+    std::atomic<uint32_t> desktop_canvas_text_rgba_{0x000000ffU};
+    std::atomic<uint32_t> desktop_highlight_rgba_{0x0067c0ffU};
+    std::atomic<uint32_t> desktop_highlight_text_rgba_{0xffffffffU};
     std::atomic<uint8_t> host_animation_frame_requested_{0U};
     std::atomic<uint64_t> observed_host_timestamp_microseconds_{0U};
     std::atomic<uint64_t> observed_compositor_timestamp_microseconds_{0U};
@@ -2574,6 +2592,18 @@ uint8_t webscene_engine_set_accessibility_preferences_v1(
         && engine->set_accessibility_preferences(preference_flags)
         ? 1U
         : 0U;
+}
+
+uint8_t webscene_engine_set_desktop_environment_v1(
+    webscene_engine* engine,
+    const webscene_desktop_environment_v1* environment)
+{
+    if (engine == nullptr || environment == nullptr) return 0U;
+    try {
+        return engine->set_desktop_environment(*environment) ? 1U : 0U;
+    } catch (...) {
+        return 0U;
+    }
 }
 
 namespace {

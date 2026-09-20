@@ -1482,6 +1482,7 @@ int main()
     test_media_query_list_tracks_outer_and_frame_viewport_breakpoints(engine);
     test_responsive_unset_restores_auto_inset(engine);
     test_preferred_color_scheme_updates_css_and_match_media(engine);
+    test_desktop_environment_ingress_is_bounded_and_updates_media(engine);
     test_resize_listener_receives_window_event(engine);
     test_absolute_portal_centers_against_positioned_ancestor(engine);
     test_attribute_selector_invalidation(engine);

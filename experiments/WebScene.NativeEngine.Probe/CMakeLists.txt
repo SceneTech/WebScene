@@ -5,6 +5,14 @@ include(CTest)
 include(FetchContent)
 
 if(BUILD_TESTING)
+    add_executable(webscene_desktop_environment_header_tests
+        tests/desktop_environment_header_tests.c)
+    target_compile_features(webscene_desktop_environment_header_tests PRIVATE c_std_11)
+    target_include_directories(webscene_desktop_environment_header_tests PRIVATE native)
+    add_test(NAME webscene_desktop_environment_header_tests
+        COMMAND webscene_desktop_environment_header_tests)
+    set_tests_properties(webscene_desktop_environment_header_tests PROPERTIES
+        LABELS "native;desktop-environment;abi;c11;performance" TIMEOUT 10)
     add_executable(webscene_pointer_input_metadata_tests
         tests/pointer_input_metadata_tests.cpp)
     target_compile_features(webscene_pointer_input_metadata_tests PRIVATE cxx_std_20)

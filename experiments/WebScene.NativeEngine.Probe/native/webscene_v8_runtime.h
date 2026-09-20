@@ -518,6 +518,8 @@ public:
     bool has_open_gpu_output() const;
     void update_gpu_presentation_images(const std::vector<std::shared_ptr<const webscene_gpu_image_lease_v3>>& images);
     bool refresh_media_environment();
+    bool apply_desktop_environment(
+        const webscene_desktop_environment_v1& environment);
     bool set_visible(bool visible);
     bool set_focused(bool focused);
     bool set_fullscreen(bool fullscreen);

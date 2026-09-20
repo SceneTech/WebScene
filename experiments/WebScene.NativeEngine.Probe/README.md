@@ -152,6 +152,10 @@ stable `fillStyle`, composite mode, or shadow state.
   component-owned iframe, script, and stylesheet resources.
 - `webscene_engine_set_preferred_color_scheme` provides the host's effective
   light/dark preference for CSS media queries and `Window.matchMedia`.
+- `webscene_engine_set_desktop_environment_v1` copies a fixed 64-byte native
+  appearance/display/session snapshot, coalesces equal values, refreshes only
+  affected media/CSS state, and dispatches bounded lifecycle transitions from
+  the worker. It adds no host poller or idle animation frame.
 - `webscene_engine_execute_script` is the fire-and-forget execution boundary.
 - `webscene_engine_begin_evaluate_v3` and
   `webscene_engine_begin_invoke_v3` are the leased tagged-result

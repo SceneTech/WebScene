@@ -139,10 +139,27 @@ if [[ -z "$package_version" ]]; then
   exit 1
 fi
 
+macos_arm64_to_x64=false
+host_kernel="$(uname -s)"
+host_machine="$(uname -m)"
+if [[ "$rid" == osx-x64 && "$host_kernel" == Darwin && "$host_machine" == arm64 ]]; then
+  macos_arm64_to_x64=true
+fi
 if [[ "$expected_kernel" == Darwin \
-    && ( "$(uname -s)" != "$expected_kernel" || "$(uname -m)" != "$expected_machine" ) ]]; then
-  echo "RID '$rid' must be built natively on $expected_kernel/$expected_machine; current host is $(uname -s)/$(uname -m)." >&2
+    && ( "$host_kernel" != "$expected_kernel" \
+      || ( "$host_machine" != "$expected_machine" && "$macos_arm64_to_x64" != true ) ) ]]; then
+  echo "RID '$rid' must be built natively on $expected_kernel/$expected_machine; current host is $host_kernel/$host_machine." >&2
   exit 1
+fi
+if [[ "$expected_kernel" == Darwin && -z "$rust_target_triple" ]]; then
+  if [[ "$cpu" == x64 ]]; then
+    rust_target_triple=x86_64-apple-darwin
+  else
+    rust_target_triple=aarch64-apple-darwin
+  fi
+fi
+if [[ "$macos_arm64_to_x64" == true ]] && command -v rustup >/dev/null 2>&1; then
+  rustup target add "$rust_target_triple"
 fi
 if [[ "$expected_kernel" == Linux ]]; then
   case "$rid:$target_triple" in
@@ -398,7 +415,15 @@ cmake_args=(
 )
 macos_deployment_target=14.0
 if [[ "$expected_kernel" == Darwin ]]; then
-  cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_deployment_target")
+  macos_architecture=arm64
+  if [[ "$cpu" == x64 ]]; then
+    macos_architecture=x86_64
+  fi
+  cmake_args+=(
+    -DCMAKE_OSX_ARCHITECTURES="$macos_architecture"
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_deployment_target"
+    -DWEBSCENE_RUST_TARGET_TRIPLE="$rust_target_triple"
+  )
 fi
 if [[ "$thin_lto" == true ]]; then
   v8_llvm_bin="$v8_root/third_party/llvm-build/Release+Asserts/bin"
@@ -443,12 +468,18 @@ elif [[ "$expected_kernel" == Linux ]]; then
   fi
   target_library_dir="$sysroot/usr/lib/$target_triple"
   target_include_dir="$sysroot/usr/include"
+  v8_libcxx_include="$v8_root/buildtools/third_party/libc++/src/include"
+  v8_libcxxabi_include="$v8_root/third_party/libc++abi/src/include"
+  v8_libcxx_archive="$v8_output_root/obj/buildtools/third_party/libc++/libc++.a"
   for target_dependency in \
       "$target_include_dir/openssl/ssl.h" \
       "$target_library_dir/libcrypto.so" \
       "$target_library_dir/libssl.so" \
       "$target_include_dir/zlib.h" \
-      "$target_library_dir/libz.so"; do
+      "$target_library_dir/libz.so" \
+      "$v8_libcxx_include/source_location" \
+      "$v8_libcxxabi_include/cxxabi.h" \
+      "$v8_libcxx_archive"; do
     if [[ ! -e "$target_dependency" ]]; then
       echo "Linux sysroot is missing required native dependency '$target_dependency'." >&2
       exit 1
@@ -466,7 +497,8 @@ elif [[ "$expected_kernel" == Linux ]]; then
     -DZLIB_INCLUDE_DIR="$target_include_dir"
     -DZLIB_LIBRARY="$target_library_dir/libz.so"
     "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
-    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
+    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include"
+    -DCMAKE_CXX_STANDARD_LIBRARIES="$v8_libcxx_archive"
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,--build-id=sha1"
   )

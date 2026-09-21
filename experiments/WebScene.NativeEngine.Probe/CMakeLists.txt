@@ -1127,6 +1127,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_recursive_selector_cache
             COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_direct_subject_invalidation
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_direct_subject_invalidation PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=direct-subject-invalidation"
+            LABELS "native;css;invalidation;performance;lifecycle"
+            TIMEOUT 30)
         add_test(NAME webscene_native_indexeddb_contract COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_terminal_indexeddb_navigation
             COMMAND webscene_native_engine_tests)

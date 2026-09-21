@@ -2301,6 +2301,59 @@
         const auto route_targets = [&](const css::css_invalidation_route& route) {
             return css_invalidation_route_targets(subject, context_root, route);
         };
+        // Most class mutations in application UI trees affect only the
+        // mutated element. Re-matching every dependency compound in every
+        // directly keyed rule first is redundant: one full cascade of the
+        // subject already determines which of those rules entered or left the
+        // match set. Keep the transition planner for dependencies that route
+        // to ancestors, descendants, or siblings, where it identifies other
+        // subjects that must be recascaded.
+        std::vector<size_t> routed_rules;
+        routed_rules.reserve(changed_rules.size());
+        size_t direct_subject_rules = 0U;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        const auto direct_subject_fast_path =
+            std::getenv("WEBSCENE_PROBE_DISABLE_DIRECT_SUBJECT_INVALIDATION")
+                == nullptr;
+#else
+        constexpr auto direct_subject_fast_path = true;
+#endif
+        for (const auto index : changed_rules) {
+            if (index >= css_rules.size()) continue;
+            const auto& rule = css_rules[index];
+            const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
+                ? rule.compiled_selector() : rule.payload->compiled_pseudo_origin;
+            if (compiled.compounds.empty()
+                || compiled.compiled_compounds.size() != compiled.compounds.size()
+                || rule.payload->invalidation.size() != compiled.compounds.size()) {
+                routed_rules.push_back(index);
+                continue;
+            }
+            auto has_relevant_dependency = false;
+            auto subject_only = true;
+            for (size_t component_index = 0U;
+                 component_index < rule.payload->invalidation.size();
+                 ++component_index) {
+                const auto targets = dependency_scope(
+                    rule.payload->invalidation[component_index]);
+                if (targets.scope == 0U) continue;
+                has_relevant_dependency = true;
+                if (component_index + 1U != compiled.compounds.size()
+                    || targets.scope != css::invalidation_subject
+                    || !targets.routes.empty()) {
+                    subject_only = false;
+                    break;
+                }
+            }
+            if (!direct_subject_fast_path
+                || !has_relevant_dependency || !subject_only) {
+                routed_rules.push_back(index);
+                continue;
+            }
+            ++direct_subject_rules;
+            add_request(&subject, rule_change_propagates_to_descendants(rule));
+            add_custom_property_consumers(subject, rule);
+        }
         struct trigger_transition final {
             uint8_t scope{0};
             std::vector<dom_node*> anchors;
@@ -2308,8 +2361,8 @@
             std::vector<bool> previous;
         };
         std::unordered_map<const compiled_css_compound*, trigger_transition> transitions;
-        transitions.reserve(changed_rules.size());
-        for (const auto index : changed_rules) {
+        transitions.reserve(routed_rules.size());
+        for (const auto index : routed_rules) {
             if (index >= css_rules.size()) continue;
             const auto& rule = css_rules[index];
             const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
@@ -2359,7 +2412,7 @@
             matching_scope.reset();
         }
         std::vector<size_t> fallback_rules;
-        for (const auto index : changed_rules) {
+        for (const auto index : routed_rules) {
             if (index >= css_rules.size()) continue;
             const auto& rule = css_rules[index];
             const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
@@ -2475,6 +2528,7 @@
                 });
             std::cerr << "WebScene selector transition: plan-ms=" << planned
                 << ", apply-ms=" << applied << ", rules=" << changed_rules.size()
+                << ", direct=" << direct_subject_rules
                 << ", triggers=" << transitions.size()
                 << ", fallback=" << fallback_rules.size()
                 << ", requests=" << requests.size()

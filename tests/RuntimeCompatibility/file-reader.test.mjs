@@ -62,7 +62,7 @@ test('actual Blob bytes are read asynchronously with one ordered event delivery'
   assert.equal(reader.error, null);
 });
 
-test('native file-reading task source is used ahead of the timer fallback', async () => {
+test('one native file-reading task owns the complete ordered read', async () => {
   const scheduled = [];
   const FileReader = setup({
     __webSceneQueueFileReadingTask(callback) {
@@ -80,12 +80,11 @@ test('native file-reading task source is used ahead of the timer fallback', asyn
   reader.readAsArrayBuffer(new Blob([Uint8Array.of(7, 8, 9)]));
   assert.equal(scheduled.length, 1);
   scheduled.shift()();
-  for (let attempt = 0; attempt < 8 && scheduled.length === 0; attempt++) {
+  for (let attempt = 0; attempt < 8 && events.at(-1) !== 'loadend'; attempt++) {
     await Promise.resolve();
   }
-  assert.equal(scheduled.length, 1);
-  scheduled.shift()();
   await loaded;
+  assert.equal(scheduled.length, 0);
   assert.deepEqual(events, ['loadstart', 'progress', 'load', 'loadend']);
   assert.deepEqual(Array.from(new Uint8Array(reader.result)), [7, 8, 9]);
 });

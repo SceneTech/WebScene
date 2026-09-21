@@ -113,21 +113,19 @@ inline constexpr std::string_view fileReaderCompatibilityScript = R"JS(
             result = decoder.decode(bytes);
           } else if (format === 'data') result = 'data:' + (blob.type || 'application/octet-stream') + ';base64,' + base64(bytes);
           else if (format === 'binary') result = bytesToBinary(bytes);
-          schedule(() => {
-            if (!active()) return;
-            this._emit('progress', bytes.byteLength, blob.size);
-            if (!active()) return;
-            this._result = result; this._state = 2;
-            this._emit('load', bytes.byteLength, blob.size);
-            if (operation === this._operation && this._state === 2) this._emit('loadend', bytes.byteLength, blob.size);
-          });
-        }).catch(error => schedule(() => {
+          if (!active()) return;
+          this._emit('progress', bytes.byteLength, blob.size);
+          if (!active()) return;
+          this._result = result; this._state = 2;
+          this._emit('load', bytes.byteLength, blob.size);
+          if (operation === this._operation && this._state === 2) this._emit('loadend', bytes.byteLength, blob.size);
+        }).catch(error => {
           if (!active()) return;
           this._error = error instanceof DOMException ? error : failure(String(error?.message || error), 'NotReadableError');
           this._state = 2; this._result = null;
           this._emit('error', 0, blob.size);
           if (operation === this._operation && this._state === 2) this._emit('loadend', 0, blob.size);
-        }));
+        });
       });
     }
     readAsArrayBuffer(blob) { this._read(blob, 'array'); }

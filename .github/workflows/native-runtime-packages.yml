@@ -176,12 +176,12 @@ jobs:
         file: packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc
         platforms: linux/amd64
         push: ${{ github.event_name != 'pull_request' }}
-        tags: ghcr.io/wieslawsoltes/webscene-linux-builder:webscene-linux-glibc-v1
+        tags: ghcr.io/scenetech/webscene-linux-builder:webscene-linux-glibc-v1
     - id: reference
       name: Resolve immutable builder reference
       if: github.event_name != 'pull_request'
       shell: bash
-      run: echo "image=ghcr.io/wieslawsoltes/webscene-linux-builder@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+      run: echo "image=ghcr.io/scenetech/webscene-linux-builder@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
   native:
     name: Build ${{ matrix.rid }}

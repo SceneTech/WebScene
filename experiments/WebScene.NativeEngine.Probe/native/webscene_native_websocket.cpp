@@ -6,7 +6,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <deque>
+#include <iostream>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -16,6 +19,24 @@ namespace {
 
 constexpr size_t maximum_queued_websocket_bytes = 64U * 1024U * 1024U;
 constexpr size_t maximum_queued_websocket_events = 4096U;
+
+uint64_t steady_nanoseconds() noexcept
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+uint64_t unix_milliseconds() noexcept
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+bool websocket_trace_enabled() noexcept
+{
+    static const bool enabled = std::getenv("WEBSCENE_WEBSOCKET_TRACE") != nullptr;
+    return enabled;
+}
 
 class network_system_lifetime final {
 public:
@@ -76,6 +97,8 @@ struct native_websocket_transport::state final {
 
     bool enqueue(event value, bool priority = false)
     {
+        value.queued_steady_nanoseconds = steady_nanoseconds();
+        value.queued_unix_milliseconds = unix_milliseconds();
         std::function<void()> notify;
         {
             std::lock_guard lock(mutex);
@@ -284,19 +307,34 @@ void native_websocket_transport::set_event_available_callback(
 
 bool native_websocket_transport::try_pop(event& value)
 {
-    std::lock_guard lock(state_->mutex);
-    if (state_->ready_sockets.empty()) return false;
-    const auto socket_id = state_->ready_sockets.front();
-    state_->ready_sockets.pop_front();
-    const auto found = state_->events_by_socket.find(socket_id);
-    if (found == state_->events_by_socket.end() || found->second.empty()) return false;
-    auto& socket_events = found->second;
-    value = std::move(socket_events.front());
-    state_->queued_bytes -= value.payload.size();
-    socket_events.pop_front();
-    --state_->queued_events;
-    if (socket_events.empty()) state_->events_by_socket.erase(found);
-    else state_->ready_sockets.push_back(socket_id);
+    size_t remaining = 0U;
+    {
+        std::lock_guard lock(state_->mutex);
+        if (state_->ready_sockets.empty()) return false;
+        const auto socket_id = state_->ready_sockets.front();
+        state_->ready_sockets.pop_front();
+        const auto found = state_->events_by_socket.find(socket_id);
+        if (found == state_->events_by_socket.end() || found->second.empty()) return false;
+        auto& socket_events = found->second;
+        value = std::move(socket_events.front());
+        state_->queued_bytes -= value.payload.size();
+        socket_events.pop_front();
+        --state_->queued_events;
+        remaining = state_->queued_events;
+        if (socket_events.empty()) state_->events_by_socket.erase(found);
+        else state_->ready_sockets.push_back(socket_id);
+    }
+    if (websocket_trace_enabled()) {
+        const auto dispatched_steady = steady_nanoseconds();
+        std::cerr << "WEBSCENE_WEBSOCKET_DISPATCH={\"socketId\":" << value.socket_id
+                  << ",\"type\":" << static_cast<unsigned>(value.type)
+                  << ",\"bytes\":" << value.payload.size()
+                  << ",\"queuedAt\":" << value.queued_unix_milliseconds
+                  << ",\"dispatchedAt\":" << unix_milliseconds()
+                  << ",\"queueDelayMs\":"
+                  << (dispatched_steady - value.queued_steady_nanoseconds) / 1'000'000.0
+                  << ",\"remaining\":" << remaining << "}\n";
+    }
     return true;
 }
 

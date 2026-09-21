@@ -32,6 +32,13 @@ lifecycle event returns. WebScene consequently removed the only task that
 could start the IndexedDB write and observed no terminal persistence work, so
 `pagehide` and reload handoff proceeded immediately.
 
+After retaining that callback, repeated installed-package runs exposed the
+second half of the shutdown race. VS Code also closes its storage database from
+a shutdown microtask before the retained timer starts. One run passed in
+16.204 seconds, while the next failed in 25.623 seconds with the key present
+before reload and absent after reopening; the failed log reported that
+`vscode-web-db` was closed.
+
 A focused native fixture reproduces the exact order. Before the fix it reports:
 
 ```text
@@ -49,6 +56,12 @@ WebScene retains the accepted callback privately until the handoff boundary.
 Its microtasks, zero-delay descendants, and IndexedDB operations inherit the
 same bounded terminal ancestry.
 
+If `IDBDatabase.close()` runs from that same lifecycle turn while accepted
+terminal persistence remains, the compatibility layer queues the close behind
+the retained flush. The database still closes before `pagehide` and host
+handoff. Calls made outside this narrow terminal condition keep synchronous
+close semantics.
+
 This terminal-only durability rule is intentionally narrower than ordinary
 timer cancellation. Timers created outside terminal lifecycle, delayed timers,
 intervals, animation frames, and work beyond the 1,024-task budget keep their
@@ -65,7 +78,8 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=terminal-indexeddb-navigation \
 ```
 
 Result on macOS arm64 Release: pass. The durable transaction-to-handoff gate
-completed in 0.0036 seconds. The fixture also covers restart durability,
+completed in 0.0037 seconds. The fixture also covers a shutdown-microtask
+database close before the retained flush, restart durability,
 pre-existing IndexedDB work, exact lifecycle order, ordinary cancellation,
 future timers, intervals, native completion descendants, and the bounded
 self-refilling-task ceiling.

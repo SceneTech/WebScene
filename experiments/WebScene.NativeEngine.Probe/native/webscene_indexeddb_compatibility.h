@@ -9,7 +9,9 @@ inline constexpr std::string_view indexeddb_compatibility_source = R"JS(
   'use strict';
   const nativeStorage = globalThis.__webSceneIndexedDBStorage;
   const scheduleTask = globalThis.__webSceneIndexedDBTask;
-  if (typeof nativeStorage !== 'function' || typeof scheduleTask !== 'function') return;
+  const shouldDeferClose = globalThis.__webSceneIndexedDBShouldDeferClose;
+  if (typeof nativeStorage !== 'function' || typeof scheduleTask !== 'function'
+      || typeof shouldDeferClose !== 'function') return;
   const openConnections = new Map();
   const loadedDatabases = new Map();
   const writeTails = new Map();
@@ -375,6 +377,7 @@ R"JS(  class IDBTransaction extends EventTarget {
       this._state = state;
       this._revision = revision;
       this._closed = false;
+      this._terminalClosePending = false;
       this._upgradeTransaction = null;
       this.onabort = null;
       this.onerror = null;
@@ -421,6 +424,15 @@ R"JS(  class IDBTransaction extends EventTarget {
     }
     close() {
       if (this._closed) return;
+      if (shouldDeferClose()) {
+        if (this._terminalClosePending) return;
+        this._terminalClosePending = true;
+        scheduleTask(() => {
+          this._terminalClosePending = false;
+          this.close();
+        });
+        return;
+      }
       this._closed = true;
       openConnections.get(this.name)?.delete(this);
     }

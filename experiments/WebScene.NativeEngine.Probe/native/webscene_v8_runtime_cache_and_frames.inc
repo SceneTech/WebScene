@@ -2194,7 +2194,8 @@
             auto* candidate = document.find_by_native_id(iterator->first);
             auto stale = candidate == nullptr || !is_connected(*candidate);
             if (!stale) {
-                const auto candidate_source = candidate->attributes.find("src");
+                const auto candidate_source = candidate->attributes.find(
+                    "data-webscene-remote-attempt");
                 stale = candidate_source == candidate->attributes.end()
                     || candidate_source->second != iterator->second.source
                     || current_iframe_navigation_generation(candidate->id)
@@ -2362,7 +2363,8 @@
     {
         const auto known = pending_frame_preparations.find(frame.id);
         if (known == pending_frame_preparations.end()) return {};
-        const auto source = frame.attributes.find("src");
+        const auto source = frame.attributes.find(
+            "data-webscene-remote-attempt");
         if (source == frame.attributes.end()
             || source->second != known->second.source
             || current_iframe_navigation_generation(frame.id)
@@ -2772,19 +2774,24 @@
                 && source != frame.attributes.end()) {
                 std::string html;
                 std::string resolved_name;
+                const auto attempted = frame.attributes.find(
+                    "data-webscene-remote-attempt");
+                const auto& requested = attempted == frame.attributes.end()
+                    ? source->second : attempted->second;
                 if (!load_text_resource(
-                        source->second,
+                        requested,
                         {},
                         WEBSCENE_RESOURCE_DOCUMENT,
                         html,
                         resolved_name)) {
                     frame.attributes["data-webscene-remote-result"] = "failed";
                     frame_last_error_value = "Unable to load iframe document: "
-                        + source->second;
+                        + requested;
                     ++frame_script_error_count;
                     return frame_hydration_result::failed;
                 }
-                frame.attributes["src"] = std::move(resolved_name);
+                frame.attributes["data-webscene-remote-attempt"] =
+                    std::move(resolved_name);
                 frame.attributes["object-html"] = std::move(html);
                 frame.attributes["data-webscene-remote-result"] = "loaded";
             }
@@ -2804,10 +2811,15 @@
         }
         const auto frame_source = frame.attributes.find("src");
         const auto parent_base = effective_document_base(css_cascade_root_for_node(frame));
-        const auto frame_navigation_address = frame_source != frame.attributes.end()
-            && !frame_source->second.empty()
-            ? resolve_resource_url(frame_source->second, parent_base)
-            : parent_base;
+        const auto remote_attempt = frame.attributes.find(
+            "data-webscene-remote-attempt");
+        const auto frame_navigation_address =
+            remote_attempt != frame.attributes.end()
+                ? remote_attempt->second
+                : frame_source != frame.attributes.end()
+                    && !frame_source->second.empty()
+                    ? resolve_resource_url(frame_source->second, parent_base)
+                    : parent_base;
         // Commit the replacement origin before creating its realm. The
         // outgoing realm remains authoritative throughout beforeunload and
         // unload, and the new realm cannot inherit access from reflected src.
@@ -2835,9 +2847,10 @@
                     ? std::string{}
                     : html.substr(open, close - open + 1U);
             };
-            frame_base_address = frame_source != frame.attributes.end()
-                && (frame_source->second.starts_with("http://")
-                    || frame_source->second.starts_with("https://"))
+            frame_base_address = remote_attempt != frame.attributes.end()
+                || (frame_source != frame.attributes.end()
+                    && (frame_source->second.starts_with("http://")
+                        || frame_source->second.starts_with("https://")))
                 ? frame_navigation_address
                 : parent_base;
             const auto base_opening = opening_tag("base");

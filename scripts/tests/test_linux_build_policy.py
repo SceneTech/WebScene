@@ -67,6 +67,11 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn("WEBSCENE_LINUX_TARGET_TRIPLE", self.toolchain)
         self.assertIn("CMAKE_SYSROOT", self.toolchain)
 
+    def test_linux_openssl_is_resolved_only_from_the_target_sysroot(self) -> None:
+        self.assertIn('openssl_library_dir="$sysroot/usr/lib/$target_triple"', self.build_script)
+        self.assertIn('-DOPENSSL_CRYPTO_LIBRARY="$openssl_library_dir/libcrypto.so"', self.build_script)
+        self.assertIn('-DOPENSSL_SSL_LIBRARY="$openssl_library_dir/libssl.so"', self.build_script)
+
 
 if __name__ == "__main__":
     unittest.main()

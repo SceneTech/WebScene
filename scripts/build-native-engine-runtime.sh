@@ -441,11 +441,26 @@ elif [[ "$expected_kernel" == Linux ]]; then
     echo "Linux native runtime builds require '$linux_cxx' and ld.lld." >&2
     exit 1
   fi
+  openssl_library_dir="$sysroot/usr/lib/$target_triple"
+  openssl_include_dir="$sysroot/usr/include"
+  for openssl_input in \
+      "$openssl_include_dir/openssl/ssl.h" \
+      "$openssl_library_dir/libcrypto.so" \
+      "$openssl_library_dir/libssl.so"; do
+    if [[ ! -e "$openssl_input" ]]; then
+      echo "Linux sysroot is missing required OpenSSL input '$openssl_input'." >&2
+      exit 1
+    fi
+  done
   cmake_args+=(
     -DCMAKE_TOOLCHAIN_FILE="$repo_root/scripts/linux-glibc-toolchain.cmake"
     -DCMAKE_SYSROOT="$sysroot"
     -DWEBSCENE_LINUX_TARGET_TRIPLE="$target_triple"
     -DWEBSCENE_RUST_TARGET_TRIPLE="$rust_target_triple"
+    -DOPENSSL_ROOT_DIR="$sysroot/usr"
+    -DOPENSSL_INCLUDE_DIR="$openssl_include_dir"
+    -DOPENSSL_CRYPTO_LIBRARY="$openssl_library_dir/libcrypto.so"
+    -DOPENSSL_SSL_LIBRARY="$openssl_library_dir/libssl.so"
     "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
     "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld

@@ -1480,6 +1480,7 @@
             frame_local_storage.erase(id);
             frame_load_listeners.erase(id);
             frame_dom_content_loaded_listeners.erase(id);
+            frame_history_event_listeners.erase(id);
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
@@ -2086,6 +2087,7 @@
             frame_local_storage.erase(id);
             frame_load_listeners.erase(id);
             frame_dom_content_loaded_listeners.erase(id);
+            frame_history_event_listeners.erase(id);
             window_selections.erase(id);
         }
         if (node_ids.contains(focused_document_owner_id)) {
@@ -3051,11 +3053,10 @@
                     || resolved.starts_with("https://")
                     || resolved.starts_with("file://")) {
                     node.attributes["data-webscene-remote-attempt"] = resolved;
-                    node.attributes["src"] = resolved;
                     if (prefetch_iframe_documents) {
                         start_resource_prefetch(
                             resolved,
-                            {},
+                            resolved,
                             WEBSCENE_RESOURCE_DOCUMENT);
                         start_frame_preparation(node, resolved);
                         node.attributes["data-webscene-remote-result"] = "pending";
@@ -3068,6 +3069,8 @@
                                 WEBSCENE_RESOURCE_DOCUMENT,
                                 html,
                                 resolved_name)) {
+                            node.attributes["data-webscene-remote-attempt"] =
+                                std::move(resolved_name);
                             node.attributes["object-html"] = std::move(html);
                             node.attributes["data-webscene-remote-result"] = "loaded";
                         } else {
@@ -3134,14 +3137,19 @@
         const auto source = node.attributes.contains("src") ? node.attributes["src"] : "about:blank";
         location->Set(local_context, js_string(isolate, "href"), js_string(isolate, source.c_str())).Check();
         object->Set(local_context, js_string(isolate, "location"), location).Check();
-        const auto actual_document = actual_frame_documents.find(node.id);
-        object->Set(
-            local_context,
-            js_string(isolate, "document"),
-            actual_document != actual_frame_documents.end()
-                    && !actual_document->second.IsEmpty()
-                ? v8::Local<v8::Value>(actual_document->second.Get(isolate))
-                : v8::Local<v8::Value>(frame_document(node))).Check();
+        // A masked cross-origin WindowProxy must not create or publish an
+        // owner-realm provisional document. The active child document belongs
+        // to its own realm and cannot be read from this owner.
+        if (iframe_owner_allows_same_origin_access(node)) {
+            const auto actual_document = actual_frame_documents.find(node.id);
+            object->Set(
+                local_context,
+                js_string(isolate, "document"),
+                actual_document != actual_frame_documents.end()
+                        && !actual_document->second.IsEmpty()
+                    ? v8::Local<v8::Value>(actual_document->second.Get(isolate))
+                    : v8::Local<v8::Value>(frame_document(node))).Check();
+        }
         object->Set(local_context, js_string(isolate, "window"), object).Check();
         object->Set(local_context, js_string(isolate, "self"), object).Check();
         object->Set(local_context, js_string(isolate, "parent"), local_context->Global()).Check();
@@ -3159,9 +3167,11 @@
             local_context,
             js_string(isolate, "blur"),
             v8::Function::New(local_context, cross_origin_window_noop).ToLocalChecked()).Check();
-        install_screen(local_context, object);
-        install_performance_clock(local_context, object);
-        install_performance_timeline_on_object(local_context, object);
+        if (iframe_owner_allows_same_origin_access(node)) {
+            install_screen(local_context, object);
+            install_performance_clock(local_context, object);
+            install_performance_timeline_on_object(local_context, object);
+        }
         initializing_frame_window_id = 0U;
         frame_windows[node.id].Reset(isolate, object);
         return object;
@@ -6756,12 +6766,65 @@
         static_cast<void>(dispatcher.As<v8::Function>()->Call(
             local_context, target, 1, arguments));
         perform_microtask_checkpoint();
-        if (!try_catch.HasCaught()) return true;
-        frame_last_error_value = "Nested history event dispatch failed: "
-            + describe_reported_exception(try_catch, local_context);
-        ++frame_script_error_count;
-        report_document_script_error(frame_last_error_value);
-        return false;
+        if (try_catch.HasCaught()) {
+            frame_last_error_value = "Nested history event dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            report_document_script_error(frame_last_error_value);
+            return false;
+        }
+        // The stable parent-owned WindowProxy is a separate V8 object from
+        // the inner global. Its listeners must receive the same event when
+        // the owner can still access this browsing context's origin.
+        auto* frame = active_nested_frame_for_context(local_context);
+        if (frame == nullptr || !iframe_owner_allows_same_origin_access(*frame))
+            return true;
+        const auto frame_id = frame->id;
+        const auto known = frame_history_event_listeners.find(frame_id);
+        if (known == frame_history_event_listeners.end()) return true;
+        const auto by_type = known->second.find(std::string(type));
+        if (by_type == known->second.end()) return true;
+        std::vector<v8::Local<v8::Function>> listeners;
+        for (auto& persistent : by_type->second) {
+            if (!persistent.IsEmpty()) listeners.push_back(persistent.Get(isolate));
+        }
+        auto owner_context = context.Get(isolate);
+        v8::Context::Scope owner_scope(owner_context);
+        auto proxy = frame_window(*frame);
+        auto owner_event = create_event_instance(owner_context);
+        owner_event->Set(owner_context, js_string(isolate, "type"),
+            js_string(isolate, std::string(type).c_str())).Check();
+        owner_event->Set(owner_context, js_string(isolate, "target"), proxy).Check();
+        owner_event->Set(owner_context, js_string(isolate, "currentTarget"), proxy).Check();
+        owner_event->Set(owner_context, js_string(isolate, "bubbles"),
+            v8::False(isolate)).Check();
+        owner_event->Set(owner_context, js_string(isolate, "cancelable"),
+            v8::False(isolate)).Check();
+        if (type == "popstate") {
+            owner_event->Set(owner_context, js_string(isolate, "state"), state).Check();
+        } else {
+            owner_event->Set(owner_context, js_string(isolate, "oldURL"),
+                js_string(isolate, std::string(old_url).c_str())).Check();
+            owner_event->Set(owner_context, js_string(isolate, "newURL"),
+                js_string(isolate, std::string(new_url).c_str())).Check();
+        }
+        v8::Local<v8::Value> owner_arguments[]{owner_event};
+        for (auto callback : listeners) {
+            if (document.find_by_native_id(frame_id) == nullptr
+                || !iframe_owner_allows_same_origin_access(*frame)) break;
+            v8::TryCatch owner_try_catch(isolate);
+            static_cast<void>(callback->Call(
+                owner_context, proxy, 1, owner_arguments));
+            if (owner_try_catch.HasCaught()) {
+                frame_last_error_value = "Iframe owner history callback failed: "
+                    + describe_reported_exception(owner_try_catch, owner_context);
+                ++frame_script_error_count;
+                report_document_script_error(frame_last_error_value);
+                return false;
+            }
+        }
+        perform_microtask_checkpoint();
+        return true;
     }
 
     static std::string strip_url_query_and_fragment(std::string value)

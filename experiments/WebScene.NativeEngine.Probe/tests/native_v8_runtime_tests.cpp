@@ -2,6 +2,7 @@
 #include "webscene_native_dom.h"
 #include "webscene_embed_fallback.h"
 #include "webscene_native_websocket.h"
+#include "webscene_native_resource_url.h"
 
 #include <ixwebsocket/IXGetFreePort.h>
 #include <ixwebsocket/IXNetSystem.h>
@@ -193,6 +194,10 @@ int main()
             test_restricted_cross_origin_nested_window_proxy();
             return 0;
         }
+        if (selected == "iframe-cross-origin-parent-message") {
+            test_isolated_child_parent_messaging();
+            return 0;
+        }
         if (selected == "query-iframe-worker-bootstrap") {
             test_query_iframe_worker_extension_host_bootstrap();
             return 0;
@@ -297,6 +302,10 @@ int main()
             test_process_wide_resource_load_single_flight();
             test_cross_engine_single_flight_keeps_set_cookie_responses_private();
             test_resource_cache_policy_matrix();
+            return 0;
+        }
+        if (selected == "service-worker-cross-origin") {
+            test_service_worker_cross_origin_iframe_visibility_gate();
             return 0;
         }
         if (selected == "service-worker-lifecycle") {

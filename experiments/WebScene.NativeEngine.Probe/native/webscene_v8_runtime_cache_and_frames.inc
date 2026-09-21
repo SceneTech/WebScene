@@ -1238,21 +1238,32 @@
         frame_pagehide_dispatched.erase(frame.id);
         frame_unload_dispatches.erase(frame.id);
         frame_unload_dispatched.erase(frame.id);
-        if (same_origin_access) {
-            // Every browsing context has a WindowProxy even when script has
-            // not read iframe.contentWindow yet. Materialize it before child
-            // script can post a message so MessageEvent.source can retain the
-            // stable proxy across the initial document replacement.
+        // Every browsing context needs an owner-realm WindowProxy before its
+        // first script posts a message, even when origins differ. Preserve
+        // MessageEvent.source identity through the initial navigation.
+        {
             auto owner_context = context.Get(isolate);
             v8::Context::Scope owner_scope(owner_context);
-            auto proxy = frame_window(frame);
-            proxy->Set(
-                owner_context,
-                js_string(isolate, "document"),
-                frame_document_value).Check();
+            if (same_origin_access) {
+                auto proxy = frame_window(frame);
+                proxy->Set(
+                    owner_context,
+                    js_string(isolate, "document"),
+                    frame_document_value).Check();
+            } else if (!frame_windows.contains(frame.id)) {
+                // The normal constructor populates a provisional same-origin
+                // document. A cross-origin commit must not read that document
+                // while initializing its stable, masked owner-realm proxy.
+                auto proxy = frame_window_template.Get(isolate)
+                    ->NewInstance(owner_context).ToLocalChecked();
+                proxy->SetAlignedPointerInInternalField(
+                    0, &frame, v8::kEmbedderDataTypeTagDefault);
+                frame_windows[frame.id].Reset(isolate, proxy);
+            }
         }
         global->Set(local_context, js_string(isolate, "name"), js_string(isolate, frame.attributes["name"].c_str())).Check();
         v8::Local<v8::Value> parent_window = v8::Null(isolate);
+        v8::Local<v8::Value> top_window = v8::Null(isolate);
         if (same_origin_access) {
             parent_window = context.Get(isolate)->Global();
             for (auto* ancestor = frame.parent;
@@ -1266,14 +1277,42 @@
                 }
                 break;
             }
+            top_window = context.Get(isolate)->Global();
+        } else {
+            // A real parent global would bypass the child security token.
+            // Give the child only a restricted proxy whose postMessage uses
+            // the existing target-origin and structured-clone queue.
+            auto restricted = v8::ObjectTemplate::New(isolate);
+            restricted->SetInternalFieldCount(1);
+            restricted->SetHandler(v8::NamedPropertyHandlerConfiguration(
+                get_restricted_parent_window_property,
+                set_restricted_parent_window_property));
+            dom_node* owning_parent = nullptr;
+            for (auto* ancestor = frame.parent; ancestor != nullptr;
+                ancestor = ancestor->parent) {
+                if (ancestor->tag == "iframe") { owning_parent = ancestor; break; }
+            }
+            auto proxy = restricted->NewInstance(local_context).ToLocalChecked();
+            proxy->SetAlignedPointerInInternalField(
+                0, owning_parent, v8::kEmbedderDataTypeTagDefault);
+            parent_window = proxy;
+            top_window = proxy;
+            if (owning_parent != nullptr) {
+                auto top_proxy = restricted->NewInstance(local_context).ToLocalChecked();
+                top_proxy->SetAlignedPointerInInternalField(
+                    0, nullptr, v8::kEmbedderDataTypeTagDefault);
+                proxy->SetPrivate(
+                    local_context,
+                    v8::Private::ForApi(isolate, js_string(isolate, "webscene.parentTop")),
+                    top_proxy).Check();
+                top_window = top_proxy;
+            }
         }
         global->Set(local_context, js_string(isolate, "parent"), parent_window).Check();
         global->Set(
             local_context,
             js_string(isolate, "top"),
-            same_origin_access
-                ? v8::Local<v8::Value>(context.Get(isolate)->Global())
-                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
+            top_window).Check();
         global->Set(
             local_context,
             js_string(isolate, "frameElement"),
@@ -1516,9 +1555,10 @@
         }
 
         install_navigator(isolate, local_context, global);
-        if (same_origin_access) {
-            install_service_worker_control(local_context, global);
-        }
+        // A sandbox-permitted HTTPS child has its own secure origin even when
+        // its parent cannot access its document. The installer checks the
+        // iframe sandbox chain; parent DOM access is a separate capability.
+        install_service_worker_control(local_context, global, &frame);
 
         install_console(local_context, global);
 
@@ -2154,7 +2194,8 @@
             auto* candidate = document.find_by_native_id(iterator->first);
             auto stale = candidate == nullptr || !is_connected(*candidate);
             if (!stale) {
-                const auto candidate_source = candidate->attributes.find("src");
+                const auto candidate_source = candidate->attributes.find(
+                    "data-webscene-remote-attempt");
                 stale = candidate_source == candidate->attributes.end()
                     || candidate_source->second != iterator->second.source
                     || current_iframe_navigation_generation(candidate->id)
@@ -2322,7 +2363,8 @@
     {
         const auto known = pending_frame_preparations.find(frame.id);
         if (known == pending_frame_preparations.end()) return {};
-        const auto source = frame.attributes.find("src");
+        const auto source = frame.attributes.find(
+            "data-webscene-remote-attempt");
         if (source == frame.attributes.end()
             || source->second != known->second.source
             || current_iframe_navigation_generation(frame.id)
@@ -2732,19 +2774,24 @@
                 && source != frame.attributes.end()) {
                 std::string html;
                 std::string resolved_name;
+                const auto attempted = frame.attributes.find(
+                    "data-webscene-remote-attempt");
+                const auto& requested = attempted == frame.attributes.end()
+                    ? source->second : attempted->second;
                 if (!load_text_resource(
-                        source->second,
+                        requested,
                         {},
                         WEBSCENE_RESOURCE_DOCUMENT,
                         html,
                         resolved_name)) {
                     frame.attributes["data-webscene-remote-result"] = "failed";
                     frame_last_error_value = "Unable to load iframe document: "
-                        + source->second;
+                        + requested;
                     ++frame_script_error_count;
                     return frame_hydration_result::failed;
                 }
-                frame.attributes["src"] = std::move(resolved_name);
+                frame.attributes["data-webscene-remote-attempt"] =
+                    std::move(resolved_name);
                 frame.attributes["object-html"] = std::move(html);
                 frame.attributes["data-webscene-remote-result"] = "loaded";
             }
@@ -2764,10 +2811,15 @@
         }
         const auto frame_source = frame.attributes.find("src");
         const auto parent_base = effective_document_base(css_cascade_root_for_node(frame));
-        const auto frame_navigation_address = frame_source != frame.attributes.end()
-            && !frame_source->second.empty()
-            ? resolve_resource_url(frame_source->second, parent_base)
-            : parent_base;
+        const auto remote_attempt = frame.attributes.find(
+            "data-webscene-remote-attempt");
+        const auto frame_navigation_address =
+            remote_attempt != frame.attributes.end()
+                ? remote_attempt->second
+                : frame_source != frame.attributes.end()
+                    && !frame_source->second.empty()
+                    ? resolve_resource_url(frame_source->second, parent_base)
+                    : parent_base;
         // Commit the replacement origin before creating its realm. The
         // outgoing realm remains authoritative throughout beforeunload and
         // unload, and the new realm cannot inherit access from reflected src.
@@ -2795,9 +2847,10 @@
                     ? std::string{}
                     : html.substr(open, close - open + 1U);
             };
-            frame_base_address = frame_source != frame.attributes.end()
-                && (frame_source->second.starts_with("http://")
-                    || frame_source->second.starts_with("https://"))
+            frame_base_address = remote_attempt != frame.attributes.end()
+                || (frame_source != frame.attributes.end()
+                    && (frame_source->second.starts_with("http://")
+                        || frame_source->second.starts_with("https://")))
                 ? frame_navigation_address
                 : parent_base;
             const auto base_opening = opening_tag("base");

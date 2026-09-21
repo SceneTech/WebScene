@@ -263,6 +263,9 @@
     std::unordered_map<uint32_t, v8::Global<v8::Function>> frame_load_listeners;
     std::unordered_map<uint32_t, std::vector<v8::Global<v8::Function>>>
         frame_dom_content_loaded_listeners;
+    std::unordered_map<uint32_t,
+        std::unordered_map<std::string, std::vector<v8::Global<v8::Function>>>>
+        frame_history_event_listeners;
     std::unordered_map<std::string, std::vector<event_listener_registration>>
         frame_event_listeners;
     struct drag_session_state final {

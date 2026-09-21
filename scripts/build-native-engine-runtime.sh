@@ -531,6 +531,7 @@ elif [[ "$expected_kernel" == Linux ]]; then
       "$target_include_dir/zlib.h" \
       "$target_library_dir/libz.so" \
       "$v8_libcxx_config_include/__config_site" \
+      "$v8_libcxx_config_include/__assertion_handler" \
       "$v8_libcxx_include/source_location" \
       "$v8_libcxxabi_include/cxxabi.h" \
       "$v8_libcxx_archive" \

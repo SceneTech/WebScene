@@ -94,6 +94,11 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn('v8_root/third_party/libc++abi/src/include', self.build_script)
         self.assertIn('v8_root/buildtools/third_party/libc++', self.build_script)
         self.assertIn('__config_site', self.build_script)
+        self.assertIn('__assertion_handler', self.build_script)
+        self.assertIn(
+            'artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++',
+            self.workflow,
+        )
         self.assertIn("-nostdinc++ -nostdlib++", self.build_script)
         self.assertIn("CMAKE_CXX_STANDARD_LIBRARIES", self.build_script)
         self.assertIn("libc++abi.a", self.build_script)

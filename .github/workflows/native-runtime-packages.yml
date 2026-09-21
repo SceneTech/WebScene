@@ -237,7 +237,7 @@ jobs:
           v8_configuration: ReleasePartitionAlloc
           v8_cache_generation: v2-v8-15.3.10-glibc227-cross-x64
           v8_cache_extra_paths: |
-            artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++/__config_site
+            artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++
             artifacts/native-engine-v8/linux-*/v8/out/*/*/obj/buildtools/third_party/libc++abi/libc++abi.a
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++/src/include
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++abi/src/include
@@ -255,7 +255,7 @@ jobs:
           v8_configuration: ReleasePartitionAlloc
           v8_cache_generation: v3-v8-15.3.10-glibc227-cross-arm64
           v8_cache_extra_paths: |
-            artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++/__config_site
+            artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++
             artifacts/native-engine-v8/linux-*/v8/out/*/*/obj/buildtools/third_party/libc++abi/libc++abi.a
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++/src/include
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++abi/src/include
@@ -330,6 +330,7 @@ jobs:
             || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
               && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
+              && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
               && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]] \
               && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/clang++" ]] \
@@ -465,6 +466,7 @@ jobs:
             || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
               && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
+              && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
               && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]] \
               && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/clang++" ]] \

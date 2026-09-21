@@ -32,6 +32,8 @@ public:
         uint16_t close_code{0};
         bool binary{false};
         bool was_clean{false};
+        uint64_t queued_steady_nanoseconds{0};
+        uint64_t queued_unix_milliseconds{0};
     };
 
     native_websocket_transport();

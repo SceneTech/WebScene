@@ -640,7 +640,7 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
     execute_and_wait(engine, R"JS(
       globalThis.terminalIndexedDb = {
         ready: false, committed: false, continuation: false, error: null,
-        order: []
+        ordinaryCancelFired: false, order: []
       };
       (async () => {
         const database = await new Promise((resolve, reject) => {
@@ -656,7 +656,10 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
           // An unrelated interval and future timer must not hold navigation.
           setInterval(() => {}, 60000);
           setTimeout(() => {}, 60000);
-          // Browser storage commonly enters IndexedDB from a lifecycle task.
+          // VS Code schedules its terminal storage flush, then synchronously
+          // disposes the Delayer during the same beforeunload dispatch. The
+          // bounded terminal handoff must finish that accepted persistence
+          // callback even though disposal clears its public timer handle.
           pendingFlushTimer = setTimeout(() => {
             terminalIndexedDb.order.push('flush-timer');
             const transaction = database.transaction('state', 'readwrite');
@@ -675,6 +678,7 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
               }, 0));
             };
           }, 0);
+          clearTimeout(pendingFlushTimer);
         });
         addEventListener('pagehide', () => {
           terminalIndexedDb.order.push('pagehide');
@@ -693,6 +697,10 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
 
     const auto started = std::chrono::steady_clock::now();
     require(evaluate(engine, R"JS(
+          const ordinaryTimer = setTimeout(() => {
+            terminalIndexedDb.ordinaryCancelFired = true;
+          }, 0);
+          clearTimeout(ordinaryTimer);
           globalThis.terminalIndexedDbPendingTransaction =
             terminalIndexedDbDatabase.transaction('state', 'readwrite');
           terminalIndexedDbPendingTransaction.objectStore('state')
@@ -722,6 +730,7 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
             "terminalIndexedDb.ready===true"
             "&&terminalIndexedDb.committed===true"
             "&&terminalIndexedDb.continuation===true"
+            "&&!terminalIndexedDb.ordinaryCancelFired"
             "&&terminalIndexedDb.order[0]==='beforeunload'"
             "&&terminalIndexedDb.order.indexOf('preexisting-commit')>0"
             "&&terminalIndexedDb.order.indexOf('flush-timer')>0"

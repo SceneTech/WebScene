@@ -4,7 +4,7 @@
     <PackageTags Condition="!$([System.String]::Copy(';$(PackageTags);').Contains(';webscene;'))">$(PackageTags);webscene</PackageTags>
     <PackageTags Condition="!$([System.String]::Copy(';$(PackageTags);').Contains(';web-ui;'))">$(PackageTags);web-ui</PackageTags>
     <PackageTags Condition="!$([System.String]::Copy(';$(PackageTags);').Contains(';native-ui;'))">$(PackageTags);native-ui</PackageTags>
-    <PackageReleaseNotes Condition="'$(PackageReleaseNotes)' == ''">Service release of the 1.0.34 codebase. Adds native runtime packages for Apple silicon and Intel Macs with a minimum supported macOS version of 14. No product code changes.</PackageReleaseNotes>
+    <PackageReleaseNotes Condition="'$(PackageReleaseNotes)' == ''">Service release of the 1.0.34 codebase. Adds macOS 14 native runtimes for Apple silicon and Intel, plus reproducible glibc 2.27 Linux runtimes for x64 and ARM64.</PackageReleaseNotes>
   </PropertyGroup>
   <PropertyGroup Condition="'$(IsPackable)' == 'true' and '$(PackageReadmeFile)' == ''">
     <PackageReadmeFile>README.md</PackageReadmeFile>

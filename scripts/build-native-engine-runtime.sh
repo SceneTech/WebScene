@@ -19,9 +19,17 @@ upstream_v8=false
 disable_wasm=false
 partition_alloc=false
 cmake_build_type=Release
+target_triple=
+rust_target_triple=
+sysroot=
+builder_identity=
+glibc_baseline=
+depot_tools_commit=ca054941f756b50e1a3d83727270d879bec1f331
+defer_target_execution=false
+finalize_only=false
 
 usage() {
-  echo "Usage: $0 --rid osx-arm64|osx-x64|linux-arm64|linux-x64 [--output DIR] [--package-version VERSION] [--v8-root DIR] [--v8-output-root DIR] [--v8-workspace DIR] [--v8-revision REVISION] [--html-parser legacy|html5ever] [--css-parser legacy|cssparser] [--selector-parser legacy|servo] [--dom-bindings legacy|generated] [--v8-snapshot none|bootstrap] [--cmake-build-type Release|RelWithDebInfo] [--upstream-v8] [--thin-lto] [--disable-wasm] [--partition-alloc]" >&2
+  echo "Usage: $0 --rid osx-arm64|osx-x64|linux-arm64|linux-x64 [--output DIR] [--package-version VERSION] [--v8-root DIR] [--v8-output-root DIR] [--v8-workspace DIR] [--v8-revision REVISION] [--target-triple TRIPLE] [--rust-target-triple TRIPLE] [--sysroot DIR] [--builder-identity ID] [--glibc-baseline VERSION] [--depot-tools-commit SHA] [--defer-target-execution|--finalize-only] [--html-parser legacy|html5ever] [--css-parser legacy|cssparser] [--selector-parser legacy|servo] [--dom-bindings legacy|generated] [--v8-snapshot none|bootstrap] [--cmake-build-type Release|RelWithDebInfo] [--upstream-v8] [--thin-lto] [--disable-wasm] [--partition-alloc]" >&2
 }
 
 while (($# > 0)); do
@@ -33,6 +41,14 @@ while (($# > 0)); do
     --v8-output-root) v8_output_root="${2:-}"; shift 2 ;;
     --v8-workspace) v8_workspace="${2:-}"; shift 2 ;;
     --v8-revision) v8_revision="${2:-}"; shift 2 ;;
+    --target-triple) target_triple="${2:-}"; shift 2 ;;
+    --rust-target-triple) rust_target_triple="${2:-}"; shift 2 ;;
+    --sysroot) sysroot="${2:-}"; shift 2 ;;
+    --builder-identity) builder_identity="${2:-}"; shift 2 ;;
+    --glibc-baseline) glibc_baseline="${2:-}"; shift 2 ;;
+    --depot-tools-commit) depot_tools_commit="${2:-}"; shift 2 ;;
+    --defer-target-execution) defer_target_execution=true; shift ;;
+    --finalize-only) finalize_only=true; shift ;;
     --html-parser) html_parser="${2:-}"; shift 2 ;;
     --css-parser) css_parser="${2:-}"; shift 2 ;;
     --selector-parser) selector_parser="${2:-}"; shift 2 ;;
@@ -123,9 +139,33 @@ if [[ -z "$package_version" ]]; then
   exit 1
 fi
 
-if [[ "$(uname -s)" != "$expected_kernel" || "$(uname -m)" != "$expected_machine" ]]; then
+if [[ "$expected_kernel" == Darwin \
+    && ( "$(uname -s)" != "$expected_kernel" || "$(uname -m)" != "$expected_machine" ) ]]; then
   echo "RID '$rid' must be built natively on $expected_kernel/$expected_machine; current host is $(uname -s)/$(uname -m)." >&2
   exit 1
+fi
+if [[ "$expected_kernel" == Linux ]]; then
+  case "$rid:$target_triple" in
+    linux-x64:x86_64-linux-gnu|linux-arm64:aarch64-linux-gnu) ;;
+    *) echo "RID '$rid' requires its locked Linux target triple, not '$target_triple'." >&2; exit 1 ;;
+  esac
+  case "$rid:$rust_target_triple" in
+    linux-x64:x86_64-unknown-linux-gnu|linux-arm64:aarch64-unknown-linux-gnu) ;;
+    *) echo "RID '$rid' requires its locked Rust target triple, not '$rust_target_triple'." >&2; exit 1 ;;
+  esac
+  if [[ "$finalize_only" == false && ! -d "$sysroot" ]]; then
+    echo "Linux cross-build sysroot is missing: $sysroot" >&2
+    exit 1
+  fi
+  if [[ -z "$builder_identity" || -z "$glibc_baseline" ]]; then
+    echo "Linux release builds require --builder-identity and --glibc-baseline." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$finalize_only" == true && -z "$v8_root" ]]; then
+  v8_workspace="${v8_workspace:-$repo_root/artifacts/native-engine-v8/$rid}"
+  v8_root="$v8_workspace/v8"
 fi
 
 if [[ -z "$v8_root" ]]; then
@@ -134,7 +174,10 @@ if [[ -z "$v8_root" ]]; then
   v8_root="$v8_workspace/v8"
   mkdir -p "$v8_workspace"
 
-  if [[ ! -d "$depot_tools/.git" ]]; then
+  if [[ ! -d "$depot_tools/.git" && -d /opt/depot_tools/.git ]]; then
+    git clone --no-checkout /opt/depot_tools "$depot_tools"
+    git -C "$depot_tools" checkout --detach "$depot_tools_commit"
+  elif [[ ! -d "$depot_tools/.git" ]]; then
     clone_attempt=1
     while ! git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$depot_tools"; do
       if ((clone_attempt >= 3)); then
@@ -145,6 +188,10 @@ if [[ -z "$v8_root" ]]; then
       rm -rf "$depot_tools"
       clone_attempt=$((clone_attempt + 1))
     done
+  fi
+  if [[ "$(git -C "$depot_tools" rev-parse HEAD)" != "$depot_tools_commit" ]]; then
+    git -C "$depot_tools" fetch origin "$depot_tools_commit"
+    git -C "$depot_tools" checkout --detach "$depot_tools_commit"
   fi
   export PATH="$depot_tools:$PATH"
   if [[ ! -f "$depot_tools/python3_bin_reldir.txt" ]]; then
@@ -201,7 +248,7 @@ if [[ -z "$v8_root" ]]; then
     # against that image's libstdc++ and glibc 2.35 instead.
     # Keep V8's bundled LLD for its host tools; the reviewed build patch above
     # disables only CREL emission so Jammy can consume the archive.
-    gn_args+=" use_lld=true use_sysroot=false v8_monolithic_for_shared_library=true"
+    gn_args+=" use_lld=true use_sysroot=true target_sysroot=\"$sysroot\" v8_monolithic_for_shared_library=true"
   fi
   if [[ "$partition_alloc" == true \
       && ( "$expected_kernel" == Linux || "$expected_kernel" == Darwin ) ]]; then
@@ -280,6 +327,12 @@ if [[ "$expected_kernel" == Linux ]] \
   exit 1
 fi
 if [[ "$expected_kernel" == Linux ]] \
+    && { ! grep -Eq '^use_sysroot *= *true$' "$v8_args" \
+      || ! grep -Fq "target_sysroot = \"$sysroot\"" "$v8_args"; }; then
+  echo "The V8 SDK at '$v8_root' was not built against the locked target sysroot." >&2
+  exit 1
+fi
+if [[ "$expected_kernel" == Linux ]] \
     && ! grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$v8_args"; then
   echo "The V8 SDK at '$v8_root' is not safe to link into a shared library." >&2
   exit 1
@@ -313,6 +366,7 @@ cmake_args=(
   -DWEBSCENE_NATIVE_ENGINE_V8_SNAPSHOT="$v8_snapshot"
   -DWEBSCENE_V8_ROOT="$v8_root"
   -DWEBSCENE_V8_OUTPUT_ROOT="$v8_output_root"
+  -DWEBSCENE_NATIVE_ENGINE_DEFER_TARGET_EXECUTION="$defer_target_execution"
 )
 macos_deployment_target=14.0
 if [[ "$expected_kernel" == Darwin ]]; then
@@ -360,20 +414,46 @@ elif [[ "$expected_kernel" == Linux ]]; then
     exit 1
   fi
   cmake_args+=(
-    -DCMAKE_CXX_COMPILER="$linux_cxx"
+    -DCMAKE_TOOLCHAIN_FILE="$repo_root/scripts/linux-glibc-toolchain.cmake"
+    -DCMAKE_SYSROOT="$sysroot"
+    -DWEBSCENE_LINUX_TARGET_TRIPLE="$target_triple"
+    -DWEBSCENE_RUST_TARGET_TRIPLE="$rust_target_triple"
+    "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
+    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
-    -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
+    "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,--build-id=sha1"
   )
 fi
-cmake "${cmake_args[@]}"
-cmake --build "$build_dir" --config "$cmake_build_type" --parallel
-cmake -E copy_if_different "$icu_data" "$build_dir/icudtl.dat"
-ctest --test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure
+if [[ "$finalize_only" == false ]]; then
+  cmake "${cmake_args[@]}"
+  cmake --build "$build_dir" --config "$cmake_build_type" --parallel
+  cmake -E copy_if_different "$icu_data" "$build_dir/icudtl.dat"
+fi
+
+if [[ "$finalize_only" == true ]]; then
+  snapshot_builder="$build_dir/webscene_v8_snapshot_builder"
+  if [[ ! -x "$snapshot_builder" ]]; then
+    echo "Cross-build output is missing its target snapshot builder: $snapshot_builder" >&2
+    exit 1
+  fi
+  "$snapshot_builder" \
+    "$icu_data" \
+    "$build_dir/webscene_v8_bootstrap.js" \
+    "$build_dir/webscene_bootstrap_snapshot.bin" \
+    "$build_dir/webscene_bootstrap_snapshot.meta"
+fi
+if [[ "$defer_target_execution" == false || "$finalize_only" == true ]]; then
+  ctest --test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure
+fi
 
 native_path="$build_dir/$native_name"
 if [[ ! -f "$native_path" ]]; then
   echo "Native engine build did not produce '$native_path'." >&2
   exit 1
+fi
+if [[ "$defer_target_execution" == true && "$finalize_only" == false ]]; then
+  echo "Cross-build staged for native finalization: $build_dir"
+  exit 0
 fi
 if [[ "$expected_kernel" == Darwin ]]; then
   actual_macos_deployment_target="$(
@@ -438,6 +518,9 @@ pack_args=(
   "-p:WebSceneNativeEngineDomBindings=$dom_bindings"
   "-p:WebSceneNativeEngineV8Snapshot=$v8_snapshot"
   "-p:WebSceneNativeEngineConfiguration=$cmake_build_type"
+  "-p:WebSceneNativeEngineBuilderIdentity=$builder_identity"
+  "-p:WebSceneNativeEngineTargetTriple=$target_triple"
+  "-p:WebSceneNativeEngineGlibcBaseline=$glibc_baseline"
 )
 if [[ "$v8_snapshot" == bootstrap ]]; then
   pack_args+=(

@@ -41,6 +41,7 @@ Install the package matching the application's deployment RID:
 <PackageReference Include="WebScene.NativeEngine.Runtime.osx-arm64" Version="VERSION" />
 <!-- <PackageReference Include="WebScene.NativeEngine.Runtime.osx-x64" Version="VERSION" /> -->
 <!-- <PackageReference Include="WebScene.NativeEngine.Runtime.linux-x64" Version="VERSION" /> -->
+<!-- <PackageReference Include="WebScene.NativeEngine.Runtime.linux-arm64" Version="VERSION" /> -->
 <!-- <PackageReference Include="WebScene.NativeEngine.Runtime.win-x64" Version="VERSION" /> -->
 ```
 
@@ -49,7 +50,25 @@ Install the package matching the application's deployment RID:
 | macOS on Apple silicon | `osx-arm64` | [`WebScene.NativeEngine.Runtime.osx-arm64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.osx-arm64/) |
 | macOS on Intel | `osx-x64` | [`WebScene.NativeEngine.Runtime.osx-x64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.osx-x64/) |
 | Linux x64 | `linux-x64` | [`WebScene.NativeEngine.Runtime.linux-x64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.linux-x64/) |
+| Linux ARM64 | `linux-arm64` | [`WebScene.NativeEngine.Runtime.linux-arm64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.linux-arm64/) |
 | Windows x64 | `win-x64` | [`WebScene.NativeEngine.Runtime.win-x64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.win-x64/) |
 
 Additional RIDs listed by the package definition are reserved until their release
 lanes are enabled.
+
+## Reproducible Linux builds
+
+Linux packages use the immutable inputs recorded in `linux-build-lock.json` and
+the .NET-style x64 cross-builder in `Dockerfile.linux-glibc`. Build either glibc
+RID locally with the same entry point used by CI:
+
+```bash
+scripts/build-linux-native-runtime.sh --rid linux-x64 --package-version VERSION
+scripts/build-linux-native-runtime.sh --rid linux-arm64 --package-version VERSION
+```
+
+The ARM64 command creates a cross-build stage. CI transfers that stage to a
+native ARM64 runner and calls the same command with `--stage finalize` to create
+the V8 bootstrap snapshot, execute tests, and pack the NuGet package. Published
+Linux binaries must pass `verify-linux-native-abi.py`, including the glibc 2.27,
+GLIBCXX, CXXABI, dependency, architecture, RPATH, and exported-ABI gates.

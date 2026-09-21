@@ -21,6 +21,10 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
     bool defer_transition_configuration = false)
 {
     const auto& name=declaration.name;
+    if (name == "anchor-name" || name == "position-anchor") {
+        retain_anchor_identifier(node.style, name, value);
+        return;
+    }
     if (name == "interpolate-size") {
         const auto lower = ascii_lower(trim_value(value));
         if (lower == "allow-keywords" || lower == "numeric-only") {
@@ -154,10 +158,16 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
             && declaration.specified.keyword.empty()) {
             switch (declaration.property) {
             case css_property_id::width:
-                if (!is_inline(inline_width)) node.style.width = declaration.specified.length;
+                if (!is_inline(inline_width)) {
+                    retain_anchor_function(node.style, "width", value);
+                    node.style.width = declaration.specified.length;
+                }
                 return;
             case css_property_id::height:
-                if (!is_inline(inline_height)) node.style.height = declaration.specified.length;
+                if (!is_inline(inline_height)) {
+                    retain_anchor_function(node.style, "height", value);
+                    node.style.height = declaration.specified.length;
+                }
                 return;
             case css_property_id::padding_left:
                 if (!is_inline(inline_padding)) {

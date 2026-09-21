@@ -1,0 +1,104 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Named CSS anchor overlay geometry</title>
+<style>
+  html, body { margin: 0; padding: 0; }
+  #workbench { position: relative; width: 800px; height: 600px; }
+  #clip { position: absolute; left: 60px; top: 40px; width: 640px; height: 490px; anchor-name: --clip; }
+  #editor { position: absolute; left: 130px; top: 95px; width: 340px; height: 220px; anchor-name: --editor; }
+  #fill-root { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+  #clip-root { position: absolute; position-anchor: --clip; top: anchor(top); left: anchor(left); width: anchor-size(width); height: anchor-size(height); }
+  #overlay { position: fixed; position-anchor: --editor; top: anchor(top); left: anchor(left); width: anchor-size(width); height: anchor-size(height); }
+</style>
+<div id="workbench">
+  <div id="clip"></div>
+  <div id="editor"></div>
+  <div id="fill-root"></div>
+  <div id="clip-root"><div id="overlay"></div></div>
+</div>
+<output id="result">PENDING</output>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const box = id => {
+    const rect = document.getElementById(id).getBoundingClientRect();
+    return [rect.x, rect.y, rect.width, rect.height].map(Math.round);
+  };
+  const record = (name, actual, expected) => {
+    const pass = actual.join(",") === expected.join(",");
+    state.results.push({
+      name, status: pass ? "PASS" : "FAIL",
+      message: pass ? null : `${name}: expected ${expected}, got ${actual}`,
+      stack: null
+    });
+    state.diagnostics.push(JSON.stringify({ name, actual, expected }));
+  };
+  state.diagnostics.push(JSON.stringify({
+    clip: box("clip"), editor: box("editor"),
+    clipRootStyle: document.getElementById("clip-root").style.cssText,
+    overlayStyle: document.getElementById("overlay").style.cssText,
+    clipRootComputed: ["position", "top", "left", "width", "height"].map(
+      property => getComputedStyle(document.getElementById("clip-root")).getPropertyValue(property)),
+    workbenchDisplay: getComputedStyle(document.getElementById("workbench")).display,
+    clipRootDisplay: getComputedStyle(document.getElementById("clip-root")).display,
+    clipAnchor: getComputedStyle(document.getElementById("clip")).getPropertyValue("anchor-name"),
+    editorAnchor: getComputedStyle(document.getElementById("editor")).getPropertyValue("anchor-name")
+  }));
+  record("absolute inset root fills the positioned workbench", box("fill-root"), [0, 0, 800, 600]);
+  record("clip root uses its named anchor", box("clip-root"), [60, 40, 640, 490]);
+  record("fixed overlay uses a sibling named anchor", box("overlay"), [130, 95, 340, 220]);
+  record("computed anchor identifiers", [
+    getComputedStyle(document.getElementById("clip")).getPropertyValue("anchor-name"),
+    getComputedStyle(document.getElementById("overlay")).getPropertyValue("position-anchor")
+  ], ["--clip", "--editor"]);
+  const editor = document.getElementById("editor");
+  editor.style.left = "160px";
+  editor.style.top = "120px";
+  editor.style.width = "370px";
+  editor.style.height = "250px";
+  record("overlay follows editor move and resize", box("overlay"), [160, 120, 370, 250]);
+  const clip = document.getElementById("clip");
+  clip.style.width = "610px";
+  clip.style.height = "450px";
+  record("clip root follows container resize", box("clip-root"), [60, 40, 610, 450]);
+  const replacement = document.createElement("div");
+  replacement.style.cssText = "position:absolute;left:210px;top:180px;width:90px;height:70px";
+  replacement.style.setProperty("anchor-name", "--replacement");
+  document.getElementById("workbench").appendChild(replacement);
+  document.getElementById("overlay").style.setProperty("position-anchor", "--replacement");
+  state.diagnostics.push(JSON.stringify({
+    replacement: (() => {
+      const rect = replacement.getBoundingClientRect();
+      return [rect.x, rect.y, rect.width, rect.height];
+    })(),
+    replacementAnchor: getComputedStyle(replacement).getPropertyValue("anchor-name"),
+    overlayAnchor: getComputedStyle(document.getElementById("overlay"))
+      .getPropertyValue("position-anchor")
+  }));
+  record("CSSOM anchor replacement relayouts the fixed overlay", box("overlay"), [210, 180, 90, 70]);
+  replacement.style.left = "235px";
+  record("CSSOM anchor move invalidates used geometry", box("overlay"), [235, 180, 90, 70]);
+  const churnStarted = performance.now();
+  for (let index = 0; index < 64; index++) {
+    replacement.style.left = `${235 + index}px`;
+    const current = box("overlay");
+    if (current[0] !== 235 + index) {
+      record("anchor follows panel churn", current, [235 + index, 180, 90, 70]);
+      break;
+    }
+  }
+  const churnMilliseconds = performance.now() - churnStarted;
+  state.diagnostics.push(JSON.stringify({
+    name: "64 move and relayout cycles", milliseconds: churnMilliseconds
+  }));
+  record("panel churn stays within the 500 ms local budget",
+    [churnMilliseconds <= 500], [true]);
+  state.harness = {
+    status: state.results.every(result => result.status === "PASS") ? 0 : 1,
+    message: state.results.find(result => result.status === "FAIL")?.message || null,
+    stack: null
+  };
+  state.complete = true;
+  document.getElementById("result").textContent = JSON.stringify(state.diagnostics);
+</script>

@@ -336,6 +336,19 @@ inline void apply_all_unset(
         reset.mutable_textual().list_style_type =
             previous.textual().list_style_type;
     }
+    // The anchor tokens are sparse and stored with other cold authored CSS
+    // values. Preserve only inline declarations across a stylesheet recascade.
+    for (const auto property : {"anchor-name", "position-anchor",
+             "left", "top", "right", "bottom", "width", "height"}) {
+        if (!has_inline({property})) continue;
+        const auto known = previous.textual().effect_values.find(property);
+        if (known == previous.textual().effect_values.end()) continue;
+        reset.mutable_textual().effect_values[property] = known->second;
+        if (std::string_view{property} == "anchor-name")
+            reset.anchor_name_present = true;
+        if (std::string_view{property} == "position-anchor")
+            reset.position_anchor_present = true;
+    }
 
     node.style = std::move(reset);
 }

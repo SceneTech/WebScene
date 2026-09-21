@@ -64,6 +64,8 @@ jobs:
           scripts/tests/test_verify_cross_rid_compatibility.py
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
     - id: version
@@ -131,6 +133,8 @@ jobs:
         fetch-depth: 0
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
     - name: Pack and verify .NET packages
@@ -256,6 +260,8 @@ jobs:
         fetch-depth: 0
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
     - id: v8-cache-key
@@ -506,6 +512,8 @@ jobs:
     - uses: actions/checkout@v4
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
     - name: Download ARM64 cross-build stage
@@ -704,6 +712,8 @@ jobs:
     - uses: actions/checkout@v4
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
     - name: Download verified package set
@@ -846,6 +856,8 @@ jobs:
         path: artifacts/nuget-packages
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
     - id: trusted-publishing

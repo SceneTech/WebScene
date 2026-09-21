@@ -883,6 +883,57 @@
         return count;
     }
 
+    // A cross-origin child still has a parent WindowProxy for messaging. This
+    // proxy lives in the child's realm and cannot reveal the parent global.
+    static v8::Intercepted get_restricted_parent_window_property(
+        v8::Local<v8::Name> property,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        if (!property->IsString()) return v8::Intercepted::kNo;
+        auto isolate = info.GetIsolate();
+        const auto name = to_utf8(isolate, property.As<v8::Value>());
+        if (name == "window" || name == "self" || name == "frames"
+            || name == "parent") {
+            info.GetReturnValue().Set(info.Holder());
+        } else if (name == "top") {
+            v8::Local<v8::Value> top;
+            if (info.Holder()->GetPrivate(
+                    isolate->GetCurrentContext(),
+                    v8::Private::ForApi(isolate, js_string(isolate, "webscene.parentTop")))
+                    .ToLocal(&top) && top->IsObject()) {
+                info.GetReturnValue().Set(top);
+            } else {
+                info.GetReturnValue().Set(info.Holder());
+            }
+        } else if (name == "postMessage") {
+            info.GetReturnValue().Set(v8::Function::New(
+                isolate->GetCurrentContext(), window_post_message).ToLocalChecked());
+        } else if (name == "closed") {
+            const auto* frame = unwrap_node(info.Holder());
+            info.GetReturnValue().Set(v8::Boolean::New(
+                isolate, frame != nullptr && frame->parent == nullptr));
+        } else if (name == "length") {
+            info.GetReturnValue().Set(v8::Integer::New(isolate, 0));
+        } else if (name == "opener") {
+            info.GetReturnValue().Set(v8::Null(isolate));
+        } else {
+            throw_dom_exception(isolate,
+                "Blocked a frame with a different origin from accessing this Window",
+                "SecurityError");
+        }
+        return v8::Intercepted::kYes;
+    }
+
+    static v8::Intercepted set_restricted_parent_window_property(
+        v8::Local<v8::Name>, v8::Local<v8::Value>,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        throw_dom_exception(info.GetIsolate(),
+            "Blocked a frame with a different origin from modifying this Window",
+            "SecurityError");
+        return v8::Intercepted::kYes;
+    }
+
     static v8::Intercepted get_frame_window_proxy_named_property(
         v8::Local<v8::Name> property,
         const v8::PropertyCallbackInfo<v8::Value>& info)

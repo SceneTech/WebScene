@@ -299,6 +299,10 @@ int main()
             test_resource_cache_policy_matrix();
             return 0;
         }
+        if (selected == "service-worker-cross-origin") {
+            test_service_worker_cross_origin_iframe_visibility_gate();
+            return 0;
+        }
         if (selected == "service-worker-lifecycle") {
             test_service_worker_lifecycle_performance_and_teardown_gate();
             return 0;

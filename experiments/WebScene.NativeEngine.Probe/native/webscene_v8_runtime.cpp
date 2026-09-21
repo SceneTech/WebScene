@@ -5383,7 +5383,7 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
         install_indexeddb(local_context);
         install_performance_timeline(local_context);
-        install_service_worker_control(local_context, local_context->Global());
+        install_service_worker_control(local_context, local_context->Global(), nullptr);
         install_worker_constructor(local_context);
         install_clipboard_api(local_context);
         install_drag_data_transfer_api(local_context);

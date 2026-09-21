@@ -1,3 +1,109 @@
+void test_service_worker_cross_origin_iframe_visibility_gate()
+{
+    resource_server server{.content = {
+        {"https://workspace.test/index.html",
+            "<!doctype html><title>isolated worker owner</title><body></body>"},
+        {"https://preview.test/pre/index.html", R"HTML(
+            <!doctype html><body><script>
+            console.log('isolated-sw-visible:' + Boolean(navigator.serviceWorker));
+            if (navigator.serviceWorker) {
+              navigator.serviceWorker.register('service-worker.js', {
+                type: 'module', updateViaCache: 'none'
+              }).then(registration => console.log('isolated-sw-registered:' +
+                Boolean(registration.active))).catch(error =>
+                  console.error('isolated-sw-error:' + error.message));
+            }
+            </script></body>)HTML"},
+        {"https://preview.test/pre/service-worker.js", R"JS(
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+        )JS"},
+        {"https://preview.test/pre/opaque.html",
+            "<!doctype html><body><script>console.log('opaque-sw-visible:' +"
+            " Boolean(navigator.serviceWorker));"
+            "const nested=document.createElement('iframe');"
+            "nested.setAttribute('sandbox','allow-same-origin allow-scripts');"
+            "nested.src='https://preview.test/pre/nested.html';"
+            "document.body.appendChild(nested);</script></body>"},
+        {"https://preview.test/pre/nested.html",
+            "<!doctype html><body><script>console.log('nested-opaque-sw-visible:' +"
+            " Boolean(navigator.serviceWorker));</script></body>"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "isolated iframe worker engine creation failed");
+    webscene_engine_configure_diagnostics(
+        engine, WEBSCENE_DIAGNOSTIC_CONSOLE | WEBSCENE_DIAGNOSTIC_EXCEPTIONS,
+        nullptr, nullptr);
+    constexpr std::string_view address{"https://workspace.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0,
+        "isolated iframe worker document load failed");
+    require(evaluate_until_equals(engine, "location.href", "isolated-sw-parent.js",
+        R"("https://workspace.test/index.html")", 2'500)
+            == R"("https://workspace.test/index.html")",
+        "isolated iframe worker parent did not become ready");
+    const auto frame_started = std::chrono::steady_clock::now();
+    execute(engine, R"JS((() => {
+      const admitted = document.createElement('iframe');
+      admitted.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+      admitted.src = 'https://preview.test/pre/index.html';
+      document.body.appendChild(admitted);
+      const opaque = document.createElement('iframe');
+      opaque.setAttribute('sandbox', 'allow-scripts');
+      opaque.src = 'https://preview.test/pre/opaque.html';
+      document.body.appendChild(opaque);
+      globalThis.__isolatedFrames = [admitted, opaque];
+    })())JS", "isolated-sw-create.js");
+    require(evaluate_until_equals(engine,
+        "__isolatedFrames.every(frame => frame.contentDocument === null)",
+        "isolated-sw-parent-denied.js", "true", 2'500) == "true",
+        "isolated worker clients leaked cross-origin parent DOM access");
+
+    bool visible = false, registered = false;
+    bool opaque_hidden = false, nested_opaque_hidden = false;
+    std::string records;
+    for (int attempt = 0; attempt < 1'500
+            && !(visible && registered && opaque_hidden && nested_opaque_hidden);
+         ++attempt) {
+        const auto length = webscene_engine_take_diagnostic(engine, nullptr, 0);
+        if (length == 0U) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+        std::vector<char> payload(length);
+        require(webscene_engine_take_diagnostic(engine, payload.data(), length)
+                == length, "isolated worker diagnostic changed during copy");
+        const auto record = std::string(payload.data());
+        records += record + '\n';
+        const bool admitted_document = record.find(
+            "https://preview.test/pre/index.html") != std::string::npos;
+        visible |= admitted_document && record.find("isolated-sw-visible:true")
+            != std::string::npos;
+        registered |= admitted_document && record.find("isolated-sw-registered:true")
+            != std::string::npos;
+        opaque_hidden |= record.find("https://preview.test/pre/opaque.html")
+            != std::string::npos
+            && record.find("opaque-sw-visible:false") != std::string::npos;
+        nested_opaque_hidden |= record.find("https://preview.test/pre/nested.html")
+            != std::string::npos
+            && record.find("nested-opaque-sw-visible:false")
+                != std::string::npos;
+    }
+    require(visible && registered && opaque_hidden && nested_opaque_hidden,
+        "ServiceWorker visibility/registration escaped iframe origin or sandbox: "
+        + records);
+    const auto elapsed_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - frame_started).count();
+    require(elapsed_ms <= 1'000.0,
+        "isolated iframe registration exceeded the 1 s focused budget");
+    std::cout << "Isolated ServiceWorker iframe: registrationAndSandboxMs="
+              << elapsed_ms << " registered=1 opaqueHidden=1 nestedHidden=1\n";
+    webscene_engine_destroy(engine);
+}
+
 void test_service_worker_lifecycle_performance_and_teardown_gate()
 {
     resource_server server{.content = {

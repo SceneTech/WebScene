@@ -123,7 +123,7 @@ class V8BootstrapLiteralTests(unittest.TestCase):
         )
         self.assertEqual(
             hashlib.sha256(joined.encode("utf-8")).hexdigest(),
-            "a3c907644e9b6c9d63eddfbd6a591802e99bbd3249a3b1437788ce4eb1c73b64",
+            "0c9d4ed136ea2b6dfb25e0503d989e4cda396df01a80eb3e7bb4ae49ac234669",
         )
 
 

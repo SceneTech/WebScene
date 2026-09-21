@@ -1516,9 +1516,10 @@
         }
 
         install_navigator(isolate, local_context, global);
-        if (same_origin_access) {
-            install_service_worker_control(local_context, global);
-        }
+        // A sandbox-permitted HTTPS child has its own secure origin even when
+        // its parent cannot access its document. The installer checks the
+        // iframe sandbox chain; parent DOM access is a separate capability.
+        install_service_worker_control(local_context, global, &frame);
 
         install_console(local_context, global);
 

@@ -2516,19 +2516,19 @@
 
     void install_service_worker_control(
         v8::Local<v8::Context> local_context,
-        v8::Local<v8::Object> global)
+        v8::Local<v8::Object> global,
+        dom_node* frame_owner)
     {
         if (worker_owner != nullptr || service_worker_realm) return;
-        if (in_frame_context()) {
-            auto* root = static_cast<dom_node*>(
-                local_context->GetAlignedPointerFromEmbedderData(
-                    1,
-                    v8::kEmbedderDataTypeTagDefault));
-            for (auto* ancestor = root; ancestor != nullptr; ancestor = ancestor->parent) {
-                if (ancestor->tag == "iframe"
-                    && !iframe_sandbox_allows(*ancestor, "allow-same-origin")) {
-                    return;
-                }
+        // The child body is attached to its iframe only after realm globals
+        // are installed. Inspect the owning iframe and its ancestors now,
+        // before any child script or ServiceWorker bridge can run.
+        if (in_frame_context() && frame_owner == nullptr) return;
+        for (auto* ancestor = frame_owner; ancestor != nullptr;
+             ancestor = ancestor->parent) {
+            if (ancestor->tag == "iframe"
+                && !iframe_sandbox_allows(*ancestor, "allow-same-origin")) {
+                return;
             }
         }
         global->Set(

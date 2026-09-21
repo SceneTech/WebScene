@@ -51,6 +51,11 @@ cargo_target_key="$(printf '%s' "$rust_target_triple" | tr '[:lower:]-' '[:upper
 cargo_linker_name="CARGO_TARGET_${cargo_target_key}_LINKER"
 cargo_rustflags_name="CARGO_TARGET_${cargo_target_key}_RUSTFLAGS"
 source_date_epoch="$(git -C "$repo_root" show -s --format=%ct HEAD)"
+git_common_dir="$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)"
+docker_mount_args=(--volume "$repo_root:/workspace")
+if [[ "$git_common_dir" != "$repo_root/.git" ]]; then
+  docker_mount_args+=(--volume "$git_common_dir:$git_common_dir:ro")
+fi
 
 if [[ "$stage" == finalize ]]; then
   "$repo_root/scripts/build-native-engine-runtime.sh" \
@@ -115,7 +120,7 @@ docker run --rm \
   --env "CARGO_BUILD_TARGET=$rust_target_triple" \
   --env "$cargo_linker_name=clang" \
   --env "$cargo_rustflags_name=-C link-arg=--target=$target_triple -C link-arg=--sysroot=$sysroot --remap-path-prefix=/workspace=." \
-  --volume "$repo_root:/workspace" \
+  "${docker_mount_args[@]}" \
   --workdir /workspace \
   "$builder_image" \
   scripts/build-native-engine-runtime.sh "${common_args[@]}"

@@ -897,6 +897,102 @@ void test_same_origin_iframe_navigation_document_replacement()
     webscene_engine_destroy(engine);
 }
 
+void test_isolated_child_parent_messaging()
+{
+    constexpr std::string_view address{"https://parent-message.test/index.html"};
+    resource_server server{.content = {
+        {std::string(address), "<!doctype html><body></body>"},
+        {"https://isolated-message.test/pre/index.html", R"HTML(
+          <!doctype html><body><script>
+          let denied = false;
+          try { void parent.document; }
+          catch (error) { denied = error.name === 'SecurityError'; }
+          let mutationDenied = false;
+          try { parent.document = document; }
+          catch (error) { mutationDenied = error.name === 'SecurityError'; }
+          const channel = new MessageChannel();
+          channel.port1.onmessage = event => {
+            parent.postMessage({reply:event.data}, 'https://parent-message.test');
+            const nested = document.createElement('iframe');
+            nested.sandbox = 'allow-scripts allow-same-origin';
+            nested.src = 'https://nested-message.test/frame.html';
+            addEventListener('message', message => {
+              if (message.data?.nestedReady) {
+                parent.postMessage({nested:true,
+                  origin:message.origin,
+                  sourceIsNested:message.source === nested.contentWindow,
+                  parentIsNotTop:message.data.parentIsNotTop,
+                  parentDenied:message.data.parentDenied},
+                  'https://parent-message.test');
+              }
+            });
+            document.body.appendChild(nested);
+          };
+          parent.postMessage('wrong-target', 'https://other-message.test');
+          parent.postMessage({ready:true, denied, mutationDenied,
+            parentIsTop:parent === top, frameHidden:frameElement === null},
+            'https://parent-message.test', [channel.port2]);
+          </script></body>)HTML"},
+        {"https://nested-message.test/frame.html", R"HTML(
+          <!doctype html><body><script>
+          let parentDenied = false;
+          try { void parent.document; }
+          catch (error) { parentDenied = error.name === 'SecurityError'; }
+          top.postMessage('wrong-top', 'https://other-message.test');
+          parent.postMessage({nestedReady:true,
+            parentIsNotTop:parent !== top, parentDenied},
+            'https://isolated-message.test');
+          </script></body>)HTML"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "isolated parent message engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "isolated parent message outer document failed");
+    require(evaluate_until_equals(engine, "location.href",
+            "isolated-parent-document-ready.js",
+            R"("https://parent-message.test/index.html")", 2'500)
+            == R"("https://parent-message.test/index.html")",
+        "isolated parent message outer document did not become ready");
+    const auto started = std::chrono::steady_clock::now();
+    execute(engine, R"JS((() => {
+      const frame = document.createElement('iframe');
+      frame.sandbox = 'allow-scripts allow-same-origin';
+      frame.src = 'https://isolated-message.test/pre/index.html';
+      window.__isolatedMessageFrame = frame;
+      window.__isolatedMessageResults = [];
+      window.addEventListener('message', event => {
+        window.__isolatedMessageResults.push({data:event.data,
+          origin:event.origin, sourceIsFrame:event.source === frame.contentWindow,
+          ports:event.ports.length});
+        if (event.data?.ready && event.ports.length === 1) {
+          event.ports[0].postMessage('port-reply');
+        }
+      });
+      document.body.appendChild(frame);
+    })())JS", "isolated-parent-message-setup.js");
+    require(evaluate_until_equals(engine,
+            "__isolatedMessageResults.length", "isolated-parent-message-wait.js",
+            "3", 2'500) == "3",
+        "isolated child did not transfer a port and relay nested messaging");
+    const auto result = evaluate(engine, R"JS((() => ({
+      parentDomDenied:__isolatedMessageFrame.contentDocument === null,
+      messages:__isolatedMessageResults
+    }))())JS", "isolated-parent-message-result.js");
+    require(result == R"({"parentDomDenied":true,"messages":[{"data":{"ready":true,"denied":true,"mutationDenied":true,"parentIsTop":true,"frameHidden":true},"origin":"https://isolated-message.test","sourceIsFrame":true,"ports":1},{"data":{"reply":"port-reply"},"origin":"https://isolated-message.test","sourceIsFrame":true,"ports":0},{"data":{"nested":true,"origin":"https://nested-message.test","sourceIsNested":true,"parentIsNotTop":true,"parentDenied":true},"origin":"https://isolated-message.test","sourceIsFrame":true,"ports":0}]})",
+        "isolated child parent messaging leaked DOM, origin, source or port: " + result);
+    execute(engine, "__isolatedMessageFrame.remove()",
+        "isolated-parent-message-teardown.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 1'000.0, "isolated parent messaging exceeded 1s budget");
+    std::cout << "isolated child parent messaging " << elapsed << " ms\n";
+    webscene_engine_destroy(engine);
+}
+
 void test_restricted_cross_origin_nested_window_proxy()
 {
     constexpr std::string_view address{

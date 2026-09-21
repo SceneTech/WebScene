@@ -1238,21 +1238,32 @@
         frame_pagehide_dispatched.erase(frame.id);
         frame_unload_dispatches.erase(frame.id);
         frame_unload_dispatched.erase(frame.id);
-        if (same_origin_access) {
-            // Every browsing context has a WindowProxy even when script has
-            // not read iframe.contentWindow yet. Materialize it before child
-            // script can post a message so MessageEvent.source can retain the
-            // stable proxy across the initial document replacement.
+        // Every browsing context needs an owner-realm WindowProxy before its
+        // first script posts a message, even when origins differ. Preserve
+        // MessageEvent.source identity through the initial navigation.
+        {
             auto owner_context = context.Get(isolate);
             v8::Context::Scope owner_scope(owner_context);
-            auto proxy = frame_window(frame);
-            proxy->Set(
-                owner_context,
-                js_string(isolate, "document"),
-                frame_document_value).Check();
+            if (same_origin_access) {
+                auto proxy = frame_window(frame);
+                proxy->Set(
+                    owner_context,
+                    js_string(isolate, "document"),
+                    frame_document_value).Check();
+            } else if (!frame_windows.contains(frame.id)) {
+                // The normal constructor populates a provisional same-origin
+                // document. A cross-origin commit must not read that document
+                // while initializing its stable, masked owner-realm proxy.
+                auto proxy = frame_window_template.Get(isolate)
+                    ->NewInstance(owner_context).ToLocalChecked();
+                proxy->SetAlignedPointerInInternalField(
+                    0, &frame, v8::kEmbedderDataTypeTagDefault);
+                frame_windows[frame.id].Reset(isolate, proxy);
+            }
         }
         global->Set(local_context, js_string(isolate, "name"), js_string(isolate, frame.attributes["name"].c_str())).Check();
         v8::Local<v8::Value> parent_window = v8::Null(isolate);
+        v8::Local<v8::Value> top_window = v8::Null(isolate);
         if (same_origin_access) {
             parent_window = context.Get(isolate)->Global();
             for (auto* ancestor = frame.parent;
@@ -1266,14 +1277,42 @@
                 }
                 break;
             }
+            top_window = context.Get(isolate)->Global();
+        } else {
+            // A real parent global would bypass the child security token.
+            // Give the child only a restricted proxy whose postMessage uses
+            // the existing target-origin and structured-clone queue.
+            auto restricted = v8::ObjectTemplate::New(isolate);
+            restricted->SetInternalFieldCount(1);
+            restricted->SetHandler(v8::NamedPropertyHandlerConfiguration(
+                get_restricted_parent_window_property,
+                set_restricted_parent_window_property));
+            dom_node* owning_parent = nullptr;
+            for (auto* ancestor = frame.parent; ancestor != nullptr;
+                ancestor = ancestor->parent) {
+                if (ancestor->tag == "iframe") { owning_parent = ancestor; break; }
+            }
+            auto proxy = restricted->NewInstance(local_context).ToLocalChecked();
+            proxy->SetAlignedPointerInInternalField(
+                0, owning_parent, v8::kEmbedderDataTypeTagDefault);
+            parent_window = proxy;
+            top_window = proxy;
+            if (owning_parent != nullptr) {
+                auto top_proxy = restricted->NewInstance(local_context).ToLocalChecked();
+                top_proxy->SetAlignedPointerInInternalField(
+                    0, nullptr, v8::kEmbedderDataTypeTagDefault);
+                proxy->SetPrivate(
+                    local_context,
+                    v8::Private::ForApi(isolate, js_string(isolate, "webscene.parentTop")),
+                    top_proxy).Check();
+                top_window = top_proxy;
+            }
         }
         global->Set(local_context, js_string(isolate, "parent"), parent_window).Check();
         global->Set(
             local_context,
             js_string(isolate, "top"),
-            same_origin_access
-                ? v8::Local<v8::Value>(context.Get(isolate)->Global())
-                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
+            top_window).Check();
         global->Set(
             local_context,
             js_string(isolate, "frameElement"),

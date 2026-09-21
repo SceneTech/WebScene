@@ -193,6 +193,10 @@ int main()
             test_restricted_cross_origin_nested_window_proxy();
             return 0;
         }
+        if (selected == "iframe-cross-origin-parent-message") {
+            test_isolated_child_parent_messaging();
+            return 0;
+        }
         if (selected == "query-iframe-worker-bootstrap") {
             test_query_iframe_worker_extension_host_bootstrap();
             return 0;

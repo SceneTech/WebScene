@@ -1249,6 +1249,16 @@
                         && existing.Get(info.GetIsolate())->StrictEquals(callback);
                 });
             if (!duplicate) listeners.emplace_back(info.GetIsolate(), callback);
+        } else if (type == "popstate" || type == "hashchange") {
+            auto& listeners = self->frame_history_event_listeners[node->id][type];
+            const auto callback = info[1].As<v8::Function>();
+            const auto duplicate = std::any_of(
+                listeners.begin(), listeners.end(), [&](auto& existing) {
+                    return !existing.IsEmpty()
+                        && existing.Get(info.GetIsolate())->StrictEquals(callback);
+                });
+            if (!duplicate && listeners.size() < 128U)
+                listeners.emplace_back(info.GetIsolate(), callback);
         }
     }
 
@@ -1260,6 +1270,21 @@
         if (node == nullptr || info.Length() < 2 || !info[1]->IsFunction()) return;
         const auto type = to_utf8(info.GetIsolate(), info[0]);
         const auto callback = info[1].As<v8::Function>();
+        if (type == "popstate" || type == "hashchange") {
+            const auto frame = self->frame_history_event_listeners.find(node->id);
+            if (frame == self->frame_history_event_listeners.end()) return;
+            const auto found = frame->second.find(type);
+            if (found == frame->second.end()) return;
+            std::erase_if(found->second, [&](auto& existing) {
+                const auto matches = !existing.IsEmpty()
+                    && existing.Get(info.GetIsolate())->StrictEquals(callback);
+                if (matches) existing.Reset();
+                return matches;
+            });
+            if (found->second.empty()) frame->second.erase(found);
+            if (frame->second.empty()) self->frame_history_event_listeners.erase(frame);
+            return;
+        }
         if (type == "DOMContentLoaded") {
             const auto found = self->frame_dom_content_loaded_listeners.find(node->id);
             if (found == self->frame_dom_content_loaded_listeners.end()) return;

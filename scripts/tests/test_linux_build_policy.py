@@ -58,6 +58,11 @@ class LinuxBuildPolicyTests(unittest.TestCase):
             self.assertIn(f"--native-rid {rid}", self.workflow)
         self.assertIn("github.ref_type != 'tag'", self.workflow)
 
+    def test_linux_libcxx_cache_paths_do_not_invalidate_macos_caches(self) -> None:
+        self.assertEqual(2, self.workflow.count("v8_cache_extra_paths: |"))
+        self.assertEqual(3, self.workflow.count("v8_cache_extra_paths: ''"))
+        self.assertEqual(2, self.workflow.count("${{ matrix.v8_cache_extra_paths }}"))
+
     def test_arm64_disables_memory_tagging_for_glibc_227(self) -> None:
         self.assertIn(
             "PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (0)",

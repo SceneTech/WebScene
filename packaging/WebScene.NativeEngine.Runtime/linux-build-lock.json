@@ -35,5 +35,11 @@
     "rustArm64StdSha256": "4952abb7d9d3ed7cea4f7ea44dcb23dc67631fae4ac44a5f059b90a4b5e9223f",
     "depotToolsCommit": "ca054941f756b50e1a3d83727270d879bec1f331",
     "v8Revision": "15.3.10"
+  },
+  "patches": {
+    "v8PartitionAllocGlibc227Arm64": {
+      "path": "patches/V8PartitionAllocGlibc227Arm64Patch.txt",
+      "sha256": "cf9226f0a461a0b85f56f4c1afe5d6cd8ea8f544392411afcd3b89b05d2a366e"
+    }
   }
 }

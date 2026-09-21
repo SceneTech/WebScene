@@ -68,6 +68,7 @@ jobs:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
+        dotnet-version: 8.0.x
     - id: version
       name: Resolve and validate package version
       shell: bash
@@ -137,6 +138,7 @@ jobs:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
+        dotnet-version: 8.0.x
     - name: Pack and verify .NET packages
       shell: bash
       run: |
@@ -239,7 +241,7 @@ jobs:
           v8_revision: 15.3.10
           partition_alloc: true
           v8_configuration: ReleasePartitionAlloc
-          v8_cache_generation: v1-v8-15.3.10-glibc227-cross-arm64
+          v8_cache_generation: v2-v8-15.3.10-glibc227-cross-arm64
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
         - os: windows-2022
@@ -264,6 +266,7 @@ jobs:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
+        dotnet-version: 8.0.x
     - id: v8-cache-key
       name: Resolve pinned V8 SDK cache identity
       shell: bash
@@ -283,7 +286,7 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/icu/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/partition_alloc/src
-        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
+        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt', 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
         restore-keys: |
           webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-
           webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-
@@ -516,6 +519,7 @@ jobs:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
+        dotnet-version: 8.0.x
     - name: Download ARM64 cross-build stage
       uses: actions/download-artifact@v4
       with:
@@ -716,6 +720,7 @@ jobs:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
+        dotnet-version: 8.0.x
     - name: Download verified package set
       uses: actions/download-artifact@v4
       with:
@@ -860,6 +865,7 @@ jobs:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
+        dotnet-version: 8.0.x
     - id: trusted-publishing
       name: Exchange GitHub identity for a temporary NuGet API key
       if: env.NUGET_API_KEY == '' && env.NUGET_USER != ''

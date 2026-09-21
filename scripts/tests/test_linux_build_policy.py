@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import re
@@ -36,6 +37,14 @@ class LinuxBuildPolicyTests(unittest.TestCase):
             toolchain["rustArm64StdSha256"], toolchain["depotToolsCommit"],
         ):
             self.assertIn(value, self.dockerfile)
+
+        for patch in self.lock["patches"].values():
+            patch_path = PACKAGING / patch["path"]
+            self.assertTrue(patch_path.is_file(), patch_path)
+            self.assertEqual(
+                patch["sha256"],
+                hashlib.sha256(patch_path.read_bytes()).hexdigest(),
+            )
 
     def test_release_matrix_contains_both_glibc_rids(self) -> None:
         for rid in ("linux-x64", "linux-arm64"):

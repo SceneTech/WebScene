@@ -598,7 +598,12 @@ int main()
             test_attribute_invalidation_scopes_subject_and_descendant_rules();
             return 0;
         }
+        if (selected == "direct-subject-invalidation") {
+            test_direct_subject_selector_invalidation_scaling();
+            return 0;
+        }
         if (selected == "css-invalidation-scaling") {
+            test_direct_subject_selector_invalidation_scaling();
             test_compiled_subject_index_scaling();
             test_cascade_layer_mutation_scaling();
             test_variadic_child_vector_scaling();
@@ -1422,6 +1427,7 @@ int main()
     test_live_form_state_selectors_and_scaling();
     test_compiled_subject_index_scaling();
     test_cascade_layer_mutation_scaling();
+    test_direct_subject_selector_invalidation_scaling();
     test_compiled_css_invalidation_scaling();
     test_character_data_stable_style_scaling();
     test_text_topology_css_work_scaling();

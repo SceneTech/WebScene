@@ -770,6 +770,7 @@ int main()
             test_native_websocket_cross_socket_fairness();
             test_native_websocket_browser_api();
             test_native_websocket_protocol_handshake_timing();
+            test_binary_blob_construction_defers_string_expansion();
             test_native_file_reader_task_source_fairness();
             return 0;
         }
@@ -1485,6 +1486,7 @@ int main()
     test_native_websocket_cross_socket_fairness();
     test_native_websocket_browser_api();
     test_native_websocket_protocol_handshake_timing();
+    test_binary_blob_construction_defers_string_expansion();
     test_native_file_reader_task_source_fairness();
     execute(
         engine,

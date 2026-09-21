@@ -85,7 +85,8 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn('/usr/include/${WEBSCENE_LINUX_TARGET_TRIPLE}', self.toolchain)
 
     def test_linux_runtime_uses_v8_bundled_libcxx(self) -> None:
-        self.assertIn("buildtools/third_party/libc++/src/include", self.build_script)
+        self.assertIn('v8_root/third_party/libc++/src/include', self.build_script)
+        self.assertIn('v8_root/third_party/libc++abi/src/include', self.build_script)
         self.assertIn("-nostdinc++ -nostdlib++", self.build_script)
         self.assertIn("CMAKE_CXX_STANDARD_LIBRARIES", self.build_script)
 
@@ -94,6 +95,10 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn('-DCMAKE_OSX_ARCHITECTURES="$macos_architecture"', self.build_script)
         self.assertIn("x86_64-apple-darwin", self.build_script)
         self.assertIn("rust-std-$rust_version-x86_64-apple-darwin", self.build_script)
+        self.assertIn("dotnet_architecture: x64", self.workflow)
+        self.assertIn("architecture: ${{ matrix.dotnet_architecture }}", self.workflow)
+        self.assertIn("RUNNER_TOOL_CACHE", self.build_script)
+        self.assertIn("--retry-all-errors", self.build_script)
 
 
 if __name__ == "__main__":

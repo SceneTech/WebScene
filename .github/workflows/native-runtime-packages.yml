@@ -202,6 +202,7 @@ jobs:
         include:
         - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
+          dotnet_architecture: arm64
           cpu: arm64
           monolith: libv8_monolith.a
           script: unix
@@ -213,6 +214,7 @@ jobs:
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
         - os: [self-hosted, macOS, ARM64]
           rid: osx-x64
+          dotnet_architecture: x64
           cpu: x64
           monolith: libv8_monolith.a
           script: unix
@@ -224,6 +226,7 @@ jobs:
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
         - os: [self-hosted, Linux, X64]
           rid: linux-x64
+          dotnet_architecture: x64
           cpu: x64
           monolith: libv8_monolith.a
           script: unix
@@ -235,6 +238,7 @@ jobs:
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
         - os: [self-hosted, Linux, X64]
           rid: linux-arm64
+          dotnet_architecture: x64
           cpu: arm64
           monolith: libv8_monolith.a
           script: unix
@@ -246,6 +250,7 @@ jobs:
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
         - os: windows-2022
           rid: win-x64
+          dotnet_architecture: x64
           cpu: x64
           monolith: v8_monolith.lib
           script: windows
@@ -267,6 +272,7 @@ jobs:
       with:
         global-json-file: global.json
         dotnet-version: 8.0.x
+        architecture: ${{ matrix.dotnet_architecture }}
     - id: v8-cache-key
       name: Resolve pinned V8 SDK cache identity
       shell: bash
@@ -282,6 +288,8 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++/src/include
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++abi/src/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/icudtl.dat
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
@@ -305,7 +313,9 @@ jobs:
         }
         libcxx_is_compatible() {
           [[ '${{ matrix.rid }}' != linux-* ]] \
-            || [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]]
+            || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
+              && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
+              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]]; }
         }
         args_are_compatible() {
           grep -Eq '^v8_enable_pointer_compression *= *true$' "$args" \
@@ -434,7 +444,9 @@ jobs:
         }
         libcxx_is_compatible() {
           [[ '${{ matrix.rid }}' != linux-* ]] \
-            || [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]]
+            || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
+              && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
+              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]]; }
         }
         args_are_compatible() {
           grep -Eq '^v8_enable_pointer_compression *= *true$' "$args" \
@@ -474,6 +486,8 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++/src/include
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++abi/src/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/icudtl.dat
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE

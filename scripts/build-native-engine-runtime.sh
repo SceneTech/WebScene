@@ -162,7 +162,7 @@ if [[ "$expected_kernel" == Darwin ]]; then
   rust_version=1.90.0
   rust_mac_arm64_sha256=9772d20d5cd736079a0ee84d00e6697cf2084f0fc4621b011e24e6f2d08d2d7f
   rust_mac_x64_std_sha256=dd731e6f9f30cb9b2928b92b084d2f12a3abf06a481ecbd8c3553c3e6f742139
-  rust_prefix="${RUNNER_TEMP:-$repo_root/artifacts/toolchains}/webscene-rust-$rust_version"
+  rust_prefix="${RUNNER_TOOL_CACHE:-${RUNNER_TEMP:-$repo_root/artifacts/toolchains}}/webscene-rust-$rust_version"
   rust_complete="$rust_prefix/.webscene-complete"
   if [[ ! -f "$rust_complete" ]]; then
     rust_download_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/webscene-rust.XXXXXX")"
@@ -170,11 +170,15 @@ if [[ "$expected_kernel" == Darwin ]]; then
       cd "$rust_download_dir"
       host_archive="rust-$rust_version-aarch64-apple-darwin.tar.xz"
       x64_std_archive="rust-std-$rust_version-x86_64-apple-darwin.tar.xz"
-      curl -fsSLO "https://static.rust-lang.org/dist/$host_archive"
+      curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+        --remote-name "https://static.rust-lang.org/dist/$host_archive"
       echo "$rust_mac_arm64_sha256  $host_archive" | shasum -a 256 -c -
       tar -xf "$host_archive"
       "${host_archive%.tar.xz}/install.sh" --prefix="$rust_prefix" --without=rust-docs
-      curl -fsSLO "https://static.rust-lang.org/dist/$x64_std_archive"
+      curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+        --remote-name "https://static.rust-lang.org/dist/$x64_std_archive"
       echo "$rust_mac_x64_std_sha256  $x64_std_archive" | shasum -a 256 -c -
       tar -xf "$x64_std_archive"
       "${x64_std_archive%.tar.xz}/install.sh" --prefix="$rust_prefix"
@@ -509,7 +513,7 @@ elif [[ "$expected_kernel" == Linux ]]; then
   fi
   target_library_dir="$sysroot/usr/lib/$target_triple"
   target_include_dir="$sysroot/usr/include"
-  v8_libcxx_include="$v8_root/buildtools/third_party/libc++/src/include"
+  v8_libcxx_include="$v8_root/third_party/libc++/src/include"
   v8_libcxxabi_include="$v8_root/third_party/libc++abi/src/include"
   v8_libcxx_archive="$v8_output_root/obj/buildtools/third_party/libc++/libc++.a"
   for target_dependency in \

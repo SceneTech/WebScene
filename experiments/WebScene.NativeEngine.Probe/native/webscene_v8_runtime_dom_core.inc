@@ -763,6 +763,13 @@
             document.mark_scene_changed();
             return;
         }
+        // A named anchor can position an overlay outside its own subtree.
+        // The ordinary isolated-positioned-box invalidation cannot see that
+        // dependency, so geometry changes on the anchor relayout the document.
+        if (node.style.anchor_name_present) {
+            document.mark_dirty();
+            return;
+        }
         const auto changes_only_positioned_subtree =
             canonical_property_name == "width"
             || canonical_property_name == "height"

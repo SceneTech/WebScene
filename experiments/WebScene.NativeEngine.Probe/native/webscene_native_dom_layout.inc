@@ -95,6 +95,8 @@ void native_document::layout(float viewport_width, float viewport_height)
     if (layout_scratch_ == nullptr) {
         layout_scratch_ = std::make_unique<layout_scratch_storage>();
     }
+    layout_scratch_->named_anchors.clear();
+    layout_scratch_->unresolved_named_anchor = false;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     const auto intrinsic_cache_disabled =
         std::getenv("WEBSCENE_DISABLE_INTRINSIC_SIZE_CACHE") != nullptr;
@@ -193,6 +195,13 @@ void native_document::layout(float viewport_width, float viewport_height)
         }
     }
     layout_children(*body_);
+    // A positioned overlay can precede its anchor in tree order. Finish the
+    // first layout to obtain that anchor's used box, then resolve references
+    // once more. Most documents never take this second pass.
+    if (layout_scratch_->unresolved_named_anchor) {
+        layout_scratch_->unresolved_named_anchor = false;
+        layout_children(*body_);
+    }
     trace_phase("tree");
     // Sticky offsets are visual adjustments to completed normal-flow geometry.
     // Applying them during row layout uses unfinished table/group dimensions
@@ -441,6 +450,55 @@ void native_document::layout_children(dom_node& parent)
             - border_left - border_right - padding_left - padding_right),
         std::max(0.0F, parent.layout.height
             - border_top - border_bottom - padding_top - padding_bottom)};
+    struct anchor_geometry final {
+        std::optional<float> left;
+        std::optional<float> top;
+        std::optional<float> right;
+        std::optional<float> bottom;
+        std::optional<float> width;
+        std::optional<float> height;
+    };
+    const auto anchored_geometry_for = [&](const dom_node& child,
+        const layout_rect& containing) -> anchor_geometry {
+        anchor_geometry result{};
+        if (!child.style.position_anchor_present) return result;
+        const auto name = css::retained_anchor_value(child.style, "position-anchor");
+        const auto known = layout_scratch_->named_anchors.find(name);
+        if (known == layout_scratch_->named_anchors.end()) {
+            layout_scratch_->unresolved_named_anchor = true;
+            return result;
+        }
+        const auto& target = known->second;
+        const auto inset = [&](std::string_view property) -> std::optional<float> {
+            const auto token = css::retained_anchor_value(child.style, property);
+            auto point = 0.0F;
+            if (property == "left" || property == "right") {
+                if (token == "anchor(left)") point = target.x;
+                else if (token == "anchor(right)") point = target.x + target.width;
+                else return std::nullopt;
+                return property == "left" ? point - containing.x
+                    : containing.x + containing.width - point;
+            }
+            if (token == "anchor(top)") point = target.y;
+            else if (token == "anchor(bottom)") point = target.y + target.height;
+            else return std::nullopt;
+            return property == "top" ? point - containing.y
+                : containing.y + containing.height - point;
+        };
+        const auto size = [&](std::string_view property) -> std::optional<float> {
+            const auto token = css::retained_anchor_value(child.style, property);
+            if (token == "anchor-size(width)") return target.width;
+            if (token == "anchor-size(height)") return target.height;
+            return std::nullopt;
+        };
+        result.left = inset("left");
+        result.top = inset("top");
+        result.right = inset("right");
+        result.bottom = inset("bottom");
+        result.width = size("width");
+        result.height = size("height");
+        return result;
+    };
     // HTML LI marker geometry retains its established path. Generic authored
     // list-item boxes need an outside marker even though they have no LI tag.
     if (!marker_text.empty() && !has_inside_marker && parent.tag != "li") {
@@ -1338,18 +1396,19 @@ void native_document::layout_children(dom_node& parent)
                 - containing_border_left - containing_border_right),
             std::max(0.0F, containing_node->layout.height
                 - containing_border_top - containing_border_bottom)};
-        const auto has_left = is_specified(child.style.left);
-        const auto has_top = is_specified(child.style.top);
-        const auto has_right = is_specified(child.style.right);
-        const auto has_bottom = is_specified(child.style.bottom);
+        const auto anchor = anchored_geometry_for(child, containing);
+        const auto has_left = anchor.left.has_value() || is_specified(child.style.left);
+        const auto has_top = anchor.top.has_value() || is_specified(child.style.top);
+        const auto has_right = anchor.right.has_value() || is_specified(child.style.right);
+        const auto has_bottom = anchor.bottom.has_value() || is_specified(child.style.bottom);
         const auto left = has_left
-            ? resolve_length(child, child.style.left, containing.width, 0) : 0.0F;
+            ? anchor.left.value_or(resolve_length(child, child.style.left, containing.width, 0)) : 0.0F;
         const auto top = has_top
-            ? resolve_length(child, child.style.top, containing.height, 0) : 0.0F;
+            ? anchor.top.value_or(resolve_length(child, child.style.top, containing.height, 0)) : 0.0F;
         const auto right = has_right
-            ? resolve_length(child, child.style.right, containing.width, 0) : 0.0F;
+            ? anchor.right.value_or(resolve_length(child, child.style.right, containing.width, 0)) : 0.0F;
         const auto bottom = has_bottom
-            ? resolve_length(child, child.style.bottom, containing.height, 0) : 0.0F;
+            ? anchor.bottom.value_or(resolve_length(child, child.style.bottom, containing.height, 0)) : 0.0F;
         auto margin_left = resolve_length(
             child, child.style.margin_left, containing.width, 0);
         const auto margin_right = resolve_length(
@@ -1359,13 +1418,17 @@ void native_document::layout_children(dom_node& parent)
         const auto margin_bottom = resolve_length(
             child, child.style.margin_bottom, containing.height, 0);
         layout_rect assigned{};
-        assigned.width = is_specified(child.style.width)
+        assigned.width = anchor.width.has_value()
+            ? *anchor.width
+            : is_specified(child.style.width)
             ? outer_authored_size(child, true, containing.width)
             : has_left && has_right
                 ? std::max(0.0F, containing.width - left - right
                     - margin_left - margin_right)
                 : intrinsic_size(child, true, containing.width);
-        assigned.height = is_specified(child.style.height)
+        assigned.height = anchor.height.has_value()
+            ? *anchor.height
+            : is_specified(child.style.height)
             ? outer_authored_size(child, false, containing.height)
             : has_top && has_bottom
                 ? std::max(0.0F, containing.height - top - bottom
@@ -1377,8 +1440,8 @@ void native_document::layout_children(dom_node& parent)
             assigned.height,
             containing.width,
             containing.height,
-            is_specified(child.style.width),
-            is_specified(child.style.height));
+            anchor.width.has_value() || is_specified(child.style.width),
+            anchor.height.has_value() || is_specified(child.style.height));
         const auto constrain_positioned_size = [&](bool horizontal, float size) {
             const auto available = horizontal ? containing.width : containing.height;
             const auto& minimum = horizontal
@@ -1969,18 +2032,19 @@ void native_document::layout_children(dom_node& parent)
                         0.0F,
                         containing.height - border_top - border_bottom);
                 }
-                const auto has_left = is_specified(child.style.left);
-                const auto has_top = is_specified(child.style.top);
-                const auto has_right = is_specified(child.style.right);
-                const auto has_bottom = is_specified(child.style.bottom);
+                const auto anchored = anchored_geometry_for(child, containing);
+                const auto has_left = anchored.left.has_value() || is_specified(child.style.left);
+                const auto has_top = anchored.top.has_value() || is_specified(child.style.top);
+                const auto has_right = anchored.right.has_value() || is_specified(child.style.right);
+                const auto has_bottom = anchored.bottom.has_value() || is_specified(child.style.bottom);
                 const auto left = has_left
-                    ? resolve_length(child, child.style.left, containing.width, 0) : 0;
+                    ? anchored.left.value_or(resolve_length(child, child.style.left, containing.width, 0)) : 0;
                 const auto top = has_top
-                    ? resolve_length(child, child.style.top, containing.height, 0) : 0;
+                    ? anchored.top.value_or(resolve_length(child, child.style.top, containing.height, 0)) : 0;
                 const auto right = has_right
-                    ? resolve_length(child, child.style.right, containing.width, 0) : 0;
+                    ? anchored.right.value_or(resolve_length(child, child.style.right, containing.width, 0)) : 0;
                 const auto bottom = has_bottom
-                    ? resolve_length(child, child.style.bottom, containing.height, 0) : 0;
+                    ? anchored.bottom.value_or(resolve_length(child, child.style.bottom, containing.height, 0)) : 0;
                 const auto margin_left = resolve_length(
                     child, child.style.margin_left, containing.width, 0);
                 const auto margin_right = resolve_length(
@@ -1995,13 +2059,17 @@ void native_document::layout_children(dom_node& parent)
                     ? anchor.y
                     : anchor.y + anchor.height;
                 layout_rect assigned{};
-                assigned.width = is_specified(child.style.width)
+                assigned.width = anchored.width.has_value()
+                    ? *anchored.width
+                    : is_specified(child.style.width)
                     ? outer_authored_size(child, true, containing.width)
                     : has_left && has_right
                         ? std::max(0.0F, containing.width - left - right
                             - margin_left - margin_right)
                         : intrinsic_size(child, true, containing.width);
-                assigned.height = is_specified(child.style.height)
+                assigned.height = anchored.height.has_value()
+                    ? *anchored.height
+                    : is_specified(child.style.height)
                     ? outer_authored_size(child, false, containing.height)
                     : has_top && has_bottom
                         ? std::max(0.0F, containing.height - top - bottom
@@ -2055,7 +2123,7 @@ void native_document::layout_children(dom_node& parent)
                     : has_bottom
                         ? containing.height - bottom - margin_bottom - assigned.height
                         : static_y - containing.y + margin_top);
-                layout_child(child, containing, assigned);
+                layout_child(child, containing, assigned, anchored.height.has_value());
             }
             return;
         }
@@ -3421,21 +3489,32 @@ void native_document::layout_children(dom_node& parent)
                     0.0F, containing.height - border_top - border_bottom);
             }
             layout_rect assigned{};
-            const auto has_left = is_specified(child->style.left);
-            const auto has_top = is_specified(child->style.top);
-            const auto has_right = is_specified(child->style.right);
-            const auto has_bottom = is_specified(child->style.bottom);
+            const auto anchored = anchored_geometry_for(*child, containing);
+            const auto& anchor_left = anchored.left;
+            const auto& anchor_top = anchored.top;
+            const auto& anchor_right = anchored.right;
+            const auto& anchor_bottom = anchored.bottom;
+            const auto& anchor_width = anchored.width;
+            const auto& anchor_height = anchored.height;
+            const auto has_left = anchor_left.has_value() || is_specified(child->style.left);
+            const auto has_top = anchor_top.has_value() || is_specified(child->style.top);
+            const auto has_right = anchor_right.has_value() || is_specified(child->style.right);
+            const auto has_bottom = anchor_bottom.has_value() || is_specified(child->style.bottom);
             const auto left = has_left
-                ? resolve_length(*child, child->style.left, containing.width, 0)
+                ? anchor_left.value_or(resolve_length(
+                    *child, child->style.left, containing.width, 0))
                 : 0;
             const auto top = has_top
-                ? resolve_length(*child, child->style.top, containing.height, 0)
+                ? anchor_top.value_or(resolve_length(
+                    *child, child->style.top, containing.height, 0))
                 : 0;
             const auto right = has_right
-                ? resolve_length(*child, child->style.right, containing.width, 0)
+                ? anchor_right.value_or(resolve_length(
+                    *child, child->style.right, containing.width, 0))
                 : 0;
             const auto bottom = has_bottom
-                ? resolve_length(*child, child->style.bottom, containing.height, 0)
+                ? anchor_bottom.value_or(resolve_length(
+                    *child, child->style.bottom, containing.height, 0))
                 : 0;
             auto margin_left = resolve_length(
                 *child,
@@ -3459,13 +3538,17 @@ void native_document::layout_children(dom_node& parent)
                 0);
             const auto intrinsic_width = intrinsic_size(*child, true, containing.width);
             const auto intrinsic_height = intrinsic_size(*child, false, containing.height);
-            assigned.width = is_specified(child->style.width)
+            assigned.width = anchor_width.has_value()
+                ? *anchor_width
+                : is_specified(child->style.width)
                 ? outer_authored_size(*child, true, containing.width)
                 : has_left && has_right
                     ? std::max(0.0F, containing.width - left - right
                         - margin_left - margin_right)
                     : intrinsic_width;
-            assigned.height = is_specified(child->style.height)
+            assigned.height = anchor_height.has_value()
+                ? *anchor_height
+                : is_specified(child->style.height)
                 ? outer_authored_size(*child, false, containing.height)
                 : has_top && has_bottom
                     ? std::max(0.0F, containing.height - top - bottom
@@ -3477,8 +3560,8 @@ void native_document::layout_children(dom_node& parent)
                 assigned.height,
                 containing.width,
                 containing.height,
-                is_specified(child->style.width),
-                is_specified(child->style.height));
+                anchor_width.has_value() || is_specified(child->style.width),
+                anchor_height.has_value() || is_specified(child->style.height));
             if (child->tag == "img" && !is_specified(child->style.height)
                 && child->replaced_image().natural_width > 0
                 && child->replaced_image().natural_height > 0) {
@@ -3547,7 +3630,7 @@ void native_document::layout_children(dom_node& parent)
                     assigned.y -= containing_node->scroll_top;
                 }
             }
-            layout_child(*child, containing, assigned);
+            layout_child(*child, containing, assigned, anchor_height.has_value());
             continue;
         }
 
@@ -5424,5 +5507,9 @@ void native_document::layout_child(
         } else {
             child.layout.height = capped_height;
         }
+    }
+    if (child.visible && child.style.anchor_name_present) {
+        const auto name = css::retained_anchor_value(child.style, "anchor-name");
+        if (!name.empty()) layout_scratch_->named_anchors.insert_or_assign(name, child.layout);
     }
 }

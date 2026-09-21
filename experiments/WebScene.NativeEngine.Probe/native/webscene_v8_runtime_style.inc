@@ -826,6 +826,9 @@
             // existing numeric grid-column projection when applicable.
             node->style.inline_property_mask |= inline_grid;
         } else if (apply_inset_declaration(node->style, name, value)) {
+            if (name == "left" || name == "top" || name == "right" || name == "bottom") {
+                css::retain_anchor_function(node->style, name, value);
+            }
             node->style.inline_property_mask |=
                 inline_left | inline_top | inline_right | inline_bottom;
         } else if (apply_margin_declaration(node->style, name, value)) {
@@ -835,6 +838,7 @@
         } else if (apply_border_declaration(node->style, name, value)) {
             node->style.inline_property_mask |= inline_border;
         } else if (name == "width" || name == "inline-size") {
+            css::retain_anchor_function(node->style, "width", value);
             node->style.width = value == "inherit" && node->parent != nullptr
                 ? node->parent->style.width
                 : value == "initial" || value == "unset" || value == "revert"
@@ -843,6 +847,7 @@
                     : native_document::parse_length(value);
             node->style.inline_property_mask |= inline_width;
         } else if (name == "height" || name == "block-size") {
+            css::retain_anchor_function(node->style, "height", value);
             node->style.height = value == "inherit" && node->parent != nullptr
                 ? node->parent->style.height
                 : value == "initial" || value == "unset" || value == "revert"
@@ -881,6 +886,8 @@
                 : value == "relative" ? position_mode::relative
                 : position_mode::normal;
             node->style.inline_property_mask |= inline_position;
+        } else if (name == "anchor-name" || name == "position-anchor") {
+            css::retain_anchor_identifier(node->style, name, value);
         } else if (name == "contain") {
             const auto contain = lower_html_name(value);
             node->style.mutable_textual().contain_value =
@@ -1371,6 +1378,11 @@
                     canonical_css_property_name(name),
                     connected_used_value)) {
                 value = format_pixels(connected_used_value);
+            } else if (name == "anchor-name" || name == "position-anchor") {
+                const auto retained = css::retained_anchor_value(node->style, name);
+                value = retained.empty()
+                    ? (name == "anchor-name" ? "none" : "auto")
+                    : std::string{retained};
             } else if (name == "z-index") {
                 value = node->style.z_index_auto
                     ? "auto" : std::to_string(node->style.z_index);

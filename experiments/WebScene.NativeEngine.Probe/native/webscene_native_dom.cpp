@@ -1,6 +1,7 @@
 #include "webscene_native_dom.h"
 #include "webscene_css_ascii_number.h"
 #include "webscene_css_effect_values.h"
+#include "webscene_css_anchor_values.h"
 
 #include <algorithm>
 #include <array>

@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_property_mask.h"
+#include "webscene_css_anchor_values.h"
 
 namespace webscene_native::css {
 // Apply resolved box values after custom-property substitution. The owner supplies
@@ -9,6 +10,7 @@ bool apply_box_metrics(dom_node& node,const std::string& name,
     const std::string& value,Protected&& is_inline)
 {
     if ((name == "width" || name == "inline-size") && !is_inline(inline_width)) {
+        retain_anchor_function(node.style, "width", value);
         node.style.width = value == "inherit" && node.parent != nullptr
             ? node.parent->style.width
             : value == "initial" || value == "unset" || value == "revert"
@@ -16,6 +18,7 @@ bool apply_box_metrics(dom_node& node,const std::string& name,
                 ? css_length{}
                 : native_document::parse_length(value);
     } else if ((name == "height" || name == "block-size") && !is_inline(inline_height)) {
+        retain_anchor_function(node.style, "height", value);
         node.style.height = value == "inherit" && node.parent != nullptr
             ? node.parent->style.height
             : value == "initial" || value == "unset" || value == "revert"
@@ -47,12 +50,16 @@ bool apply_box_metrics(dom_node& node,const std::string& name,
             || value == "revert-layer"
             ? css_length{} : native_document::parse_length(value);
     } else if ((name == "left" || name == "inset-inline-start") && !is_inline(inline_left)) {
+        retain_anchor_function(node.style, "left", value);
         node.style.left = parse_inset_length(value);
     } else if ((name == "top" || name == "inset-block-start") && !is_inline(inline_top)) {
+        retain_anchor_function(node.style, "top", value);
         node.style.top = parse_inset_length(value);
     } else if ((name == "right" || name == "inset-inline-end") && !is_inline(inline_right)) {
+        retain_anchor_function(node.style, "right", value);
         node.style.right = parse_inset_length(value);
     } else if ((name == "bottom" || name == "inset-block-end") && !is_inline(inline_bottom)) {
+        retain_anchor_function(node.style, "bottom", value);
         node.style.bottom = parse_inset_length(value);
     }
     else if (name == "inset") {

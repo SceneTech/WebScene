@@ -1,0 +1,25 @@
+{
+  "profile": "webscene-css-anchor-overlay-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "candidate": [
+    {
+      "path": "contracts/css-anchor-overlay-geometry.html",
+      "type": "contract",
+      "capabilities": ["css-anchor-positioning", "absolute-inset-stretch", "dynamic-anchor-layout"],
+      "evidence": ["code-oss-markdown-preview-overlay-20260921", "chrome-browser-reference"],
+      "reason": "Named-anchor and fixed-overlay geometry used by unchanged Code OSS webviews."
+    },
+    {
+      "path": "contracts/css-anchor-overlay-paint.html",
+      "type": "reftest",
+      "reference": "contracts/css-anchor-overlay-paint-ref.html",
+      "capabilities": ["css-anchor-positioning", "fixed-overlay-paint", "clipping-anchor-paint"],
+      "evidence": ["code-oss-markdown-preview-overlay-20260921"],
+      "reason": "The anchor-positioned preview overlay must paint the same clipped scene as explicit pixel geometry."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

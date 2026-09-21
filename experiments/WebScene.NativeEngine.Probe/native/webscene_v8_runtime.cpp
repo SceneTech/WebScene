@@ -33,6 +33,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <charconv>
 #include <cctype>
 #include <chrono>

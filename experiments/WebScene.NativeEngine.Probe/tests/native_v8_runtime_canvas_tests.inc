@@ -58,6 +58,8 @@ void test_canvas_text_metrics_use_host_font_axes()
           const small = context.measureText('MMMM');
           context.font = '20px sans-serif';
           const large = context.measureText('MMMM');
+          context.font = '12.5px sans-serif';
+          const fractional = context.measureText('MMMM');
           context.font = "bold 12px -apple-system, BlinkMacSystemFont, 'Trebuchet MS', sans-serif";
           const bold = context.measureText('Label');
           context.textBaseline = 'middle';
@@ -71,6 +73,7 @@ void test_canvas_text_metrics_use_host_font_axes()
               bold.fontBoundingBoxDescent
             ].every(Number.isFinite),
             sizeChangesAdvance: large.width > small.width * 1.9,
+            fractionalSizeParsed: fractional.fontBoundingBoxAscent === 9.375,
             ascent: bold.actualBoundingBoxAscent,
             descent: bold.actualBoundingBoxDescent,
             fontAscent: bold.fontBoundingBoxAscent,
@@ -86,7 +89,8 @@ void test_canvas_text_metrics_use_host_font_axes()
 
     require(
         result.find("\"defaultFieldsAreFinite\":true") != std::string::npos
-            && result.find("\"sizeChangesAdvance\":true") != std::string::npos,
+            && result.find("\"sizeChangesAdvance\":true") != std::string::npos
+            && result.find("\"fractionalSizeParsed\":true") != std::string::npos,
         "Canvas TextMetrics did not use finite host font metrics: " + result);
     require(
         result.find("\"ascent\":7.2") != std::string::npos
@@ -103,7 +107,7 @@ void test_canvas_text_metrics_use_host_font_axes()
         "Canvas TextMetrics did not resolve distances from the active middle baseline: "
             + result);
     require(
-        probe.calls == 3U,
+        probe.calls == 4U,
         "Canvas measureText did not reuse host metrics across baseline-only changes");
     require(probe.text == "Label", "Canvas measureText changed the measured text");
     require(

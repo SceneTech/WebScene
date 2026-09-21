@@ -513,6 +513,7 @@ elif [[ "$expected_kernel" == Linux ]]; then
   fi
   target_library_dir="$sysroot/usr/lib/$target_triple"
   target_include_dir="$sysroot/usr/include"
+  v8_libcxx_config_include="$v8_root/buildtools/third_party/libc++"
   v8_libcxx_include="$v8_root/third_party/libc++/src/include"
   v8_libcxxabi_include="$v8_root/third_party/libc++abi/src/include"
   v8_libcxx_archive="$v8_output_root/obj/buildtools/third_party/libc++/libc++.a"
@@ -522,6 +523,7 @@ elif [[ "$expected_kernel" == Linux ]]; then
       "$target_library_dir/libssl.so" \
       "$target_include_dir/zlib.h" \
       "$target_library_dir/libz.so" \
+      "$v8_libcxx_config_include/__config_site" \
       "$v8_libcxx_include/source_location" \
       "$v8_libcxxabi_include/cxxabi.h" \
       "$v8_libcxx_archive"; do
@@ -542,7 +544,7 @@ elif [[ "$expected_kernel" == Linux ]]; then
     -DZLIB_INCLUDE_DIR="$target_include_dir"
     -DZLIB_LIBRARY="$target_library_dir/libz.so"
     "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
-    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include"
+    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -I$v8_libcxx_config_include -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include"
     -DCMAKE_CXX_STANDARD_LIBRARIES="$v8_libcxx_archive"
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,--build-id=sha1"

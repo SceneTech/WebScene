@@ -288,6 +288,7 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/buildtools/third_party/libc++/__config_site
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++/src/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++abi/src/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/icudtl.dat
@@ -314,6 +315,7 @@ jobs:
         libcxx_is_compatible() {
           [[ '${{ matrix.rid }}' != linux-* ]] \
             || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
+              && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
               && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]]; }
         }
@@ -445,6 +447,7 @@ jobs:
         libcxx_is_compatible() {
           [[ '${{ matrix.rid }}' != linux-* ]] \
             || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
+              && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
               && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]]; }
         }
@@ -486,6 +489,7 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/buildtools/third_party/libc++/__config_site
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++/src/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/libc++abi/src/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/icudtl.dat

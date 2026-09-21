@@ -87,6 +87,8 @@ class LinuxBuildPolicyTests(unittest.TestCase):
     def test_linux_runtime_uses_v8_bundled_libcxx(self) -> None:
         self.assertIn('v8_root/third_party/libc++/src/include', self.build_script)
         self.assertIn('v8_root/third_party/libc++abi/src/include', self.build_script)
+        self.assertIn('v8_root/buildtools/third_party/libc++', self.build_script)
+        self.assertIn('__config_site', self.build_script)
         self.assertIn("-nostdinc++ -nostdlib++", self.build_script)
         self.assertIn("CMAKE_CXX_STANDARD_LIBRARIES", self.build_script)
 

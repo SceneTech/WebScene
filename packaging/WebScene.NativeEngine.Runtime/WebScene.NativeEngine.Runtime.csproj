@@ -8,6 +8,7 @@
     <PackageId Condition="'$(PackageId)' == ''">WebScene.NativeEngine.Runtime.Template</PackageId>
     <WebSceneNativeEnginePlatformName>$(WebSceneNativeEngineRid)</WebSceneNativeEnginePlatformName>
     <WebSceneNativeEnginePlatformName Condition="'$(WebSceneNativeEngineRid)' == 'osx-arm64'">macOS on Apple silicon</WebSceneNativeEnginePlatformName>
+    <WebSceneNativeEnginePlatformName Condition="'$(WebSceneNativeEngineRid)' == 'osx-x64'">macOS on Intel</WebSceneNativeEnginePlatformName>
     <WebSceneNativeEnginePlatformName Condition="'$(WebSceneNativeEngineRid)' == 'linux-x64'">Linux x64</WebSceneNativeEnginePlatformName>
     <WebSceneNativeEnginePlatformName Condition="'$(WebSceneNativeEngineRid)' == 'win-x64'">Windows x64</WebSceneNativeEnginePlatformName>
     <Title>WebScene Native Engine Runtime for $(WebSceneNativeEnginePlatformName)</Title>

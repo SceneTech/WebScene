@@ -162,6 +162,17 @@ jobs:
           v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
+        - os: macos-15-intel
+          rid: osx-x64
+          cpu: x64
+          monolith: libv8_monolith.a
+          script: unix
+          v8_revision: 15.3.10
+          partition_alloc: true
+          v8_configuration: ReleasePartitionAlloc
+          v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
+          v8_cache_script: scripts/build-native-engine-runtime.sh
+          v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
         - os: ubuntu-latest
           rid: linux-x64
           cpu: x64
@@ -268,7 +279,7 @@ jobs:
           fi
         fi
     - name: Build, pack, and test macOS runtime
-      if: matrix.rid == 'osx-arm64'
+      if: startsWith(matrix.rid, 'osx-')
       shell: bash
       run: |
         v8_root=
@@ -336,7 +347,7 @@ jobs:
       shell: bash
       run: |
         case '${{ matrix.rid }}' in
-          osx-arm64) native_name=libwebscene_native_engine.dylib ;;
+          osx-arm64|osx-x64) native_name=libwebscene_native_engine.dylib ;;
           linux-x64) native_name=libwebscene_native_engine.so ;;
           win-x64) native_name=webscene_native_engine.dll ;;
           *) echo "Unsupported discovery RID '${{ matrix.rid }}'." >&2; exit 1 ;;
@@ -456,6 +467,7 @@ jobs:
           --profile tests/WebPlatformSubset/webscene-component-profile.json \
           --selection required \
           --expected-rid osx-arm64 \
+          --expected-rid osx-x64 \
           --expected-rid linux-x64 \
           --expected-rid win-x64 \
           --output artifacts/required-compatibility/cross-rid-summary.json
@@ -490,6 +502,7 @@ jobs:
           artifacts/nuget-packages \
           --version '${{ needs.metadata.outputs.package-version }}' \
           --native-rid osx-arm64 \
+          --native-rid osx-x64 \
           --native-rid linux-x64 \
           --native-rid win-x64 \
           --output artifacts/nuget-packages/release-packages.json
@@ -530,6 +543,7 @@ jobs:
           --profile tests/WebPlatformSubset/webscene-component-profile.json \
           --selection candidate \
           --expected-rid osx-arm64 \
+          --expected-rid osx-x64 \
           --expected-rid linux-x64 \
           --expected-rid win-x64 \
           --output artifacts/candidate-compatibility/cross-rid-summary.json
@@ -550,6 +564,8 @@ jobs:
         include:
         - os: macos-latest
           rid: osx-arm64
+        - os: macos-15-intel
+          rid: osx-x64
         - os: ubuntu-latest
           rid: linux-x64
         - os: windows-2022

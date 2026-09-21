@@ -11,7 +11,7 @@ import unittest
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[2]
 VERIFIER = REPOSITORY_ROOT / "scripts" / "verify-cross-rid-compatibility.py"
-RIDS = ("osx-arm64", "linux-x64", "win-x64")
+RIDS = ("osx-arm64", "osx-x64", "linux-x64", "win-x64")
 
 
 class CrossRidCompatibilityVerifierTests(unittest.TestCase):

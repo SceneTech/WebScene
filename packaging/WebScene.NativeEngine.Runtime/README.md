@@ -39,6 +39,7 @@ Install the package matching the application's deployment RID:
 
 ```xml
 <PackageReference Include="WebScene.NativeEngine.Runtime.osx-arm64" Version="VERSION" />
+<!-- <PackageReference Include="WebScene.NativeEngine.Runtime.osx-x64" Version="VERSION" /> -->
 <!-- <PackageReference Include="WebScene.NativeEngine.Runtime.linux-x64" Version="VERSION" /> -->
 <!-- <PackageReference Include="WebScene.NativeEngine.Runtime.win-x64" Version="VERSION" /> -->
 ```
@@ -46,6 +47,7 @@ Install the package matching the application's deployment RID:
 | Target platform | Runtime identifier | Package |
 | --- | --- | --- |
 | macOS on Apple silicon | `osx-arm64` | [`WebScene.NativeEngine.Runtime.osx-arm64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.osx-arm64/) |
+| macOS on Intel | `osx-x64` | [`WebScene.NativeEngine.Runtime.osx-x64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.osx-x64/) |
 | Linux x64 | `linux-x64` | [`WebScene.NativeEngine.Runtime.linux-x64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.linux-x64/) |
 | Windows x64 | `win-x64` | [`WebScene.NativeEngine.Runtime.win-x64`](https://www.nuget.org/packages/WebScene.NativeEngine.Runtime.win-x64/) |
 

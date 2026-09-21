@@ -27,13 +27,14 @@ PACKAGE_IDS = {
     "WebScene.Sdk.Avalonia",
     "WebScene.Sdk.Uno",
 }
-DEFAULT_NATIVE_RIDS = {"osx-arm64", "linux-x64", "win-x64"}
+DEFAULT_NATIVE_RIDS = {"osx-arm64", "osx-x64", "linux-x64", "win-x64"}
 NATIVE_V8_REVISIONS = {
     "osx-arm64": "15.3.10",
+    "osx-x64": "15.3.10",
     "linux-x64": "15.3.10",
     "win-x64": "15.3.10",
 }
-PARTITION_ALLOC_NATIVE_RIDS = {"osx-arm64", "linux-x64", "win-x64"}
+PARTITION_ALLOC_NATIVE_RIDS = {"osx-arm64", "osx-x64", "linux-x64", "win-x64"}
 REPOSITORY_URL = "https://github.com/wieslawsoltes/WebScene"
 REQUIRED_PACKAGE_TAGS = {"webscene", "web-ui", "native-ui"}
 

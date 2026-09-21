@@ -33,6 +33,8 @@
     "rust": "1.90.0",
     "rustArchiveSha256": "bff8974f2d3ee6c0e6ac926b533f65bbdd3697d2c2b925bdae5f45b9eed10a67",
     "rustArm64StdSha256": "4952abb7d9d3ed7cea4f7ea44dcb23dc67631fae4ac44a5f059b90a4b5e9223f",
+    "rustMacArm64ArchiveSha256": "9772d20d5cd736079a0ee84d00e6697cf2084f0fc4621b011e24e6f2d08d2d7f",
+    "rustMacX64StdSha256": "dd731e6f9f30cb9b2928b92b084d2f12a3abf06a481ecbd8c3553c3e6f742139",
     "depotToolsCommit": "ca054941f756b50e1a3d83727270d879bec1f331",
     "v8Revision": "15.3.10"
   },

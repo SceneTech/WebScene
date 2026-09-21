@@ -158,8 +158,34 @@ if [[ "$expected_kernel" == Darwin && -z "$rust_target_triple" ]]; then
     rust_target_triple=aarch64-apple-darwin
   fi
 fi
-if [[ "$macos_arm64_to_x64" == true ]] && command -v rustup >/dev/null 2>&1; then
-  rustup target add "$rust_target_triple"
+if [[ "$expected_kernel" == Darwin ]]; then
+  rust_version=1.90.0
+  rust_mac_arm64_sha256=9772d20d5cd736079a0ee84d00e6697cf2084f0fc4621b011e24e6f2d08d2d7f
+  rust_mac_x64_std_sha256=dd731e6f9f30cb9b2928b92b084d2f12a3abf06a481ecbd8c3553c3e6f742139
+  rust_prefix="${RUNNER_TEMP:-$repo_root/artifacts/toolchains}/webscene-rust-$rust_version"
+  rust_complete="$rust_prefix/.webscene-complete"
+  if [[ ! -f "$rust_complete" ]]; then
+    rust_download_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/webscene-rust.XXXXXX")"
+    (
+      cd "$rust_download_dir"
+      host_archive="rust-$rust_version-aarch64-apple-darwin.tar.xz"
+      x64_std_archive="rust-std-$rust_version-x86_64-apple-darwin.tar.xz"
+      curl -fsSLO "https://static.rust-lang.org/dist/$host_archive"
+      echo "$rust_mac_arm64_sha256  $host_archive" | shasum -a 256 -c -
+      tar -xf "$host_archive"
+      "${host_archive%.tar.xz}/install.sh" --prefix="$rust_prefix" --without=rust-docs
+      curl -fsSLO "https://static.rust-lang.org/dist/$x64_std_archive"
+      echo "$rust_mac_x64_std_sha256  $x64_std_archive" | shasum -a 256 -c -
+      tar -xf "$x64_std_archive"
+      "${x64_std_archive%.tar.xz}/install.sh" --prefix="$rust_prefix"
+      : > "$rust_complete"
+    )
+  fi
+  export PATH="$rust_prefix/bin:$PATH"
+  if [[ "$(rustc --version)" != "rustc $rust_version "* ]]; then
+    echo "Pinned macOS Rust toolchain validation failed: $(rustc --version)" >&2
+    exit 1
+  fi
 fi
 if [[ "$expected_kernel" == Linux ]]; then
   case "$rid:$target_triple" in

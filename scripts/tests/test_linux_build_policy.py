@@ -48,6 +48,9 @@ class LinuxBuildPolicyTests(unittest.TestCase):
                 hashlib.sha256(patch_path.read_bytes()).hexdigest(),
             )
 
+        for key in ("rustMacArm64ArchiveSha256", "rustMacX64StdSha256"):
+            self.assertIn(toolchain[key], self.build_script)
+
     def test_release_matrix_contains_both_glibc_rids(self) -> None:
         for rid in ("linux-x64", "linux-arm64"):
             self.assertIn(f"rid: {rid}", self.workflow)
@@ -90,6 +93,7 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn("macos_arm64_to_x64=true", self.build_script)
         self.assertIn('-DCMAKE_OSX_ARCHITECTURES="$macos_architecture"', self.build_script)
         self.assertIn("x86_64-apple-darwin", self.build_script)
+        self.assertIn("rust-std-$rust_version-x86_64-apple-darwin", self.build_script)
 
 
 if __name__ == "__main__":

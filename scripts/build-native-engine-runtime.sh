@@ -270,6 +270,25 @@ if [[ -z "$v8_root" ]]; then
   (
     cd "$v8_root"
     gn gen "out/$cpu/$v8_configuration" --args="$gn_args"
+    if [[ "$expected_kernel" == Linux && "$cpu" == arm64 ]]; then
+      partition_alloc_buildflags_relative="gen/third_party/partition_alloc/src/partition_alloc/buildflags.h"
+      partition_alloc_buildflags="out/$cpu/$v8_configuration/$partition_alloc_buildflags_relative"
+      ninja -C "out/$cpu/$v8_configuration" "$partition_alloc_buildflags_relative"
+      if [[ ! -f "$partition_alloc_buildflags" ]]; then
+        echo "PartitionAlloc build flags were not generated at '$partition_alloc_buildflags'." >&2
+        exit 1
+      fi
+      # V8's embedder overrides can retain ARM MTE even when the standalone
+      # PartitionAlloc default is patched. glibc 2.27 has no sys/ifunc.h, so
+      # force the generated target flag off before Ninja consumes it.
+      sed -i \
+        's/^#define PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (1)$/#define PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (0)/' \
+        "$partition_alloc_buildflags"
+      if ! grep -Fqx '#define PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (0)' "$partition_alloc_buildflags"; then
+        echo "Unable to disable PartitionAlloc memory tagging for the glibc 2.27 ARM64 target." >&2
+        exit 1
+      fi
+    fi
     ninja -C "out/$cpu/$v8_configuration" obj/libv8_monolith.a
   )
   v8_output_root="$v8_root/out/$cpu/$v8_configuration"

@@ -1,5 +1,12 @@
 set(CMAKE_SYSTEM_NAME Linux)
 
+# CMake re-evaluates this toolchain inside try_compile projects. Explicitly
+# forward WebScene's target identity so compiler ABI checks remain cross builds.
+set(CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
+  WEBSCENE_LINUX_TARGET_TRIPLE
+  WEBSCENE_RUST_TARGET_TRIPLE
+  CMAKE_SYSROOT)
+
 if(NOT DEFINED WEBSCENE_LINUX_TARGET_TRIPLE)
   message(FATAL_ERROR "WEBSCENE_LINUX_TARGET_TRIPLE is required")
 endif()

@@ -17,6 +17,8 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         cls.lock = json.loads((PACKAGING / "linux-build-lock.json").read_text())
         cls.dockerfile = (PACKAGING / "Dockerfile.linux-glibc").read_text()
         cls.workflow = (ROOT / ".github/workflows/native-runtime-packages.yml").read_text()
+        cls.build_script = (ROOT / "scripts/build-native-engine-runtime.sh").read_text()
+        cls.toolchain = (ROOT / "scripts/linux-glibc-toolchain.cmake").read_text()
 
     def test_all_container_inputs_are_digest_pinned(self) -> None:
         from_lines = re.findall(r"^FROM\s+(\S+)", self.dockerfile, re.MULTILINE)
@@ -52,6 +54,18 @@ class LinuxBuildPolicyTests(unittest.TestCase):
             self.assertIn(f"--expected-rid {rid}", self.workflow)
             self.assertIn(f"--native-rid {rid}", self.workflow)
         self.assertIn("github.ref_type != 'tag'", self.workflow)
+
+    def test_arm64_disables_memory_tagging_for_glibc_227(self) -> None:
+        self.assertIn(
+            "PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (0)",
+            self.build_script,
+        )
+        self.assertIn("V8PartitionAllocGlibc227Arm64Patch.txt", self.build_script)
+
+    def test_cmake_try_compile_keeps_cross_target_identity(self) -> None:
+        self.assertIn("CMAKE_TRY_COMPILE_PLATFORM_VARIABLES", self.toolchain)
+        self.assertIn("WEBSCENE_LINUX_TARGET_TRIPLE", self.toolchain)
+        self.assertIn("CMAKE_SYSROOT", self.toolchain)
 
 
 if __name__ == "__main__":

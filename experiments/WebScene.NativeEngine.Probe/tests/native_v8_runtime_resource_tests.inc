@@ -769,6 +769,61 @@ void test_same_origin_iframe_navigation_document_replacement()
             + std::to_string(requests_before_cross_document_history)
             + " after=" + std::to_string(server.requests.load(std::memory_order_relaxed)));
     execute(engine, R"JS(
+      globalThis.__ownerDocumentUrlReflection = {
+        complete:false, first:false, changed:false, srcFirst:false,
+        srcChanged:false, authored:false, error:null
+      };
+      (() => {
+        const frame = document.createElement('iframe');
+        frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+        frame.src = './fake.html?id=markdown-preview';
+        document.body.appendChild(frame);
+        frame.contentWindow.addEventListener('DOMContentLoaded', event => {
+          try {
+            const child = event.target;
+            const link = child.createElement('a');
+            link.setAttribute('href', './relative.txt');
+            child.body.appendChild(link);
+            const input = child.createElement('input');
+            input.setAttribute('src', './relative.png');
+            child.body.appendChild(input);
+            __ownerDocumentUrlReflection.first =
+              link.href === new URL('./relative.txt', child.baseURI).href;
+            __ownerDocumentUrlReflection.srcFirst =
+              input.src === new URL('./relative.png', child.baseURI).href;
+            const base = child.createElement('base');
+            base.setAttribute('href', '/nested-owner/');
+            child.head.appendChild(base);
+            __ownerDocumentUrlReflection.changed =
+              link.href === new URL('./relative.txt', child.baseURI).href
+              && link.href.endsWith('/nested-owner/relative.txt');
+            __ownerDocumentUrlReflection.srcChanged =
+              input.src === new URL('./relative.png', child.baseURI).href
+              && input.src.endsWith('/nested-owner/relative.png');
+            __ownerDocumentUrlReflection.authored =
+              link.getAttribute('href') === './relative.txt'
+              && input.getAttribute('src') === './relative.png';
+          } catch (error) {
+            __ownerDocumentUrlReflection.error = String(error && error.stack || error);
+          } finally {
+            frame.remove();
+            __ownerDocumentUrlReflection.complete = true;
+          }
+        });
+      })();
+    )JS", "iframe-owner-document-url-reflection.js");
+    require(evaluate_until_equals(engine, "__ownerDocumentUrlReflection.complete",
+            "iframe-owner-document-url-reflection-complete.js", "true", 4'000) == "true",
+        "nested owner-document URL reflection timed out");
+    require(evaluate(engine, R"JS((() => {
+      const s = __ownerDocumentUrlReflection;
+      return s.error === null && s.first && s.changed && s.srcFirst
+        && s.srcChanged && s.authored;
+    })())JS", "iframe-owner-document-url-reflection-result.js") == "true",
+        "nested owner-document URL reflection diverged: "
+            + evaluate(engine, "JSON.stringify(__ownerDocumentUrlReflection)",
+                "iframe-owner-document-url-reflection-detail.js"));
+    execute(engine, R"JS(
       globalThis.__iframeLifecycleGate = {
         complete:false, error:null, cycles:0, maximumLiveFrames:0,
         p95:0, opaqueDenied:false, crossOriginDenied:false

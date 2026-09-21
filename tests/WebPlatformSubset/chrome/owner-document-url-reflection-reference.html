@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Owner document URL reflection reference</title>
+<output id="result">PENDING</output>
+<iframe id="child" srcdoc="<!doctype html><head><base href='https://example.test/first/'></head><body></body>"></iframe>
+<script>
+  child.addEventListener('load', () => {
+    const doc = child.contentDocument;
+    const link = doc.createElement('a');
+    link.setAttribute('href', './relative.txt');
+    doc.body.appendChild(link);
+    const input = doc.createElement('input');
+    input.setAttribute('src', './relative.png');
+    doc.body.appendChild(input);
+    const first = link.href === 'https://example.test/first/relative.txt'
+      && input.src === 'https://example.test/first/relative.png';
+    doc.querySelector('base').setAttribute('href', 'https://example.test/second/');
+    const second = link.href === 'https://example.test/second/relative.txt'
+      && input.src === 'https://example.test/second/relative.png';
+    result.textContent = first && second && link.getAttribute('href') === './relative.txt'
+      && input.getAttribute('src') === './relative.png'
+      ? 'PASS' : `FAIL first=${first} second=${second} href=${link.href} src=${input.src}`;
+  });
+</script>

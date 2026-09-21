@@ -5125,7 +5125,10 @@
                     || node->tag == "video"));
         if (iterator != node->attributes.end() && url_reflected) {
             auto* self = current(info.GetIsolate());
-            auto base = self->current_base_address();
+            // URL reflection follows the element's owning document, even when
+            // a same-origin caller reads it from another browsing context.
+            auto base = self->effective_document_base(
+                self->css_cascade_root_for_node(*node));
             if (base.empty()) {
                 auto local_context = info.GetIsolate()->GetCurrentContext();
                 v8::Local<v8::Value> location;

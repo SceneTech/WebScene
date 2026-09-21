@@ -341,7 +341,16 @@ if [[ -z "$v8_root" ]]; then
         exit 1
       fi
     fi
-    ninja -C "out/$cpu/$v8_configuration" obj/libv8_monolith.a
+    v8_ninja_targets=(obj/libv8_monolith.a)
+    if [[ "$expected_kernel" == Linux ]]; then
+      # Cross builds need target-architecture C++ runtime archives in the
+      # primary toolchain. V8's ARM64 monolith otherwise builds libc++ only for
+      # the x64 host-tools toolchain used by mksnapshot.
+      v8_ninja_targets+=(
+        obj/buildtools/third_party/libc++/libc++.a
+        obj/buildtools/third_party/libc++abi/libc++abi.a)
+    fi
+    ninja -C "out/$cpu/$v8_configuration" "${v8_ninja_targets[@]}"
   )
   v8_output_root="$v8_root/out/$cpu/$v8_configuration"
 fi
@@ -503,20 +512,18 @@ if [[ "$thin_lto" == true ]]; then
     -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
   )
 elif [[ "$expected_kernel" == Linux ]]; then
-  # V8's Linux archive must be linked with LLD. The compiler is selectable so
-  # the Ubuntu 22.04 compatibility image can use GCC 11's complete C++20
-  # standard library instead of Jammy's Clang 14 source_location support.
-  linux_cxx="${CXX:-clang++}"
-  if ! command -v "$linux_cxx" >/dev/null 2>&1 || ! command -v ld.lld >/dev/null 2>&1; then
-    echo "Linux native runtime builds require '$linux_cxx' and ld.lld." >&2
-    exit 1
-  fi
+  # Compile the embedding library with the exact Chromium LLVM and libc++
+  # revision used for V8. New libc++ headers can require compiler features and
+  # configuration defines absent from the builder image's host toolchain.
   target_library_dir="$sysroot/usr/lib/$target_triple"
   target_include_dir="$sysroot/usr/include"
   v8_libcxx_config_include="$v8_root/buildtools/third_party/libc++"
   v8_libcxx_include="$v8_root/third_party/libc++/src/include"
   v8_libcxxabi_include="$v8_root/third_party/libc++abi/src/include"
   v8_libcxx_archive="$v8_output_root/obj/buildtools/third_party/libc++/libc++.a"
+  v8_libcxxabi_archive="$v8_output_root/obj/buildtools/third_party/libc++abi/libc++abi.a"
+  v8_llvm_root="$v8_root/third_party/llvm-build/Release+Asserts"
+  v8_llvm_bin="$v8_llvm_root/bin"
   for target_dependency in \
       "$target_include_dir/openssl/ssl.h" \
       "$target_library_dir/libcrypto.so" \
@@ -526,15 +533,33 @@ elif [[ "$expected_kernel" == Linux ]]; then
       "$v8_libcxx_config_include/__config_site" \
       "$v8_libcxx_include/source_location" \
       "$v8_libcxxabi_include/cxxabi.h" \
-      "$v8_libcxx_archive"; do
+      "$v8_libcxx_archive" \
+      "$v8_libcxxabi_archive" \
+      "$v8_llvm_bin/clang" \
+      "$v8_llvm_bin/clang++" \
+      "$v8_llvm_bin/llvm-ar" \
+      "$v8_llvm_bin/ld.lld"; do
     if [[ ! -e "$target_dependency" ]]; then
       echo "Linux sysroot is missing required native dependency '$target_dependency'." >&2
       exit 1
     fi
   done
+  v8_llvm_ranlib="$v8_llvm_bin/llvm-ranlib"
+  if [[ ! -x "$v8_llvm_ranlib" ]]; then
+    ln -s "$v8_llvm_bin/llvm-ar" "$v8_llvm_ranlib"
+  fi
   cmake_args+=(
     -DCMAKE_TOOLCHAIN_FILE="$repo_root/scripts/linux-glibc-toolchain.cmake"
     -DCMAKE_SYSROOT="$sysroot"
+    -DCMAKE_C_COMPILER="$v8_llvm_bin/clang"
+    -DCMAKE_CXX_COMPILER="$v8_llvm_bin/clang++"
+    -DCMAKE_AR="$v8_llvm_bin/llvm-ar"
+    -DCMAKE_RANLIB="$v8_llvm_ranlib"
+    -DCMAKE_C_COMPILER_AR="$v8_llvm_bin/llvm-ar"
+    -DCMAKE_C_COMPILER_RANLIB="$v8_llvm_ranlib"
+    -DCMAKE_CXX_COMPILER_AR="$v8_llvm_bin/llvm-ar"
+    -DCMAKE_CXX_COMPILER_RANLIB="$v8_llvm_ranlib"
+    -DCMAKE_LINKER="$v8_llvm_bin/ld.lld"
     -DWEBSCENE_LINUX_TARGET_TRIPLE="$target_triple"
     -DWEBSCENE_RUST_TARGET_TRIPLE="$rust_target_triple"
     -DOPENSSL_ROOT_DIR="$sysroot/usr"
@@ -544,8 +569,8 @@ elif [[ "$expected_kernel" == Linux ]]; then
     -DZLIB_INCLUDE_DIR="$target_include_dir"
     -DZLIB_LIBRARY="$target_library_dir/libz.so"
     "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
-    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -I$v8_libcxx_config_include -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include"
-    -DCMAKE_CXX_STANDARD_LIBRARIES="$v8_libcxx_archive"
+    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -I$v8_libcxx_config_include -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCPP_INSTRUMENTED_WITH_ASAN=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"
+    "-DCMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive;$v8_libcxxabi_archive"
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,--build-id=sha1"
   )

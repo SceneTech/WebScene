@@ -238,8 +238,10 @@ jobs:
           v8_cache_generation: v2-v8-15.3.10-glibc227-cross-x64
           v8_cache_extra_paths: |
             artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++/__config_site
+            artifacts/native-engine-v8/linux-*/v8/out/*/*/obj/buildtools/third_party/libc++abi/libc++abi.a
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++/src/include
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++abi/src/include
+            artifacts/native-engine-v8/linux-*/v8/third_party/llvm-build/Release+Asserts
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
         - os: [self-hosted, Linux, X64]
@@ -254,8 +256,10 @@ jobs:
           v8_cache_generation: v3-v8-15.3.10-glibc227-cross-arm64
           v8_cache_extra_paths: |
             artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++/__config_site
+            artifacts/native-engine-v8/linux-*/v8/out/*/*/obj/buildtools/third_party/libc++abi/libc++abi.a
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++/src/include
             artifacts/native-engine-v8/linux-*/v8/third_party/libc++abi/src/include
+            artifacts/native-engine-v8/linux-*/v8/third_party/llvm-build/Release+Asserts
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
         - os: windows-2022
@@ -324,9 +328,12 @@ jobs:
         libcxx_is_compatible() {
           [[ '${{ matrix.rid }}' != linux-* ]] \
             || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
+              && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
-              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]]; }
+              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/clang++" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/ld.lld" ]]; }
         }
         args_are_compatible() {
           grep -Eq '^v8_enable_pointer_compression *= *true$' "$args" \
@@ -456,9 +463,12 @@ jobs:
         libcxx_is_compatible() {
           [[ '${{ matrix.rid }}' != linux-* ]] \
             || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
+              && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
-              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]]; }
+              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/clang++" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/ld.lld" ]]; }
         }
         args_are_compatible() {
           grep -Eq '^v8_enable_pointer_compression *= *true$' "$args" \

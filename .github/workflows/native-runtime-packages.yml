@@ -205,7 +205,7 @@ jobs:
           v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
-        - os: [self-hosted, macOS, X64]
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-x64
           cpu: x64
           monolith: libv8_monolith.a
@@ -691,7 +691,7 @@ jobs:
         include:
         - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
-        - os: [self-hosted, macOS, X64]
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-x64
         - os: [self-hosted, Linux, X64]
           rid: linux-x64

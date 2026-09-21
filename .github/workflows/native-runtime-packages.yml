@@ -208,7 +208,7 @@ jobs:
           v8_revision: 15.3.10
           partition_alloc: true
           v8_configuration: ReleasePartitionAlloc
-          v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
+          v8_cache_generation: v10-v8-15.3.10-pa-system-libcxx-macos-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
         - os: [self-hosted, macOS, ARM64]
@@ -219,7 +219,7 @@ jobs:
           v8_revision: 15.3.10
           partition_alloc: true
           v8_configuration: ReleasePartitionAlloc
-          v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
+          v8_cache_generation: v10-v8-15.3.10-pa-system-libcxx-macos-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
         - os: [self-hosted, Linux, X64]
@@ -318,7 +318,10 @@ jobs:
             && { [[ '${{ matrix.rid }}' != linux-* ]] \
               || { grep -Eq '^use_lld *= *true$' "$args" \
                 && grep -Eq '^use_sysroot *= *true$' "$args" \
-                && grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$args"; }; }
+                && grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$args" \
+                && grep -Eq '^use_custom_libcxx *= *true$' "$args"; }; } \
+            && { [[ '${{ matrix.rid }}' != osx-* ]] \
+              || grep -Eq '^use_custom_libcxx *= *false$' "$args"; }
         }
         if [[ -f "$root/include/v8.h" \
           && -f "$root/include/v8-inspector.h" \
@@ -441,8 +444,11 @@ jobs:
               || { grep -Eq '^use_lld *= *true$' "$args" \
                 && grep -Eq '^use_sysroot *= *true$' "$args" \
                 && grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$args" \
+                && grep -Eq '^use_custom_libcxx *= *true$' "$args" \
                 && grep -Eq '^use_allocator_shim *= *false$' "$args" \
-                && grep -Eq '^use_partition_alloc_as_malloc *= *false$' "$args"; }; }
+                && grep -Eq '^use_partition_alloc_as_malloc *= *false$' "$args"; }; } \
+            && { [[ '${{ matrix.rid }}' != osx-* ]] \
+              || grep -Eq '^use_custom_libcxx *= *false$' "$args"; }
         }
         if [[ -f "$root/include/v8.h" \
           && -f "$root/include/v8-inspector.h" \

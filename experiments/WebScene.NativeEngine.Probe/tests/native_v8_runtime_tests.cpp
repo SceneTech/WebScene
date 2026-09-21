@@ -1,6 +1,7 @@
 #include "webscene_native_engine.h"
 #include "webscene_native_dom.h"
 #include "webscene_embed_fallback.h"
+#include "webscene_native_websocket.h"
 
 #include <ixwebsocket/IXGetFreePort.h>
 #include <ixwebsocket/IXNetSystem.h>
@@ -766,6 +767,7 @@ int main()
             return 0;
         }
         if (selected == "websocket-file-reader") {
+            test_native_websocket_cross_socket_fairness();
             test_native_websocket_browser_api();
             test_native_websocket_protocol_handshake_timing();
             test_native_file_reader_task_source_fairness();
@@ -1480,6 +1482,7 @@ int main()
         "engine rejected an asynchronous low-memory request");
     test_engine_memory_metrics_are_worker_snapshots(engine);
     test_hidden_engine_reclamation_is_debounced_and_cancelable(engine);
+    test_native_websocket_cross_socket_fairness();
     test_native_websocket_browser_api();
     test_native_websocket_protocol_handshake_timing();
     test_native_file_reader_task_source_fairness();

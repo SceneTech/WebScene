@@ -33,6 +33,130 @@ size_t load_websocket_cookie_document_v4(
     return required;
 }
 
+void test_native_websocket_cross_socket_fairness()
+{
+    require(ix::initNetSystem(), "cross-socket network initialization failed");
+    const auto port = ix::getFreePort();
+    require(port > 0, "cross-socket server could not reserve a port");
+
+    std::mutex server_mutex;
+    std::condition_variable server_changed;
+    ix::WebSocket* bulk_peer = nullptr;
+    bool bulk_registered = false;
+    bool marker_sent = false;
+    constexpr auto bulk_frames = 128U;
+    ix::WebSocketServer server(port, "127.0.0.1");
+    server.setOnClientMessageCallback(
+        [&](std::shared_ptr<ix::ConnectionState>,
+            ix::WebSocket& socket,
+            const ix::WebSocketMessagePtr& message) {
+            if (message->type != ix::WebSocketMessageType::Message) return;
+            if (message->str == "register-bulk") {
+                {
+                    std::lock_guard lock(server_mutex);
+                    bulk_peer = &socket;
+                    bulk_registered = true;
+                }
+                server_changed.notify_all();
+                return;
+            }
+            if (message->str != "send-marker") return;
+            ix::WebSocket* target = nullptr;
+            {
+                std::lock_guard lock(server_mutex);
+                target = bulk_peer;
+            }
+            require(target != nullptr, "bulk socket was not registered");
+            const std::string bulk_payload(4096U, 'b');
+            for (auto index = 0U; index < bulk_frames; ++index) {
+                target->sendBinary(bulk_payload);
+            }
+            // Let the independent receive thread queue the bulk burst before
+            // the latency-sensitive byte arrives on this socket.
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            socket.sendBinary("R");
+            {
+                std::lock_guard lock(server_mutex);
+                marker_sent = true;
+            }
+            server_changed.notify_all();
+        });
+    const auto listening = server.listen();
+    require(listening.first, "cross-socket server could not listen");
+    server.start();
+
+    webscene_native::native_websocket_transport transport;
+    const auto address = std::string("ws://127.0.0.1:") + std::to_string(port);
+    const auto bulk_socket = transport.open(address + "/bulk", {}, {}, {});
+    const auto latency_socket = transport.open(address + "/latency", {}, {}, {});
+    require(bulk_socket != 0U && latency_socket != 0U,
+        "cross-socket clients could not open");
+
+    auto opened = 0U;
+    const auto open_deadline = std::chrono::steady_clock::now()
+        + std::chrono::seconds(5);
+    while (opened < 2U && std::chrono::steady_clock::now() < open_deadline) {
+        webscene_native::native_websocket_transport::event event;
+        if (!transport.try_pop(event)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        if (event.type
+            == webscene_native::native_websocket_transport::event_type::opened) {
+            ++opened;
+        }
+    }
+    require(opened == 2U, "cross-socket clients did not open");
+    static constexpr std::string_view register_bulk{"register-bulk"};
+    require(transport.send(
+        bulk_socket,
+        reinterpret_cast<const uint8_t*>(register_bulk.data()),
+        register_bulk.size(),
+        false), "bulk registration send failed");
+    {
+        std::unique_lock lock(server_mutex);
+        require(server_changed.wait_for(lock, std::chrono::seconds(5), [&] {
+            return bulk_registered;
+        }), "bulk registration did not arrive");
+    }
+    static constexpr std::string_view send_marker{"send-marker"};
+    require(transport.send(
+        latency_socket,
+        reinterpret_cast<const uint8_t*>(send_marker.data()),
+        send_marker.size(),
+        false), "marker request send failed");
+    {
+        std::unique_lock lock(server_mutex);
+        require(server_changed.wait_for(lock, std::chrono::seconds(5), [&] {
+            return marker_sent;
+        }), "latency marker was not sent");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    auto events_through_marker = 0U;
+    auto saw_marker = false;
+    webscene_native::native_websocket_transport::event event;
+    while (transport.try_pop(event)) {
+        ++events_through_marker;
+        if (event.socket_id == latency_socket
+            && event.type
+                == webscene_native::native_websocket_transport::event_type::message
+            && event.payload.size() == 1U && event.payload.front() == 'R') {
+            saw_marker = true;
+            break;
+        }
+    }
+    require(saw_marker, "latency marker was not dispatched");
+    require(events_through_marker <= 2U,
+        "bulk WebSocket traffic delayed an independent socket");
+
+    transport.shutdown();
+    server.stop();
+    require(ix::uninitNetSystem(), "cross-socket network cleanup failed");
+    std::cout << "WebSocket cross-socket fairness gate: bulkFrames="
+              << bulk_frames << " eventsThroughMarker=" << events_through_marker << "\n";
+}
+
 void test_native_websocket_browser_api()
 {
     require(ix::initNetSystem(), "IXWebSocket network initialization failed");

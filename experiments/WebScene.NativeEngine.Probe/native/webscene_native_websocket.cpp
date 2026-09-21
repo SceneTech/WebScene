@@ -48,11 +48,31 @@ struct socket_record final {
 struct native_websocket_transport::state final {
     mutable std::mutex mutex;
     std::unordered_map<uint64_t, std::shared_ptr<socket_record>> sockets;
-    std::deque<event> events;
+    // Preserve FIFO ordering within each WebSocket while rotating between
+    // sockets. A single global FIFO lets a bulk-transfer connection delay a
+    // latency-sensitive protocol byte on an otherwise independent socket.
+    std::unordered_map<uint64_t, std::deque<event>> events_by_socket;
+    std::deque<uint64_t> ready_sockets;
+    size_t queued_events{0};
     size_t queued_bytes{0};
     uint64_t next_socket_id{1};
     bool shutting_down{false};
     std::function<void()> event_available;
+
+    void evict_next_event()
+    {
+        if (ready_sockets.empty()) return;
+        const auto socket_id = ready_sockets.front();
+        ready_sockets.pop_front();
+        const auto found = events_by_socket.find(socket_id);
+        if (found == events_by_socket.end() || found->second.empty()) return;
+        auto& socket_events = found->second;
+        queued_bytes -= socket_events.front().payload.size();
+        socket_events.pop_front();
+        --queued_events;
+        if (socket_events.empty()) events_by_socket.erase(found);
+        else ready_sockets.push_back(socket_id);
+    }
 
     bool enqueue(event value, bool priority = false)
     {
@@ -61,21 +81,23 @@ struct native_websocket_transport::state final {
             std::lock_guard lock(mutex);
             if (shutting_down) return false;
             if (priority) {
-                while (!events.empty()
-                    && (events.size() >= maximum_queued_websocket_events
+                while (queued_events != 0U
+                    && (queued_events >= maximum_queued_websocket_events
                         || value.payload.size()
                             > maximum_queued_websocket_bytes - queued_bytes)) {
-                    queued_bytes -= events.front().payload.size();
-                    events.pop_front();
+                    evict_next_event();
                 }
             }
-            if (events.size() >= maximum_queued_websocket_events
+            if (queued_events >= maximum_queued_websocket_events
                 || value.payload.size() > maximum_queued_websocket_bytes - queued_bytes) {
                 return false;
             }
-            const auto was_empty = events.empty();
+            const auto was_empty = queued_events == 0U;
+            auto& socket_events = events_by_socket[value.socket_id];
+            if (socket_events.empty()) ready_sockets.push_back(value.socket_id);
             queued_bytes += value.payload.size();
-            events.push_back(std::move(value));
+            ++queued_events;
+            socket_events.push_back(std::move(value));
             if (was_empty) notify = event_available;
         }
         if (notify) notify();
@@ -263,17 +285,25 @@ void native_websocket_transport::set_event_available_callback(
 bool native_websocket_transport::try_pop(event& value)
 {
     std::lock_guard lock(state_->mutex);
-    if (state_->events.empty()) return false;
-    value = std::move(state_->events.front());
+    if (state_->ready_sockets.empty()) return false;
+    const auto socket_id = state_->ready_sockets.front();
+    state_->ready_sockets.pop_front();
+    const auto found = state_->events_by_socket.find(socket_id);
+    if (found == state_->events_by_socket.end() || found->second.empty()) return false;
+    auto& socket_events = found->second;
+    value = std::move(socket_events.front());
     state_->queued_bytes -= value.payload.size();
-    state_->events.pop_front();
+    socket_events.pop_front();
+    --state_->queued_events;
+    if (socket_events.empty()) state_->events_by_socket.erase(found);
+    else state_->ready_sockets.push_back(socket_id);
     return true;
 }
 
 bool native_websocket_transport::has_pending_events() const noexcept
 {
     std::lock_guard lock(state_->mutex);
-    return !state_->events.empty();
+    return state_->queued_events != 0U;
 }
 
 void native_websocket_transport::release(uint64_t socket_id)
@@ -300,7 +330,9 @@ void native_websocket_transport::shutdown()
         state_->shutting_down = true;
         state_->event_available = {};
         sockets.swap(state_->sockets);
-        state_->events.clear();
+        state_->events_by_socket.clear();
+        state_->ready_sockets.clear();
+        state_->queued_events = 0;
         state_->queued_bytes = 0;
     }
     for (auto& [socket_id, record] : sockets) {

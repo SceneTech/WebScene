@@ -22,6 +22,17 @@ else()
   message(FATAL_ERROR "Unsupported Linux target triple: ${WEBSCENE_LINUX_TARGET_TRIPLE}")
 endif()
 
+# The pinned sysroots use Debian multiarch directories. CMake does not always
+# infer these while cross-compiling, so make the target layout available to all
+# find_package/find_library calls instead of resolving libraries from the host.
+set(CMAKE_LIBRARY_ARCHITECTURE "${WEBSCENE_LINUX_TARGET_TRIPLE}")
+list(APPEND CMAKE_SYSTEM_LIBRARY_PATH
+  "/lib/${WEBSCENE_LINUX_TARGET_TRIPLE}"
+  "/usr/lib/${WEBSCENE_LINUX_TARGET_TRIPLE}")
+list(APPEND CMAKE_SYSTEM_INCLUDE_PATH
+  "/usr/include/${WEBSCENE_LINUX_TARGET_TRIPLE}"
+  "/usr/include")
+
 set(CMAKE_C_COMPILER clang)
 set(CMAKE_CXX_COMPILER clang++)
 set(CMAKE_C_COMPILER_TARGET "${WEBSCENE_LINUX_TARGET_TRIPLE}")

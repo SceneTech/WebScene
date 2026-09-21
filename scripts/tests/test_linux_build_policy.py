@@ -68,9 +68,18 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn("CMAKE_SYSROOT", self.toolchain)
 
     def test_linux_openssl_is_resolved_only_from_the_target_sysroot(self) -> None:
-        self.assertIn('openssl_library_dir="$sysroot/usr/lib/$target_triple"', self.build_script)
-        self.assertIn('-DOPENSSL_CRYPTO_LIBRARY="$openssl_library_dir/libcrypto.so"', self.build_script)
-        self.assertIn('-DOPENSSL_SSL_LIBRARY="$openssl_library_dir/libssl.so"', self.build_script)
+        self.assertIn('target_library_dir="$sysroot/usr/lib/$target_triple"', self.build_script)
+        self.assertIn('-DOPENSSL_CRYPTO_LIBRARY="$target_library_dir/libcrypto.so"', self.build_script)
+        self.assertIn('-DOPENSSL_SSL_LIBRARY="$target_library_dir/libssl.so"', self.build_script)
+
+    def test_linux_zlib_is_resolved_only_from_the_target_sysroot(self) -> None:
+        self.assertIn('-DZLIB_INCLUDE_DIR="$target_include_dir"', self.build_script)
+        self.assertIn('-DZLIB_LIBRARY="$target_library_dir/libz.so"', self.build_script)
+
+    def test_toolchain_exposes_target_multiarch_search_paths(self) -> None:
+        self.assertIn("CMAKE_LIBRARY_ARCHITECTURE", self.toolchain)
+        self.assertIn('/usr/lib/${WEBSCENE_LINUX_TARGET_TRIPLE}', self.toolchain)
+        self.assertIn('/usr/include/${WEBSCENE_LINUX_TARGET_TRIPLE}', self.toolchain)
 
 
 if __name__ == "__main__":

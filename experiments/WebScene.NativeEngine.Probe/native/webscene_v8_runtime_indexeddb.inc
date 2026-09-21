@@ -603,6 +603,17 @@
         schedule_timer(info, false, true);
     }
 
+    static void indexeddb_should_defer_close(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(),
+            self != nullptr
+                && self->window_close_lifecycle_dispatching
+                && self->has_terminal_handoff_persistence_work()));
+    }
+
     void install_indexeddb(v8::Local<v8::Context> realm)
     {
         if (indexeddb == nullptr) return;
@@ -616,6 +627,11 @@
             realm,
             js_string(isolate, "__webSceneIndexedDBTask"),
             v8::Function::New(realm, indexeddb_schedule_task).ToLocalChecked(),
+            v8::PropertyAttribute::DontEnum).Check();
+        global->DefineOwnProperty(
+            realm,
+            js_string(isolate, "__webSceneIndexedDBShouldDeferClose"),
+            v8::Function::New(realm, indexeddb_should_defer_close).ToLocalChecked(),
             v8::PropertyAttribute::DontEnum).Check();
         auto script = v8::Script::Compile(
             realm,

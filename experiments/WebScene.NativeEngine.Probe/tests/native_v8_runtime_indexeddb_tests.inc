@@ -679,6 +679,12 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
             };
           }, 0);
           clearTimeout(pendingFlushTimer);
+          // Browser workbench disposal closes its storage database from the
+          // same shutdown turn before the retained callback starts.
+          Promise.resolve().then(() => {
+            terminalIndexedDb.order.push('close-request');
+            database.close();
+          });
         });
         addEventListener('pagehide', () => {
           terminalIndexedDb.order.push('pagehide');
@@ -732,8 +738,10 @@ void test_terminal_navigation_waits_for_indexeddb_commit()
             "&&terminalIndexedDb.continuation===true"
             "&&!terminalIndexedDb.ordinaryCancelFired"
             "&&terminalIndexedDb.order[0]==='beforeunload'"
+            "&&terminalIndexedDb.order.indexOf('close-request')>0"
             "&&terminalIndexedDb.order.indexOf('preexisting-commit')>0"
-            "&&terminalIndexedDb.order.indexOf('flush-timer')>0"
+            "&&terminalIndexedDb.order.indexOf('flush-timer')>"
+                "terminalIndexedDb.order.indexOf('close-request')"
             "&&terminalIndexedDb.order.indexOf('commit')>"
                 "terminalIndexedDb.order.indexOf('flush-timer')"
             "&&terminalIndexedDb.order.indexOf('continuation')>"

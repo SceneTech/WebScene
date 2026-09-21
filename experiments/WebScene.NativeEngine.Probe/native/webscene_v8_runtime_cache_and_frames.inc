@@ -1589,17 +1589,25 @@
                     'Blob.constructor', 'partially-supported',
                     'byte-preserving construction, type, size, object URLs, and downloads without slicing or streaming');
                   const chunks = [];
+                  const stringParts = [];
                   let size = 0;
                   for (const part of parts) {
                     let bytes;
                     if (part instanceof WebSceneBlob) {
-                    bytes = part._bytes;
-                  } else if (part instanceof ArrayBuffer) {
+                      bytes = part._bytes;
+                      stringParts.push({ blob: part });
+                    } else if (part instanceof ArrayBuffer) {
                       bytes = new Uint8Array(part);
+                      stringParts.push(String(part));
                     } else if (ArrayBuffer.isView(part)) {
                       bytes = new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+                      stringParts.push(part.constructor === Uint8Array
+                        ? { start: size, end: size + bytes.byteLength }
+                        : String(part));
                     } else {
-                      bytes = new TextEncoder().encode(String(part));
+                      const text = String(part);
+                      bytes = new TextEncoder().encode(text);
+                      stringParts.push(text);
                     }
                     chunks.push(bytes);
                     size += bytes.byteLength;
@@ -1612,9 +1620,19 @@
                   }
                   this.size = size;
                   this.type = String(options.type || '').toLowerCase();
-                  this._text = Array.from(parts, String).join('');
+                  this._stringParts = stringParts;
+                  this._text = undefined;
                 }
-                toString() { return this._text; }
+                toString() {
+                  if (this._text === undefined) {
+                    this._text = this._stringParts.map(part => {
+                      if (typeof part === 'string') return part;
+                      if (part.blob) return String(part.blob);
+                      return this._bytes.subarray(part.start, part.end).toString();
+                    }).join('');
+                  }
+                  return this._text;
+                }
               async text() { return new TextDecoder().decode(this._bytes); }
               async arrayBuffer() { return this._bytes.slice().buffer; }
               slice(start=0, end=this.size, type='') {

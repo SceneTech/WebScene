@@ -1077,6 +1077,111 @@ void test_relative_sibling_has_scaling()
 #endif
 }
 
+void test_direct_subject_selector_invalidation_scaling()
+{
+    constexpr auto affected_count = 64;
+    constexpr auto relevant_rule_count = 512;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::vector<std::array<uint64_t, 4>> observations;
+#endif
+    for (const auto unrelated_count : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "direct-subject invalidation engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(engine, 1, "direct-subject invalidation viewport not applied");
+        auto source = std::string{R"JS((() => {
+          const style = document.createElement('style');
+          style.textContent = '.direct-subject { display:block; width:11px }' +
+            Array.from({length:RELEVANT}, (_, index) =>
+              `.direct-subject.active { z-index:${index} }`).join('') +
+            '.direct-subject.active { width:41px }' +
+            Array.from({length:UNRELATED}, (_, index) =>
+              `.unrelated-${index}.enabled { height:${index + 1}px }`).join('');
+          document.body.innerHTML = '<main>' +
+            '<div class="direct-subject"></div>'.repeat(AFFECTED) + '</main>';
+          document.head.appendChild(style);
+          const subjects = Array.from(document.querySelectorAll('.direct-subject'));
+          globalThis.mutateDirectSubjects = enabled => {
+            for (const subject of subjects) subject.classList.toggle('active', enabled);
+            return subjects.every(subject =>
+              getComputedStyle(subject).width === (enabled ? '41px' : '11px'));
+          };
+          return [subjects.length, subjects[0] ? getComputedStyle(subjects[0]).width : null,
+            mutateDirectSubjects(false)];
+        })())JS"};
+        source.replace(source.find("RELEVANT"), 8, std::to_string(relevant_rule_count));
+        source.replace(source.find("AFFECTED"), 8, std::to_string(affected_count));
+        source.replace(source.find("UNRELATED"), 9, std::to_string(unrelated_count));
+        const auto setup = evaluate(
+            engine, source, "direct-subject-invalidation-setup.js");
+        require(setup == "[64,\"11px\",true]",
+            "direct-subject invalidation setup diverged: " + setup);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        const auto direct_subject_fast_path =
+            std::getenv("WEBSCENE_PROBE_DISABLE_DIRECT_SUBJECT_INVALIDATION")
+                == nullptr;
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'",
+            "direct-subject-invalidation-baseline.js");
+        const std::array<std::string_view, 4> names{
+            "selector-invalidation-plan-lookups",
+            "selector-invalidation-candidate-visits",
+            "selector-invalidation-fallback-visits",
+            "css-cascade-applications"};
+        std::array<uint64_t, 4> before{};
+        for (size_t index = 0; index < names.size(); ++index)
+            before[index] = runtime_counter_diagnostic(engine, names[index]);
+#endif
+        const auto started = std::chrono::steady_clock::now();
+        require(evaluate(engine, "mutateDirectSubjects(true)",
+                "direct-subject-invalidation-add.js") == "true",
+            "direct-subject class addition produced stale computed style");
+        require(evaluate(engine, "mutateDirectSubjects(false)",
+                "direct-subject-invalidation-remove.js") == "true",
+            "direct-subject class removal produced stale computed style");
+        const auto elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+        require(elapsed < 2000.0,
+            "direct-subject selector invalidation exceeded two seconds");
+        std::cout << "direct-subject-invalidation affected=" << affected_count
+            << " relevant=" << relevant_rule_count
+            << " unrelated=" << unrelated_count
+            << " mutation-and-check-ms=" << elapsed;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'",
+            "direct-subject-invalidation-result.js");
+        std::array<uint64_t, 4> delta{};
+        for (size_t index = 0; index < names.size(); ++index) {
+            delta[index] = runtime_counter_diagnostic(engine, names[index])
+                - before[index];
+            std::cout << ' ' << names[index] << '=' << delta[index];
+        }
+        if (direct_subject_fast_path) {
+            require(delta[0] == 0U && delta[1] == 0U && delta[2] == 0U,
+                "subject-only class changes entered routed selector planning");
+        } else {
+            require(delta[0]
+                    >= static_cast<uint64_t>(
+                        affected_count * 2 * relevant_rule_count),
+                "disabled direct-subject fast path did not exercise routed planning");
+        }
+        require(delta[3] >= static_cast<uint64_t>(affected_count * 2)
+                && delta[3] <= static_cast<uint64_t>(affected_count * 2 + 8),
+            "subject-only class changes cascaded outside the changed subjects");
+        observations.push_back(delta);
+#endif
+        std::cout << '\n';
+        webscene_engine_destroy(engine);
+    }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    require(observations[0] == observations[1],
+        "unrelated rules amplified direct-subject selector invalidation work");
+#endif
+}
+
 void test_compiled_css_invalidation_scaling()
 {
     test_nested_functional_selector_scaling();

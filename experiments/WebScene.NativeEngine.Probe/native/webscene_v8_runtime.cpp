@@ -4857,17 +4857,28 @@ struct v8_dom_runtime::implementation final {
                   'Blob.constructor', 'partially-supported',
                   'byte-preserving construction, type, size, slicing and bounded streams');
                 const chunks = [];
+                const stringParts = [];
                 let size = 0;
                 for (const part of parts) {
                   let bytes;
                   if (part instanceof WebSceneBlob) {
                     bytes=part._bytes;
+                    stringParts.push({ blob: part });
                   } else if (part instanceof ArrayBuffer) {
                     bytes = new Uint8Array(part);
+                    stringParts.push(String(part));
                   } else if (ArrayBuffer.isView(part)) {
                     bytes = new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+                    // TypedArray#toString expands every element into decimal
+                    // text. Preserve that compatibility result, but defer the
+                    // work until a caller actually stringifies the Blob.
+                    stringParts.push(part.constructor === Uint8Array
+                      ? { start: size, end: size + bytes.byteLength }
+                      : String(part));
                   } else {
-                    bytes = new TextEncoder().encode(String(part));
+                    const text = String(part);
+                    bytes = new TextEncoder().encode(text);
+                    stringParts.push(text);
                   }
                   chunks.push(bytes);
                   size += bytes.byteLength;
@@ -4880,9 +4891,19 @@ struct v8_dom_runtime::implementation final {
                 }
                 this.size = size;
                 this.type = String(options.type || '').toLowerCase();
-                this._text = Array.from(parts, String).join('');
+                this._stringParts = stringParts;
+                this._text = undefined;
               }
-              toString() { return this._text; }
+              toString() {
+                if (this._text === undefined) {
+                  this._text = this._stringParts.map(part => {
+                    if (typeof part === 'string') return part;
+                    if (part.blob) return String(part.blob);
+                    return this._bytes.subarray(part.start, part.end).toString();
+                  }).join('');
+                }
+                return this._text;
+              }
               async text() {
                 return new TextDecoder().decode(await this.arrayBuffer());
               }
@@ -7021,6 +7042,117 @@ struct v8_dom_runtime::implementation final {
         return true;
     }
 
+    void cancel_pending_terminal_host_requests()
+    {
+        std::lock_guard lock(host_request_mutex);
+        const auto count = pending_terminal_host_requests.size();
+        pending_terminal_host_requests.clear();
+        terminal_handoff_task_budget = 0U;
+        terminal_pagehide_pending = false;
+        reserved_host_request_count = count > reserved_host_request_count
+            ? 0U : reserved_host_request_count - count;
+    }
+
+    bool defer_reserved_terminal_host_request(
+        std::unique_ptr<native_host_request> request)
+    {
+        if (!request) return false;
+        std::lock_guard lock(host_request_mutex);
+        if (reserved_host_request_count == 0U) return false;
+        pending_terminal_host_requests.push_back(std::move(request));
+        return true;
+    }
+
+    bool queue_terminal_host_request(
+        v8::Local<v8::Context> local_context,
+        std::unique_ptr<native_host_request> request)
+    {
+        // A navigation requested recursively by its own lifecycle listener is
+        // coalesced into the outer handoff.
+        if (window_close_lifecycle_dispatching) return true;
+        if (!reserve_typed_host_request_capacity()) return false;
+        terminal_handoff_task_budget = maximum_terminal_handoff_tasks;
+        promote_terminal_handoff_persistence_work();
+        struct lifecycle_dispatch_guard final {
+            bool& dispatching;
+            explicit lifecycle_dispatch_guard(bool& value) : dispatching(value)
+            {
+                dispatching = true;
+            }
+            ~lifecycle_dispatch_guard() { dispatching = false; }
+        } dispatch_guard(window_close_lifecycle_dispatching);
+        const auto disposition =
+            request_window_close_in_current_realm(local_context);
+        if (disposition != WEBSCENE_WINDOW_CLOSE_ALLOW_V1) {
+            terminal_handoff_task_budget = 0U;
+            release_typed_host_request_capacity();
+            return disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1;
+        }
+        if (defer_reserved_terminal_host_request(std::move(request))) return true;
+        terminal_handoff_task_budget = 0U;
+        release_typed_host_request_capacity();
+        return false;
+    }
+
+    bool has_terminal_handoff_persistence_work() const noexcept
+    {
+        if (std::any_of(timers.begin(), timers.end(), [](const auto& timer) {
+                return timer.terminal_handoff_critical;
+            })) return true;
+        return std::any_of(
+            pending_indexeddb_promises.begin(),
+            pending_indexeddb_promises.end(),
+            [](const auto& entry) {
+                return entry.second.terminal_handoff_critical;
+            });
+    }
+
+    void promote_terminal_handoff_persistence_work() noexcept
+    {
+        for (auto& timer : timers) {
+            if (!timer.terminal_handoff_candidate
+                || timer.terminal_handoff_critical
+                || terminal_handoff_task_budget == 0U) continue;
+            timer.terminal_handoff_critical = true;
+            --terminal_handoff_task_budget;
+        }
+        for (auto& [id, pending] : pending_indexeddb_promises) {
+            static_cast<void>(id);
+            pending.terminal_handoff_critical = true;
+        }
+    }
+
+    bool drain_terminal_host_request_task()
+    {
+        auto notify = false;
+        {
+            std::lock_guard lock(host_request_mutex);
+            if (pending_terminal_host_requests.empty()) {
+                terminal_handoff_task_budget = 0U;
+                terminal_pagehide_pending = false;
+                return true;
+            }
+            while (!pending_terminal_host_requests.empty()) {
+                if (reserved_host_request_count == 0U) {
+                    last_error =
+                        "Deferred terminal navigation lost its host-request reservation";
+                    pending_terminal_host_requests.clear();
+                    terminal_handoff_task_budget = 0U;
+                    return false;
+                }
+                --reserved_host_request_count;
+                typed_host_requests.push_back(
+                    std::move(pending_terminal_host_requests.front()));
+                pending_terminal_host_requests.pop_front();
+                notify = true;
+            }
+            terminal_handoff_task_budget = 0U;
+            terminal_pagehide_pending = false;
+        }
+        if (notify && host_request_available) host_request_available();
+        return true;
+    }
+
     std::unique_ptr<native_host_request> take_typed_host_request()
     {
         std::lock_guard lock(host_request_mutex);
@@ -7368,14 +7500,12 @@ struct v8_dom_runtime::implementation final {
         uint32_t kind)
     {
         if (local_context != context.Get(isolate)) return true;
-        if (kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1) {
-            const auto disposition =
-                request_window_close_in_current_realm(local_context);
-            if (disposition == WEBSCENE_WINDOW_CLOSE_ERROR_V1) return false;
-            if (disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1) return true;
-        }
         auto request = std::make_unique<native_host_request>();
         request->view.kind = kind;
+        if (kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1) {
+            return queue_terminal_host_request(
+                local_context, std::move(request));
+        }
         return enqueue_typed_host_request(std::move(request));
     }
 
@@ -7398,10 +7528,6 @@ struct v8_dom_runtime::implementation final {
         }
         const auto scheme = resource_scheme(resolved);
         if (scheme != "http" && scheme != "https") return false;
-        const auto disposition =
-            request_window_close_in_current_realm(local_context);
-        if (disposition == WEBSCENE_WINDOW_CLOSE_ERROR_V1) return false;
-        if (disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1) return true;
         auto request = std::make_unique<native_host_request>();
         request->view.kind = WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1;
         request->view.flags = replace
@@ -7413,7 +7539,7 @@ struct v8_dom_runtime::implementation final {
             "supported",
             "same-origin top-level navigation through the bounded native host request queue",
             "web-api-binding");
-        return enqueue_typed_host_request(std::move(request));
+        return queue_terminal_host_request(local_context, std::move(request));
     }
 
     static void window_close(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -8393,6 +8519,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
 #endif
 #endif
     return impl_->has_pending_detached_dom_collection()
+        || !impl_->pending_terminal_host_requests.empty()
         || impl_->indexeddb_work_ready.load(std::memory_order_acquire)
         || impl_->websocket_transport.has_pending_events()
         || !impl_->pending_file_reading_tasks.empty()

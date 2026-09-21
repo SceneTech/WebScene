@@ -138,6 +138,7 @@
         abort_signal_compositions.clear();
         retire_file_system_handles_for_contexts(retired_contexts);
         terminal_pagehide_dispatched = false;
+        terminal_pagehide_pending = false;
         file_targets.clear();
         { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
         cancel_native_host_promises(
@@ -163,6 +164,7 @@
         fullscreen_element = nullptr;
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
+        cancel_pending_terminal_host_requests();
         {
             std::lock_guard lock(host_request_mutex);
             typed_host_requests.clear();

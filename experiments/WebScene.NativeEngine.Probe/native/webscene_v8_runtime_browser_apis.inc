@@ -38,7 +38,8 @@
             v8::Global<v8::Context>(info.GetIsolate(), info.GetIsolate()->GetCurrentContext()),
             v8::Global<v8::Function>(info.GetIsolate(), info[0].As<v8::Function>()),
             {},
-            -1});
+            -1,
+            false});
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         self->inspector_async_task_scheduled(
             "requestAnimationFrame",
@@ -48,7 +49,10 @@
         info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(info.GetIsolate(), id));
     }
 
-    static void schedule_timer(const v8::FunctionCallbackInfo<v8::Value>& info, bool repeating)
+    static void schedule_timer(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        bool repeating,
+        bool terminal_handoff_candidate = false)
     {
         if (info.Length() < 1 || !info[0]->IsFunction()) return;
         auto* self = current(info.GetIsolate());
@@ -89,6 +93,11 @@
         for (int index = 2; index < info.Length(); ++index) {
             arguments.emplace_back(info.GetIsolate(), info[index]);
         }
+        const auto terminal_handoff_critical = !repeating && delay <= 0
+            && self->terminal_handoff_task_budget != 0U
+            && (self->window_close_lifecycle_dispatching
+                || self->terminal_handoff_task_active);
+        if (terminal_handoff_critical) --self->terminal_handoff_task_budget;
         self->timers.push_back(timer_task{
             id,
             false,
@@ -99,7 +108,9 @@
             v8::Global<v8::Context>(info.GetIsolate(), info.GetIsolate()->GetCurrentContext()),
             v8::Global<v8::Function>(info.GetIsolate(), info[0].As<v8::Function>()),
             std::move(arguments),
-            -1});
+            -1,
+            terminal_handoff_critical,
+            terminal_handoff_candidate});
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         self->inspector_async_task_scheduled(
             repeating ? "setInterval" : "setTimeout",
@@ -148,7 +159,8 @@
             v8::Global<v8::Function>(
                 info.GetIsolate(), info[0].As<v8::Function>()),
             {},
-            -1});
+            -1,
+            false});
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         self->inspector_async_task_scheduled("FileReader", id, false);
 #endif
@@ -168,9 +180,21 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
             [self, id, &cancelled_animation_frames](const auto& timer) {
 #else
-            [id, &cancelled_animation_frames](const auto& timer) {
+            [self, id, &cancelled_animation_frames](const auto& timer) {
 #endif
                 if (timer.id != id) return false;
+                // Browser workbenches can synchronously dispose their timer
+                // scheduler after accepting a terminal storage flush from a
+                // beforeunload listener. The public handle is then canceled,
+                // but the native handoff still owes the already accepted,
+                // bounded persistence callback before pagehide tears storage
+                // down. Only zero-delay one-shot timers created by that active
+                // terminal lifecycle carry this flag; ordinary cancellation,
+                // future timers, intervals, and animation frames are unchanged.
+                if (timer.terminal_handoff_critical
+                    && self->window_close_lifecycle_dispatching) {
+                    return false;
+                }
                 if (timer.animation_frame) ++cancelled_animation_frames;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
                 self->inspector_async_task_canceled(id);
@@ -1446,6 +1470,72 @@
         info.GetReturnValue().Set(result);
     }
 
+    bool dispatch_window_lifecycle_event(
+        v8::Local<v8::Context> local_context,
+        const char* type,
+        bool cancelable,
+        bool include_persisted,
+        v8::Local<v8::Value>& result)
+    {
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            last_error = "Native window close dispatcher is unavailable";
+            return false;
+        }
+        v8::TryCatch try_catch(isolate);
+        auto event = create_event_instance(local_context);
+        event->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, type)).Check();
+        event->Set(local_context, js_string(isolate, "bubbles"),
+            v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "cancelable"),
+            v8::Boolean::New(isolate, cancelable)).Check();
+        if (include_persisted) {
+            event->Set(local_context, js_string(isolate, "persisted"),
+                v8::False(isolate)).Check();
+        }
+        v8::Local<v8::Value> arguments[] = {event};
+        if (!dispatcher.As<v8::Function>()->Call(
+                local_context, target, 1, arguments).ToLocal(&result)) {
+            last_error = std::string("Native window ") + type
+                + " dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            return false;
+        }
+        return true;
+    }
+
+    bool dispatch_pending_terminal_pagehide_task()
+    {
+        if (!terminal_pagehide_pending) return true;
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) {
+            last_error = "Deferred native pagehide has no active top-level realm";
+            return false;
+        }
+        v8::Context::Scope context_scope(local_context);
+        struct lifecycle_dispatch_guard final {
+            bool& dispatching;
+            bool previous;
+            explicit lifecycle_dispatch_guard(bool& value)
+                : dispatching(value), previous(value) { dispatching = true; }
+            ~lifecycle_dispatch_guard() { dispatching = previous; }
+        } dispatch_guard(window_close_lifecycle_dispatching);
+        v8::Local<v8::Value> pagehide_result;
+        if (!dispatch_window_lifecycle_event(
+                local_context, "pagehide", false, true, pagehide_result)) {
+            return false;
+        }
+        perform_microtask_checkpoint();
+        terminal_pagehide_pending = false;
+        terminal_pagehide_dispatched = true;
+        return true;
+    }
+
     uint32_t request_window_close_in_current_realm(
         v8::Local<v8::Context> local_context)
     {
@@ -1453,48 +1543,14 @@
             last_error = "Native window close has no active top-level realm";
             return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
         }
-        if (terminal_pagehide_dispatched) {
+        if (terminal_pagehide_dispatched || terminal_pagehide_pending) {
             return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
         }
 
-        auto target = local_context->Global();
-        v8::Local<v8::Value> dispatcher;
-        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
-                .ToLocal(&dispatcher)
-            || !dispatcher->IsFunction()) {
-            last_error = "Native window close dispatcher is unavailable";
-            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
-        }
-
-        const auto dispatch = [&](const char* type, bool cancelable,
-                                  bool include_persisted,
-                                  v8::Local<v8::Value>& result) {
-            v8::TryCatch try_catch(isolate);
-            auto event = create_event_instance(local_context);
-            event->Set(local_context, js_string(isolate, "type"),
-                js_string(isolate, type)).Check();
-            event->Set(local_context, js_string(isolate, "bubbles"),
-                v8::False(isolate)).Check();
-            event->Set(local_context, js_string(isolate, "cancelable"),
-                v8::Boolean::New(isolate, cancelable)).Check();
-            if (include_persisted) {
-                event->Set(local_context, js_string(isolate, "persisted"),
-                    v8::False(isolate)).Check();
-            }
-            v8::Local<v8::Value> arguments[] = {event};
-            if (dispatcher.As<v8::Function>()->Call(
-                    local_context, target, 1, arguments).ToLocal(&result)) {
-                return true;
-            }
-            last_error = std::string("Native window ") + type
-                + " dispatch failed: "
-                + describe_reported_exception(try_catch, local_context);
-            ++frame_script_error_count;
-            return false;
-        };
-
         v8::Local<v8::Value> beforeunload_result;
-        if (!dispatch("beforeunload", true, false, beforeunload_result)) {
+        if (!dispatch_window_lifecycle_event(
+                local_context, "beforeunload", true, false,
+                beforeunload_result)) {
             return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
         }
         perform_microtask_checkpoint();
@@ -1502,8 +1558,17 @@
             return WEBSCENE_WINDOW_CLOSE_VETO_V1;
         }
 
+        // A browser workbench can schedule its durable shutdown flush from
+        // beforeunload and dispose that scheduler from pagehide. Give only the
+        // bounded terminal-critical lineage a task boundary before teardown.
+        if (has_terminal_handoff_persistence_work()) {
+            terminal_pagehide_pending = true;
+            return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
+        }
+
         v8::Local<v8::Value> pagehide_result;
-        if (!dispatch("pagehide", false, true, pagehide_result)) {
+        if (!dispatch_window_lifecycle_event(
+                local_context, "pagehide", false, true, pagehide_result)) {
             return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
         }
         perform_microtask_checkpoint();

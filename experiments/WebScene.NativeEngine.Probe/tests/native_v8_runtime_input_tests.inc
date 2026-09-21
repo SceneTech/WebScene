@@ -2951,14 +2951,21 @@ void test_top_level_navigation_lifecycle()
             addEventListener('beforeunload', event => {
               __topLevelNavigationLifecycle.push(
                 [event.type, event.bubbles, event.cancelable]);
+              Promise.resolve().then(() => setTimeout(() =>
+                __topLevelNavigationLifecycle.push(['beforeunload-task']), 0));
             });
             addEventListener('pagehide', event => {
               __topLevelNavigationLifecycle.push(
                 [event.type, event.bubbles, event.cancelable, event.persisted]);
+              setTimeout(() =>
+                __topLevelNavigationLifecycle.push(['pagehide-task']), 0);
             });
         )JS", "top-level-navigation-lifecycle-setup.js");
         require(evaluate(engine, script, fixture_name) == "true",
             "top-level navigation request did not drain through the engine worker");
+        require(evaluate(engine, "true",
+                    "top-level-navigation-task-boundary.js") == "true",
+            "top-level navigation task boundary did not drain");
         const auto request = take_typed_host_request(engine);
         require(request.kind == expected_kind,
             "top-level navigation did not emit the expected host request");
@@ -2966,8 +2973,8 @@ void test_top_level_navigation_lifecycle()
             "__topLevelNavigationLifecycle",
             "top-level-navigation-lifecycle-result.js");
         require(lifecycle
-                    == R"([["beforeunload",false,true],["pagehide",false,false,false]])",
-            "top-level navigation did not publish the terminal document lifecycle: "
+                    == R"([["beforeunload",false,true],["pagehide",false,false,false],["beforeunload-task"],["pagehide-task"]])",
+            "top-level navigation reached the host before lifecycle tasks: "
                 + lifecycle);
         webscene_engine_destroy(engine);
     };
@@ -2997,6 +3004,42 @@ void test_top_level_navigation_lifecycle()
             && !take_typed_host_request(veto_engine),
         "a canceled top-level reload reached the host or dispatched pagehide");
     webscene_engine_destroy(veto_engine);
+
+    auto* bounded_engine = webscene_engine_create(0);
+    require(bounded_engine != nullptr,
+        "bounded terminal navigation engine creation failed");
+    const auto started = std::chrono::steady_clock::now();
+    require(evaluate(bounded_engine, R"JS(
+        globalThis.__boundedNavigationLifecycle = 0;
+        addEventListener('pagehide', () => ++__boundedNavigationLifecycle);
+        for (let index = 0; index < 1000; ++index) {
+          location.assign('/?lifecycle-task-boundary=' + index);
+        }
+        true
+    )JS", "top-level-navigation-task-boundary-performance.js") == "true",
+        "bounded terminal navigation batch did not execute");
+    require(evaluate(bounded_engine, "true",
+                "top-level-navigation-task-boundary-performance-barrier.js") == "true",
+        "bounded terminal navigation batch did not reach its task boundary");
+    for (unsigned index = 0; index < 1000U; ++index) {
+        const auto request = take_typed_host_request(bounded_engine);
+        require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
+                && request.url
+                    == "http://127.0.0.1/?lifecycle-task-boundary="
+                        + std::to_string(index),
+            "bounded terminal navigation queue changed request order");
+    }
+    require(!take_typed_host_request(bounded_engine)
+            && evaluate(bounded_engine, "__boundedNavigationLifecycle",
+                "top-level-navigation-task-boundary-lifecycle-count.js") == "1",
+        "bounded terminal navigation queue duplicated lifecycle or host requests");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 2.0,
+        "1,000 deferred terminal navigation requests exceeded two seconds");
+    std::cout << "Terminal navigation task boundary gate: operations=1000 elapsed="
+              << elapsed << "s\n";
+    webscene_engine_destroy(bounded_engine);
 }
 
 void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engine)
@@ -3086,6 +3129,9 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(evaluate(engine, "location.reload(); true", "native-window-reload.js")
                 == "true",
         "Location.reload script did not drain through the engine worker");
+    require(evaluate(engine, "true", "native-window-reload-task-boundary.js")
+                == "true",
+        "Location.reload task boundary did not drain");
     const auto reload_request = take_typed_host_request(engine);
     require(reload_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
         "Location.reload did not emit a typed native reload request");
@@ -3093,6 +3139,9 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
                 "location.href='?folder=/private/tmp/webscene-247-fixture/beta'; true",
                 "native-window-navigate-href.js") == "true",
         "Location.href assignment did not drain through the engine worker");
+    require(evaluate(engine, "true", "native-window-href-task-boundary.js")
+                == "true",
+        "Location.href task boundary did not drain");
     const auto href_navigation = take_typed_host_request(engine);
     require(
         href_navigation.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
@@ -3109,6 +3158,9 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
                 "location.replace('/replacement?workspace=one'); true",
                 "native-window-navigate-replace.js") == "true",
         "Location.replace did not drain through the engine worker");
+    require(evaluate(engine, "true", "native-window-replace-task-boundary.js")
+                == "true",
+        "Location.replace task boundary did not drain");
     const auto replace_navigation = take_typed_host_request(engine);
     require(
         replace_navigation.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
@@ -3428,6 +3480,9 @@ void test_typed_window_host_request_performance(webscene_engine* engine)
             true
         )JS", "native-window-navigation-performance.js") == "true",
             "typed navigation batch did not drain through the engine worker");
+        require(evaluate(engine, "true",
+                    "native-window-navigation-performance-boundary.js") == "true",
+            "typed navigation batch task boundary did not drain");
         for (unsigned index = 0; index < batch_size; ++index) {
             const auto request = take_typed_host_request(engine);
             require(

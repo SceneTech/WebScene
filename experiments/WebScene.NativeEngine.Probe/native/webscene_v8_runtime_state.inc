@@ -346,6 +346,15 @@
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
     std::deque<std::unique_ptr<native_host_request>> typed_host_requests;
+    // Top-level reload/navigation is published from a later browser task so
+    // lifecycle-descended persistence work can finish before the host retires
+    // this realm. Entries consume reserved host-request capacity while they
+    // wait, keeping the combined queue bounded.
+    std::deque<std::unique_ptr<native_host_request>>
+        pending_terminal_host_requests;
+    static constexpr size_t maximum_terminal_handoff_tasks = 1024U;
+    size_t terminal_handoff_task_budget{};
+    bool terminal_handoff_task_active{};
     bool primary_selection_publication_dirty{};
     std::deque<std::unique_ptr<native_download_request>> download_requests;
     std::deque<std::unique_ptr<native_outbound_drag_request>>
@@ -771,6 +780,7 @@
     bool document_visible{true};
     bool document_focused{true};
     bool terminal_pagehide_dispatched{false};
+    bool terminal_pagehide_pending{false};
     bool window_close_lifecycle_dispatching{false};
     bool desktop_environment_initialized{false};
     webscene_desktop_environment_v1 desktop_environment{};

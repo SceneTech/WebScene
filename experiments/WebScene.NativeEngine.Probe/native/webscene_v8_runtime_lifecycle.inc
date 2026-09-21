@@ -289,6 +289,7 @@
         resize_listeners.clear();
         media_query_lists.clear();
         timers.clear();
+        cancel_pending_terminal_host_requests();
         pending_file_reading_tasks.clear();
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;
@@ -369,6 +370,7 @@
         frame_dom_content_loaded_listeners.clear();
         frame_beforeunload_dispatches.clear();
         frame_pagehide_dispatched.clear();
+        terminal_pagehide_pending = false;
         frame_unload_dispatches.clear();
         frame_unload_dispatched.clear();
         hidden_frame_document_roots.clear();

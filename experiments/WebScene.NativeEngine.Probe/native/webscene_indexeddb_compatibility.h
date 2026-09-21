@@ -8,9 +8,13 @@ inline constexpr std::string_view indexeddb_compatibility_source = R"JS(
 (() => {
   'use strict';
   const nativeStorage = globalThis.__webSceneIndexedDBStorage;
-  if (typeof nativeStorage !== 'function') return;
+  const scheduleTask = globalThis.__webSceneIndexedDBTask;
+  const shouldDeferClose = globalThis.__webSceneIndexedDBShouldDeferClose;
+  if (typeof nativeStorage !== 'function' || typeof scheduleTask !== 'function'
+      || typeof shouldDeferClose !== 'function') return;
   const openConnections = new Map();
   const loadedDatabases = new Map();
+  const writeTails = new Map();
   const clone = value => structuredClone(value);
   const failure = (message, name) => new DOMException(message, name);
   const event = (type, fields = {}) => Object.assign({
@@ -233,6 +237,7 @@ R"JS(  class IDBTransaction extends EventTarget {
       this._active = true;
       this._pending = 0;
       this._finishScheduled = false;
+      this._commitQueued = false;
       this._mutations = [];
       this._settled = versionchange ? new Promise((resolve, reject) => {
         this._settleResolve = resolve;
@@ -254,7 +259,7 @@ R"JS(  class IDBTransaction extends EventTarget {
       this._requireActive();
       const request = new IDBRequest(source, this);
       this._pending++;
-      setTimeout(() => {
+      scheduleTask(() => {
         if (!this._active) return;
         try { request._success(operation()); }
         catch (error) {
@@ -263,33 +268,49 @@ R"JS(  class IDBTransaction extends EventTarget {
         }
         this._pending--;
         this._scheduleFinish();
-      }, 0);
+      });
       return request;
     }
     _queueCursor(request, entries, index) {
       this._requireActive();
       request.readyState = 'pending';
       this._pending++;
-      setTimeout(() => {
+      scheduleTask(() => {
         if (!this._active) return;
         request.result = index < entries.length ? new IDBCursor(request, entries, index) : null;
         request.readyState = 'done';
         request.dispatchEvent(event('success'));
         this._pending--;
         this._scheduleFinish();
-      }, 0);
+      });
     }
     _scheduleFinish() {
       if (!this._active || this._pending !== 0 || this._finishScheduled) return;
       this._finishScheduled = true;
-      setTimeout(() => {
+      scheduleTask(() => {
         this._finishScheduled = false;
         if (!this._active || this._pending !== 0) return;
         if (this.mode === 'readonly') this._complete();
         else this._commit();
-      }, 0);
+      });
     }
-    async _commit(attempt = 0) {
+    async _commit() {
+      if (this._commitQueued) return;
+      this._commitQueued = true;
+      const name = this.db.name;
+      const previous = writeTails.get(name) ?? Promise.resolve();
+      let release;
+      const current = new Promise(resolve => { release = resolve; });
+      writeTails.set(name, current);
+      await previous.catch(() => {});
+      try {
+        if (this._active) await this._commitNow();
+      } finally {
+        release();
+        if (writeTails.get(name) === current) writeTails.delete(name);
+      }
+    }
+    async _commitNow(attempt = 0) {
       try {
         const revision = await nativeStorage(
           'store', this.db.name, this._revision, this._state);
@@ -321,7 +342,7 @@ R"JS(  class IDBTransaction extends EventTarget {
             }
             this._state = state;
             this._revision = latest.revision;
-            return this._commit(attempt + 1);
+            return this._commitNow(attempt + 1);
           } catch (reloadError) { error = reloadError; }
         }
         this._fail(error);
@@ -356,6 +377,7 @@ R"JS(  class IDBTransaction extends EventTarget {
       this._state = state;
       this._revision = revision;
       this._closed = false;
+      this._terminalClosePending = false;
       this._upgradeTransaction = null;
       this.onabort = null;
       this.onerror = null;
@@ -402,6 +424,15 @@ R"JS(  class IDBTransaction extends EventTarget {
     }
     close() {
       if (this._closed) return;
+      if (shouldDeferClose()) {
+        if (this._terminalClosePending) return;
+        this._terminalClosePending = true;
+        scheduleTask(() => {
+          this._terminalClosePending = false;
+          this.close();
+        });
+        return;
+      }
       this._closed = true;
       openConnections.get(this.name)?.delete(this);
     }
@@ -434,7 +465,7 @@ R"JS(  class IDBTransaction extends EventTarget {
       }
       const requested = version === undefined ? undefined : Number(version);
       const request = new IDBOpenDBRequest();
-      setTimeout(async () => {
+      scheduleTask(async () => {
         try {
           const loaded = await nativeStorage('load', name);
           const existing = loaded.data === null ? emptyState(0) : normalizeState(loaded.data);
@@ -466,13 +497,13 @@ R"JS(  class IDBTransaction extends EventTarget {
           request.transaction = null;
           request._success(database);
         } catch (error) { request._failure(error); }
-      }, 0);
+      });
       return request;
     }
     deleteDatabase(name) {
       name = String(name);
       const request = new IDBOpenDBRequest();
-      setTimeout(async () => {
+      scheduleTask(async () => {
         try {
           let oldVersion = 0;
           try {
@@ -486,7 +517,7 @@ R"JS(  class IDBTransaction extends EventTarget {
           loadedDatabases.delete(name);
           request._success(undefined);
         } catch (error) { request._failure(error); }
-      }, 0);
+      });
       return request;
     }
     cmp(first, second) {

@@ -388,6 +388,16 @@ void test_indexeddb_persistence_and_transaction_contract()
         write.objectStore('ItemTable').put('second', 'beta');
         await transactionDone(write);
 
+        stage = 'concurrent-writes';
+        const concurrentWrites = [];
+        for (let index = 0; index < 12; ++index) {
+          const transaction = database.transaction('ItemTable', 'readwrite');
+          transaction.objectStore('ItemTable').put(
+            `value-${index}`, `parallel-${index}`);
+          concurrentWrites.push(transactionDone(transaction));
+        }
+        await Promise.all(concurrentWrites);
+
         stage = 'abort-v1';
         const rolledBack = database.transaction('ItemTable', 'readwrite');
         rolledBack.objectStore('ItemTable').put('must-not-commit', 'alpha');
@@ -441,7 +451,9 @@ void test_indexeddb_persistence_and_transaction_contract()
         "indexedDbProbe.upgradeOld===0&&indexedDbProbe.abortName==='AbortError'"
         "&&indexedDbProbe.versionChange==='1->2'&&indexedDbProbe.version===2"
         "&&indexedDbProbe.stores.join(',')==='ItemTable,SecondTable'"
-        "&&indexedDbProbe.cursorValues.length===2"
+        "&&indexedDbProbe.cursorValues.length===14"
+        "&&indexedDbProbe.cursorValues.filter(item=>"
+        "item[0].startsWith('parallel-')).length===12"
         "&&indexedDbProbe.cursorValues[0][0]==='alpha'"
         "&&indexedDbProbe.cursorValues[0][1].nested.enabled"
         "&&indexedDbProbe.cursorValues[0][1].bytes[2]===255"
@@ -609,9 +621,219 @@ void test_indexeddb_quota_and_corruption_failures()
     std::filesystem::remove_all(root, error);
 }
 
+void test_terminal_navigation_waits_for_indexeddb_commit()
+{
+    const auto root = std::filesystem::temp_directory_path()
+        / ("webscene-terminal-indexeddb-"
+            + std::to_string(std::chrono::steady_clock::now()
+                .time_since_epoch().count()));
+    std::filesystem::create_directories(root);
+    const auto cleanup = [&] {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+    };
+
+    auto* engine = create_indexeddb_engine(
+        root, "terminal-navigation-profile", 44001U);
+    require(engine != nullptr,
+        "terminal IndexedDB navigation engine creation failed");
+    execute_and_wait(engine, R"JS(
+      globalThis.terminalIndexedDb = {
+        ready: false, committed: false, continuation: false, error: null,
+        ordinaryCancelFired: false, order: []
+      };
+      (async () => {
+        const database = await new Promise((resolve, reject) => {
+          const request = indexedDB.open('terminal-navigation', 1);
+          request.onupgradeneeded = () => request.result.createObjectStore('state');
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+        });
+        globalThis.terminalIndexedDbDatabase = database;
+        let pendingFlushTimer = 0;
+        addEventListener('beforeunload', () => {
+          terminalIndexedDb.order.push('beforeunload');
+          // An unrelated interval and future timer must not hold navigation.
+          setInterval(() => {}, 60000);
+          setTimeout(() => {}, 60000);
+          // VS Code schedules its terminal storage flush, then synchronously
+          // disposes the Delayer during the same beforeunload dispatch. The
+          // bounded terminal handoff must finish that accepted persistence
+          // callback even though disposal clears its public timer handle.
+          pendingFlushTimer = setTimeout(() => {
+            terminalIndexedDb.order.push('flush-timer');
+            const transaction = database.transaction('state', 'readwrite');
+            transaction.objectStore('state').put('durable', 'mcpInputs');
+            transaction.onerror = transaction.onabort = () => {
+              terminalIndexedDb.error = String(transaction.error);
+            };
+            transaction.oncomplete = () => {
+              terminalIndexedDb.committed = true;
+              terminalIndexedDb.order.push('commit');
+              // Promise/timer work descended from the native completion also
+              // remains ahead of the terminal host handoff.
+              Promise.resolve().then(() => setTimeout(() => {
+                terminalIndexedDb.continuation = true;
+                terminalIndexedDb.order.push('continuation');
+              }, 0));
+            };
+          }, 0);
+          clearTimeout(pendingFlushTimer);
+          // Browser workbench disposal closes its storage database from the
+          // same shutdown turn before the retained callback starts.
+          Promise.resolve().then(() => {
+            terminalIndexedDb.order.push('close-request');
+            database.close();
+          });
+        });
+        addEventListener('pagehide', () => {
+          terminalIndexedDb.order.push('pagehide');
+          // Model VS Code disposing its delayed storage flush during pagehide.
+          clearTimeout(pendingFlushTimer);
+          if (globalThis.terminalIndexedDbPendingTransaction?._active) {
+            globalThis.terminalIndexedDbPendingTransaction.abort();
+          }
+        });
+        terminalIndexedDb.ready = true;
+      })().catch(error => {
+        terminalIndexedDb.error = `${error?.name}:${error?.message}`;
+      });
+    )JS", "terminal-indexeddb-setup.js");
+    wait_for_indexeddb_flag(engine, "terminalIndexedDb.ready===true");
+
+    const auto started = std::chrono::steady_clock::now();
+    require(evaluate(engine, R"JS(
+          const ordinaryTimer = setTimeout(() => {
+            terminalIndexedDb.ordinaryCancelFired = true;
+          }, 0);
+          clearTimeout(ordinaryTimer);
+          globalThis.terminalIndexedDbPendingTransaction =
+            terminalIndexedDbDatabase.transaction('state', 'readwrite');
+          terminalIndexedDbPendingTransaction.objectStore('state')
+            .put('already-pending', 'pendingBeforeReload');
+          terminalIndexedDbPendingTransaction.oncomplete = () => {
+            terminalIndexedDb.order.push('preexisting-commit');
+          };
+          location.reload();
+          true;
+        )JS",
+                "terminal-indexeddb-reload.js") == "true",
+        "terminal IndexedDB reload request failed");
+    typed_host_request_snapshot request;
+    for (int attempt = 0; attempt < 1250 && !request; ++attempt) {
+        request = take_typed_host_request(engine);
+        if (!request) {
+            (void)evaluate(engine, "true", "terminal-indexeddb-pump.js");
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
+        "terminal reload was not published after IndexedDB persistence");
+    const auto terminal_state = evaluate(engine,
+        "JSON.stringify(terminalIndexedDb)",
+        "terminal-indexeddb-before-handoff.js");
+    require(evaluate(engine,
+            "terminalIndexedDb.ready===true"
+            "&&terminalIndexedDb.committed===true"
+            "&&terminalIndexedDb.continuation===true"
+            "&&!terminalIndexedDb.ordinaryCancelFired"
+            "&&terminalIndexedDb.order[0]==='beforeunload'"
+            "&&terminalIndexedDb.order.indexOf('close-request')>0"
+            "&&terminalIndexedDb.order.indexOf('preexisting-commit')>0"
+            "&&terminalIndexedDb.order.indexOf('flush-timer')>"
+                "terminalIndexedDb.order.indexOf('close-request')"
+            "&&terminalIndexedDb.order.indexOf('commit')>"
+                "terminalIndexedDb.order.indexOf('flush-timer')"
+            "&&terminalIndexedDb.order.indexOf('continuation')>"
+                "terminalIndexedDb.order.indexOf('commit')"
+            "&&terminalIndexedDb.order.indexOf('pagehide')>"
+                "terminalIndexedDb.order.indexOf('preexisting-commit')"
+            "&&terminalIndexedDb.order.indexOf('pagehide')>"
+                "terminalIndexedDb.order.indexOf('continuation')"
+            "&&terminalIndexedDb.error===null",
+            "terminal-indexeddb-before-handoff-result.js") == "true",
+        "terminal reload preceded IndexedDB completion: " + terminal_state);
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 2.0,
+        "terminal IndexedDB persistence boundary exceeded two seconds");
+    webscene_engine_destroy(engine);
+
+    engine = create_indexeddb_engine(
+        root, "terminal-navigation-profile", 44002U);
+    require(engine != nullptr,
+        "terminal IndexedDB restart engine creation failed");
+    execute_and_wait(engine, R"JS(
+      globalThis.terminalIndexedDbRestart = {
+        done: false, value: null, pendingValue: null, error: null
+      };
+      (async () => {
+        const database = await new Promise((resolve, reject) => {
+          const request = indexedDB.open('terminal-navigation');
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+        });
+        const transaction = database.transaction('state', 'readonly');
+        const request = transaction.objectStore('state').get('mcpInputs');
+        const pendingRequest = transaction.objectStore('state').get('pendingBeforeReload');
+        transaction.onerror = transaction.onabort = () => {
+          terminalIndexedDbRestart.error = String(transaction.error);
+          terminalIndexedDbRestart.done = true;
+        };
+        transaction.oncomplete = () => {
+          terminalIndexedDbRestart.value = request.result;
+          terminalIndexedDbRestart.pendingValue = pendingRequest.result;
+          terminalIndexedDbRestart.done = true;
+        };
+      })().catch(error => {
+        terminalIndexedDbRestart.error = `${error?.name}:${error?.message}`;
+        terminalIndexedDbRestart.done = true;
+      });
+    )JS", "terminal-indexeddb-restart.js");
+    wait_for_indexeddb_flag(engine, "terminalIndexedDbRestart.done===true");
+    require(evaluate(engine,
+        "terminalIndexedDbRestart.value==='durable'"
+        "&&terminalIndexedDbRestart.pendingValue==='already-pending'"
+        "&&!terminalIndexedDbRestart.error",
+        "terminal-indexeddb-restart-result.js") == "true",
+        "terminal IndexedDB value was not durable at host handoff");
+    execute(engine, R"JS(
+      globalThis.terminalRefillCount = 0;
+      addEventListener('pagehide', () => {
+        const refill = () => {
+          ++terminalRefillCount;
+          setTimeout(refill, 0);
+        };
+        setTimeout(refill, 0);
+      });
+      location.reload();
+    )JS", "terminal-indexeddb-refill-bound.js");
+    request = {};
+    for (int attempt = 0; attempt < 1250 && !request; ++attempt) {
+        request = take_typed_host_request(engine);
+        if (!request) {
+            (void)evaluate(engine, "true", "terminal-indexeddb-refill-pump.js");
+        }
+    }
+    const auto refill_count = evaluate(engine, "terminalRefillCount",
+        "terminal-indexeddb-refill-result.js");
+    const auto refill_count_value = static_cast<unsigned>(
+        std::stoul(refill_count));
+    require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1
+            && refill_count_value >= 1024U
+            && refill_count_value <= 1152U,
+        "a self-refilling lifecycle task starved or escaped its handoff budget: kind="
+            + std::to_string(request.kind) + " count=" + refill_count);
+    std::cout << "Terminal IndexedDB navigation gate: elapsed="
+              << elapsed << "s\n";
+    webscene_engine_destroy(engine);
+    cleanup();
+}
+
 void test_indexeddb_runtime_contract()
 {
     test_indexeddb_persistence_and_transaction_contract();
     test_indexeddb_quota_and_corruption_failures();
     test_indexeddb_file_system_handle_persistence();
+    test_terminal_navigation_waits_for_indexeddb_commit();
 }

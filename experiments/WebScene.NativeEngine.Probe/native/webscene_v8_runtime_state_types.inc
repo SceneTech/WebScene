@@ -71,6 +71,21 @@
         v8::Global<v8::Function> callback;
         std::vector<v8::Global<v8::Value>> arguments;
         double animation_timestamp_ms{-1};
+        bool terminal_handoff_critical{false};
+        bool terminal_handoff_candidate{false};
+    };
+
+    struct terminal_handoff_task_scope final {
+        bool& active;
+        bool previous;
+
+        terminal_handoff_task_scope(bool& target, bool inherit)
+            : active(target), previous(target)
+        {
+            active = active || inherit;
+        }
+
+        ~terminal_handoff_task_scope() { active = previous; }
     };
 
     struct message_port_endpoint;
@@ -361,6 +376,7 @@
         std::string failure_message;
         std::string failure_name;
         bool cleanup_after_failure{};
+        bool terminal_handoff_critical{};
     };
 
     struct indexeddb_durable_request_target final {

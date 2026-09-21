@@ -59,6 +59,9 @@
         }
         activate_css_cascade(task_context);
         v8::Context::Scope task_context_scope(task_context);
+        terminal_handoff_task_scope terminal_scope(
+            terminal_handoff_task_active,
+            task.terminal_handoff_critical);
         auto callback = task.callback.Get(isolate);
         if (callback.IsEmpty()) {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
@@ -827,6 +830,20 @@
         // compilation and optimization work. An embedder must service that
         // queue; otherwise hot application code remains on its initial tier.
         pump_v8_platform_tasks();
+        // A top-level navigation is a browser task, not a synchronous tail of
+        // beforeunload/pagehide. Preserve lifecycle-descended zero-delay and
+        // IndexedDB persistence work, then expose every terminal request.
+        if (!pending_terminal_host_requests.empty()
+            && !has_terminal_handoff_persistence_work()) {
+            if (terminal_pagehide_pending) {
+                if (!dispatch_pending_terminal_pagehide_task()) {
+                    cancel_pending_terminal_host_requests();
+                    return false;
+                }
+                return true;
+            }
+            return drain_terminal_host_request_task();
+        }
         const auto timer_due = has_due_timer();
         // Browser task-source selection is implementation-defined, but it
         // cannot permanently strand one ready source. Alternate a due timer

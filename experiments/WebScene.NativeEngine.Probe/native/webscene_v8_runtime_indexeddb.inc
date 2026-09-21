@@ -187,6 +187,9 @@
         if (found == pending_indexeddb_promises.end()) return;
         auto pending = std::move(found->second);
         pending_indexeddb_promises.erase(found);
+        terminal_handoff_task_scope terminal_scope(
+            terminal_handoff_task_active,
+            pending.terminal_handoff_critical);
         auto realm = pending.context.Get(isolate);
         auto resolver = pending.resolver.Get(isolate);
         if (realm.IsEmpty() || resolver.IsEmpty()) return;
@@ -240,6 +243,9 @@
         if (found == pending_indexeddb_promises.end()) return;
         auto pending = std::move(found->second);
         pending_indexeddb_promises.erase(found);
+        terminal_handoff_task_scope terminal_scope(
+            terminal_handoff_task_active,
+            pending.terminal_handoff_critical);
         auto realm = pending.context.Get(isolate);
         auto resolver = pending.resolver.Get(isolate);
         if (realm.IsEmpty() || resolver.IsEmpty()) return;
@@ -549,6 +555,9 @@
         pending.context.Reset(info.GetIsolate(), realm);
         pending.resolver.Reset(info.GetIsolate(), resolver);
         pending.deserialize_data = operation == "load";
+        pending.terminal_handoff_critical =
+            self->window_close_lifecycle_dispatching
+            || self->terminal_handoff_task_active;
         pending.origin = origin;
         pending.database = database;
         if (operation == "load") {
@@ -588,6 +597,23 @@
         info.GetReturnValue().Set(resolver->GetPromise());
     }
 
+    static void indexeddb_schedule_task(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        schedule_timer(info, false, true);
+    }
+
+    static void indexeddb_should_defer_close(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(),
+            self != nullptr
+                && self->window_close_lifecycle_dispatching
+                && self->has_terminal_handoff_persistence_work()));
+    }
+
     void install_indexeddb(v8::Local<v8::Context> realm)
     {
         if (indexeddb == nullptr) return;
@@ -596,6 +622,16 @@
             realm,
             js_string(isolate, "__webSceneIndexedDBStorage"),
             v8::Function::New(realm, indexeddb_storage_operation).ToLocalChecked(),
+            v8::PropertyAttribute::DontEnum).Check();
+        global->DefineOwnProperty(
+            realm,
+            js_string(isolate, "__webSceneIndexedDBTask"),
+            v8::Function::New(realm, indexeddb_schedule_task).ToLocalChecked(),
+            v8::PropertyAttribute::DontEnum).Check();
+        global->DefineOwnProperty(
+            realm,
+            js_string(isolate, "__webSceneIndexedDBShouldDeferClose"),
+            v8::Function::New(realm, indexeddb_should_defer_close).ToLocalChecked(),
             v8::PropertyAttribute::DontEnum).Check();
         auto script = v8::Script::Compile(
             realm,

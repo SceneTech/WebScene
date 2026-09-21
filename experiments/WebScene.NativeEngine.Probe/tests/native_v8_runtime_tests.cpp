@@ -1,6 +1,7 @@
 #include "webscene_native_engine.h"
 #include "webscene_native_dom.h"
 #include "webscene_embed_fallback.h"
+#include "webscene_native_websocket.h"
 
 #include <ixwebsocket/IXGetFreePort.h>
 #include <ixwebsocket/IXNetSystem.h>
@@ -161,6 +162,10 @@ int main()
         const auto selected = std::string_view(filter);
         if (selected == "indexeddb") {
             test_indexeddb_runtime_contract();
+            return 0;
+        }
+        if (selected == "terminal-indexeddb-navigation") {
+            test_terminal_navigation_waits_for_indexeddb_commit();
             return 0;
         }
         if (selected == "web-storage") {
@@ -593,7 +598,12 @@ int main()
             test_attribute_invalidation_scopes_subject_and_descendant_rules();
             return 0;
         }
+        if (selected == "direct-subject-invalidation") {
+            test_direct_subject_selector_invalidation_scaling();
+            return 0;
+        }
         if (selected == "css-invalidation-scaling") {
+            test_direct_subject_selector_invalidation_scaling();
             test_compiled_subject_index_scaling();
             test_cascade_layer_mutation_scaling();
             test_variadic_child_vector_scaling();
@@ -762,8 +772,10 @@ int main()
             return 0;
         }
         if (selected == "websocket-file-reader") {
+            test_native_websocket_cross_socket_fairness();
             test_native_websocket_browser_api();
             test_native_websocket_protocol_handshake_timing();
+            test_binary_blob_construction_defers_string_expansion();
             test_native_file_reader_task_source_fairness();
             return 0;
         }
@@ -1415,6 +1427,7 @@ int main()
     test_live_form_state_selectors_and_scaling();
     test_compiled_subject_index_scaling();
     test_cascade_layer_mutation_scaling();
+    test_direct_subject_selector_invalidation_scaling();
     test_compiled_css_invalidation_scaling();
     test_character_data_stable_style_scaling();
     test_text_topology_css_work_scaling();
@@ -1476,8 +1489,10 @@ int main()
         "engine rejected an asynchronous low-memory request");
     test_engine_memory_metrics_are_worker_snapshots(engine);
     test_hidden_engine_reclamation_is_debounced_and_cancelable(engine);
+    test_native_websocket_cross_socket_fairness();
     test_native_websocket_browser_api();
     test_native_websocket_protocol_handshake_timing();
+    test_binary_blob_construction_defers_string_expansion();
     test_native_file_reader_task_source_fairness();
     execute(
         engine,

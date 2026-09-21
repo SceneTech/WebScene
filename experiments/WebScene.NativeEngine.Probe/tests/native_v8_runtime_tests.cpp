@@ -2,6 +2,7 @@
 #include "webscene_native_dom.h"
 #include "webscene_embed_fallback.h"
 #include "webscene_native_websocket.h"
+#include "webscene_native_resource_url.h"
 
 #include <ixwebsocket/IXGetFreePort.h>
 #include <ixwebsocket/IXNetSystem.h>

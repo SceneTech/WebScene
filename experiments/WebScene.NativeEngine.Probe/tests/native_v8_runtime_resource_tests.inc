@@ -122,6 +122,18 @@ struct contextual_resource_server final {
 
 void test_same_origin_iframe_navigation_document_replacement()
 {
+    using webscene_native::resources::resolve_url;
+    constexpr std::string_view base{
+        "https://iframe-navigation.test/nested/fake.html?id=history-reload#old"};
+    require(resolve_url("#one", std::string{base})
+            == "https://iframe-navigation.test/nested/fake.html?id=history-reload#one",
+        "fragment-only URL discarded document path or query");
+    require(resolve_url("?next=1#two", std::string{base})
+            == "https://iframe-navigation.test/nested/fake.html?next=1#two",
+        "query-only URL discarded document path or retained stale query");
+    require(resolve_url("../sibling.html", std::string{base})
+            == "https://iframe-navigation.test/sibling.html",
+        "ordinary relative URL resolution regressed");
     constexpr std::string_view address{
         "https://iframe-navigation.test/index.html"};
     constexpr std::string_view history_reload_page = R"HTML(<!doctype html><body>

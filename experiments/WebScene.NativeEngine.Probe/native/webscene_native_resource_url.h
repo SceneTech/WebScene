@@ -70,6 +70,16 @@ inline std::string resolve_url(std::string value, const std::string& base)
         const auto origin = authority_end == std::string::npos ? base : base.substr(0U, authority_end);
         if (value.starts_with('/')) return origin + value;
 
+        // A query or fragment changes this document's URL, not its path.
+        // Rebuilding from the containing directory drops the final segment
+        // (and breaks same-document iframe history traversal).
+        if (value.starts_with('#')) {
+            return base.substr(0U, base.find('#')) + value;
+        }
+        if (value.starts_with('?')) {
+            return base.substr(0U, base.find_first_of("?#")) + value;
+        }
+
         const auto value_suffix_offset = value.find_first_of("?#");
         const auto value_suffix = value_suffix_offset == std::string::npos
             ? std::string{}

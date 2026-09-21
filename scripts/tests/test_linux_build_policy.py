@@ -99,6 +99,11 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn("libc++abi.a", self.build_script)
         self.assertIn("third_party/llvm-build/Release+Asserts", self.build_script)
         self.assertIn("_LIBCPP_HARDENING_MODE_EXTENSIVE", self.build_script)
+        self.assertIn("-include new", self.build_script)
+        self.assertNotIn(
+            'CMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive;$v8_libcxxabi_archive',
+            self.build_script,
+        )
 
     def test_arm_mac_can_cross_build_intel_runtime(self) -> None:
         self.assertIn("macos_arm64_to_x64=true", self.build_script)

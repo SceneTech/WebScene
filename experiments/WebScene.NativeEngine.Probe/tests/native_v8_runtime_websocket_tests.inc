@@ -885,6 +885,59 @@ void test_native_websocket_protocol_handshake_timing()
     require(ix::uninitNetSystem(), "protocol timing network cleanup failed");
 }
 
+void test_binary_blob_construction_defers_string_expansion()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "binary Blob engine creation failed");
+    execute(engine, R"JS(
+      (() => {
+        const bytes = new Uint8Array(256 * 1024);
+        bytes.fill(255);
+        let blob;
+        const started = performance.now();
+        for (let index = 0; index < 48; ++index) blob = new Blob([bytes]);
+        const elapsedMs = performance.now() - started;
+        const expandedStarted = performance.now();
+        for (let index = 0; index < 48; ++index) String(new Blob([bytes]));
+        const expandedMs = performance.now() - expandedStarted;
+        const snapshotSource = Uint8Array.of(1, 3, 5, 7);
+        const snapshot = new Blob([snapshotSource]);
+        snapshotSource[0] = 9;
+        globalThis.__webSceneBinaryBlobConstruction = {
+          elapsedMs, expandedMs,
+          size: blob.size,
+          snapshotText: String(snapshot)
+        };
+      })();
+    )JS", "binary-blob-construction.js");
+    const auto state = evaluate(
+        engine,
+        "globalThis.__webSceneBinaryBlobConstruction",
+        "binary-blob-construction-state.js");
+    const auto elapsed_key = std::string{"\"elapsedMs\":"};
+    const auto elapsed_position = state.find(elapsed_key);
+    require(elapsed_position != std::string::npos,
+        "binary Blob construction timing was not retained");
+    const auto elapsed_ms = std::stod(
+        state.substr(elapsed_position + elapsed_key.size()));
+    const auto expanded_key = std::string{"\"expandedMs\":"};
+    const auto expanded_position = state.find(expanded_key);
+    require(expanded_position != std::string::npos,
+        "binary Blob explicit string-expansion timing was not retained");
+    const auto expanded_ms = std::stod(
+        state.substr(expanded_position + expanded_key.size()));
+    std::cout << "Binary Blob construction state: " << state << "\n";
+    require(state.find("\"size\":262144") != std::string::npos
+            && state.find("\"snapshotText\":\"1,3,5,7\"")
+                != std::string::npos,
+        "binary Blob changed its byte size or lazy string snapshot");
+    require(elapsed_ms <= 250.0,
+        "constructing 12 MiB of binary Blobs exceeded 250 ms");
+    require(elapsed_ms * 5.0 <= expanded_ms,
+        "binary Blob construction still paid the deferred string-expansion cost");
+    webscene_engine_destroy(engine);
+}
+
 void test_native_file_reader_task_source_fairness()
 {
     auto* engine = webscene_engine_create(0);

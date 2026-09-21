@@ -1043,6 +1043,8 @@ struct node_style final {
     bool visibility_hidden : 1 {false};
     bool visibility_specified : 1 {false};
     bool pointer_events_none : 1 {false};
+    bool anchor_name_present : 1 {false};
+    bool position_anchor_present : 1 {false};
     bool pointer_events_specified : 1 {false};
     bool flex_wrap : 1 {false};
     bool flex_reverse : 1 {false};
@@ -2592,6 +2594,10 @@ private:
     struct layout_scratch_storage final {
         tracking_memory_resource upstream;
         std::pmr::unsynchronized_pool_resource pool{&upstream};
+        // Populated only by documents that author named anchors. String views
+        // point into stable computed style storage for the duration of layout.
+        std::unordered_map<std::string_view, layout_rect> named_anchors;
+        bool unresolved_named_anchor{false};
     };
 
     // dom_node has one fixed allocation size and stable-address lifetime.

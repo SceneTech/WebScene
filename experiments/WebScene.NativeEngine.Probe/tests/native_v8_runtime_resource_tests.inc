@@ -312,7 +312,7 @@ void test_same_origin_iframe_navigation_document_replacement()
         complete:false, error:null, beforeunload:0, pagehide:0,
         visibilitychange:0, unload:0, order:[],
         synchronous:true, eventShape:true, vetoPreserved:false,
-        reentrantBlocked:false, reentrantUnloadBlocked:false,
+        reentrantBlocked:false, reentrantUnloadBlocked:false, observedSource:null,
         visibilityHidden:false, lifecycleIdentity:true, taskRan:false,
         allowedLoaded:false, stableProxy:false
       };
@@ -414,7 +414,8 @@ void test_same_origin_iframe_navigation_document_replacement()
                   && state.pagehide === 1
                   && state.visibilitychange === 1
                   && state.unload === 1;
-                state.reentrantUnloadBlocked = frame.getAttribute('src')
+                state.observedSource = frame.getAttribute('src');
+                state.reentrantUnloadBlocked = state.observedSource
                   === './fake.html?id=allowed'
                   && state.order.join(',')
                     === 'beforeunload,pagehide,visibilitychange,unload';
@@ -461,7 +462,9 @@ void test_same_origin_iframe_navigation_document_replacement()
                 "iframe-beforeunload-result-detail.js"));
     require(server.requests.load(std::memory_order_relaxed)
             == requests_before_unload_ordering + 2,
-        "reentrant unload navigation admitted an unexpected resource request");
+        "reentrant unload navigation admitted an unexpected resource request: before="
+            + std::to_string(requests_before_unload_ordering) + " after="
+            + std::to_string(server.requests.load(std::memory_order_relaxed)));
     const auto requests_before_detach_unload = server.requests.load(
         std::memory_order_relaxed);
     execute(engine, R"JS(

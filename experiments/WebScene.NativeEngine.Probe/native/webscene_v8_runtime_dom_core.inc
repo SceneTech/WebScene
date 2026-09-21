@@ -3051,11 +3051,10 @@
                     || resolved.starts_with("https://")
                     || resolved.starts_with("file://")) {
                     node.attributes["data-webscene-remote-attempt"] = resolved;
-                    node.attributes["src"] = resolved;
                     if (prefetch_iframe_documents) {
                         start_resource_prefetch(
                             resolved,
-                            {},
+                            resolved,
                             WEBSCENE_RESOURCE_DOCUMENT);
                         start_frame_preparation(node, resolved);
                         node.attributes["data-webscene-remote-result"] = "pending";
@@ -3068,6 +3067,8 @@
                                 WEBSCENE_RESOURCE_DOCUMENT,
                                 html,
                                 resolved_name)) {
+                            node.attributes["data-webscene-remote-attempt"] =
+                                std::move(resolved_name);
                             node.attributes["object-html"] = std::move(html);
                             node.attributes["data-webscene-remote-result"] = "loaded";
                         } else {

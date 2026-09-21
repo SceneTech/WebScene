@@ -152,7 +152,7 @@ jobs:
   linux-builder:
     name: Build immutable Linux cross-builder
     needs: metadata
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       packages: write
@@ -194,7 +194,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: macos-latest
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
           cpu: arm64
           monolith: libv8_monolith.a
@@ -205,7 +205,7 @@ jobs:
           v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
-        - os: macos-15-intel
+        - os: [self-hosted, macOS, X64]
           rid: osx-x64
           cpu: x64
           monolith: libv8_monolith.a
@@ -216,7 +216,7 @@ jobs:
           v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
-        - os: ubuntu-latest
+        - os: [self-hosted, Linux, X64]
           rid: linux-x64
           cpu: x64
           monolith: libv8_monolith.a
@@ -227,7 +227,7 @@ jobs:
           v8_cache_generation: v1-v8-15.3.10-glibc227-cross-x64
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
-        - os: ubuntu-24.04
+        - os: [self-hosted, Linux, X64]
           rid: linux-arm64
           cpu: arm64
           monolith: libv8_monolith.a
@@ -501,7 +501,7 @@ jobs:
   linux-arm64-finalize:
     name: Finalize and test linux-arm64
     needs: [metadata, native]
-    runs-on: ubuntu-24.04-arm
+    runs-on: [self-hosted, Linux, ARM64]
     steps:
     - uses: actions/checkout@v4
     - name: Setup .NET
@@ -689,13 +689,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: macos-latest
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
-        - os: macos-15-intel
+        - os: [self-hosted, macOS, X64]
           rid: osx-x64
-        - os: ubuntu-latest
+        - os: [self-hosted, Linux, X64]
           rid: linux-x64
-        - os: ubuntu-24.04-arm
+        - os: [self-hosted, Linux, ARM64]
           rid: linux-arm64
         - os: windows-2022
           rid: win-x64
@@ -745,22 +745,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: ubuntu-24.04
+        - os: [self-hosted, Linux, X64]
           rid: linux-x64
           platform: linux/amd64
           distribution: ubuntu-18.04
           image: ubuntu:18.04
-        - os: ubuntu-24.04-arm
+        - os: [self-hosted, Linux, ARM64]
           rid: linux-arm64
           platform: linux/arm64
           distribution: ubuntu-18.04
           image: ubuntu:18.04
-        - os: ubuntu-24.04
+        - os: [self-hosted, Linux, X64]
           rid: linux-x64
           platform: linux/amd64
           distribution: ubi-8.9
           image: registry.access.redhat.com/ubi8/ubi:8.9
-        - os: ubuntu-24.04-arm
+        - os: [self-hosted, Linux, ARM64]
           rid: linux-arm64
           platform: linux/arm64
           distribution: ubi-8.9
@@ -798,12 +798,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - { os: ubuntu-24.04, rid: linux-x64, platform: linux/amd64, distribution: debian-10, image: 'debian:10' }
-        - { os: ubuntu-24.04-arm, rid: linux-arm64, platform: linux/arm64, distribution: debian-10, image: 'debian:10' }
-        - { os: ubuntu-24.04, rid: linux-x64, platform: linux/amd64, distribution: fedora-38, image: 'fedora:38' }
-        - { os: ubuntu-24.04-arm, rid: linux-arm64, platform: linux/arm64, distribution: fedora-38, image: 'fedora:38' }
-        - { os: ubuntu-24.04, rid: linux-x64, platform: linux/amd64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
-        - { os: ubuntu-24.04-arm, rid: linux-arm64, platform: linux/arm64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
+        - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: debian-10, image: 'debian:10' }
+        - { os: [self-hosted, Linux, ARM64], rid: linux-arm64, platform: linux/arm64, distribution: debian-10, image: 'debian:10' }
+        - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: fedora-38, image: 'fedora:38' }
+        - { os: [self-hosted, Linux, ARM64], rid: linux-arm64, platform: linux/arm64, distribution: fedora-38, image: 'fedora:38' }
+        - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
+        - { os: [self-hosted, Linux, ARM64], rid: linux-arm64, platform: linux/arm64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4

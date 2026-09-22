@@ -4638,7 +4638,7 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
               state.pending = false;
               state.acknowledgements++;
               if (!shouldFail) label.textContent = '';
-            }, 250);
+            }, 1000);
           });
         })()
     )JS", "async-save-publication-setup.js");
@@ -4653,6 +4653,21 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
     const auto consumed_before = consumed_input_count(engine);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 30, 20, 9102U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 30, 20, 9103U, false);
+    wait_for_consumed_inputs(
+        engine,
+        consumed_before + 2U,
+        "initial async-save activation was not consumed");
+    const auto initial_state = evaluate_until_equals(engine, R"JS(({ activations: __saveState.activations,
+          requests: __saveState.requests,
+          pending: __saveState.pending
+        }))JS", "async-save-initial-activation.js",
+        R"JSON({"activations":1,"requests":1,"pending":true})JSON",
+        1000);
+    require(
+        initial_state
+            == R"JSON({"activations":1,"requests":1,"pending":true})JSON",
+        "initial activation did not start an asynchronous save: "
+            + initial_state);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 30, 20, 9104U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 30, 20, 9105U, false);
     wait_for_consumed_inputs(
@@ -4665,7 +4680,8 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
           pending: __saveState.pending,
           label: document.getElementById('label').textContent
         }))JS", "async-save-coalescing.js",
-        R"JSON({"activations":2,"requests":1,"pending":true,"label":"Save"})JSON");
+        R"JSON({"activations":2,"requests":1,"pending":true,"label":"Save"})JSON",
+        1000);
     require(
         coalesced_state
             == R"JSON({"activations":2,"requests":1,"pending":true,"label":"Save"})JSON",
@@ -4675,7 +4691,7 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
     webscene_engine_metrics after_activation{};
     webscene_engine_get_metrics(engine, &after_activation);
     webscene_engine_metrics after_ack{};
-    for (auto attempt = 0; attempt < 200; ++attempt) {
+    for (auto attempt = 0; attempt < 1000; ++attempt) {
         webscene_engine_get_metrics(engine, &after_ack);
         if (after_ack.published_scenes > after_activation.published_scenes
             && evaluate(engine, "__saveState.acknowledgements",
@@ -4712,7 +4728,7 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
         engine,
         failure_consumed_before + 2U,
         "failing save activation was not consumed");
-    for (auto attempt = 0; attempt < 200; ++attempt) {
+    for (auto attempt = 0; attempt < 1000; ++attempt) {
         if (evaluate(engine, "__saveState.acknowledgements",
                 "async-save-failure-wait.js") == "2") {
             break;

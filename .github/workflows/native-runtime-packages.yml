@@ -8,6 +8,16 @@ on:
         required: true
         default: false
         type: boolean
+      consumer_recheck_run_id:
+        description: Existing run whose verified release artifact should be rechecked
+        required: false
+        default: ''
+        type: string
+      consumer_recheck_version:
+        description: Package version in the existing release artifact
+        required: false
+        default: ''
+        type: string
   push:
     branches:
     - main
@@ -24,7 +34,10 @@ on:
     - 'experiments/WebScene.NativeEngine.Probe/**'
     - 'packaging/WebScene.NativeEngine.Runtime/**'
     - 'scripts/build-native-engine-runtime.sh'
-    - 'scripts/build-native-engine-runtime-linux-container.sh'
+    - 'scripts/build-linux-native-runtime.sh'
+    - 'scripts/linux-glibc-toolchain.cmake'
+    - 'scripts/verify-linux-native-abi.py'
+    - 'scripts/verify-native-payload-reproducibility.py'
     - 'scripts/build-native-engine-runtime.ps1'
     - 'scripts/V8WindowsEnvironment.psm1'
     - 'scripts/pack-packages.sh'
@@ -57,6 +70,7 @@ permissions:
 
 jobs:
   metadata:
+    if: inputs.consumer_recheck_run_id == ''
     runs-on: [self-hosted, Linux, X64]
     outputs:
       package-version: ${{ steps.version.outputs.package-version }}
@@ -77,6 +91,9 @@ jobs:
           scripts/tests/test_native_runtime_workflow_policy.py \
           scripts/tests/test_prepare_dotnet_install.py \
           scripts/tests/test_prepare_runner_disk.py \
+          scripts/tests/test_linux_build_policy.py \
+          scripts/tests/test_verify_linux_native_abi.py \
+          scripts/tests/test_verify_native_payload_reproducibility.py \
           scripts/tests/test_verify_cross_rid_compatibility.py \
           scripts/tests/test_v8_bootstrap_literals.py
     - name: Repair incomplete .NET install
@@ -189,37 +206,139 @@ jobs:
           artifacts/nuget-packages/packages.json
         if-no-files-found: error
 
+  linux-builder:
+    name: Build immutable Linux cross-builder
+    needs: metadata
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.reference.outputs.image }}
+      arm64-finalizer-image: ${{ steps.finalizer-reference.outputs.image }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - uses: docker/setup-buildx-action@v3
+    - name: Log in to GitHub Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - id: build
+      name: Build pinned Linux cross-builder
+      uses: docker/build-push-action@v6
+      with:
+        context: packaging/WebScene.NativeEngine.Runtime
+        file: packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc
+        platforms: linux/amd64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ghcr.io/scenetech/webscene-linux-builder:webscene-linux-glibc-v1
+    - id: reference
+      name: Resolve immutable builder reference
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: echo "image=ghcr.io/scenetech/webscene-linux-builder@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+    - id: finalizer-build
+      name: Build pinned Linux ARM64 finalizer
+      uses: docker/build-push-action@v6
+      with:
+        context: packaging/WebScene.NativeEngine.Runtime
+        file: packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-arm64-finalizer
+        platforms: linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
+        load: ${{ github.event_name == 'pull_request' }}
+        tags: ghcr.io/scenetech/webscene-linux-arm64-finalizer:webscene-linux-glibc-v1
+    - id: finalizer-reference
+      name: Resolve immutable ARM64 finalizer reference
+      shell: bash
+      run: |
+        if [[ '${{ github.event_name }}' == pull_request ]]; then
+          echo "image=ghcr.io/scenetech/webscene-linux-arm64-finalizer:webscene-linux-glibc-v1" >> "$GITHUB_OUTPUT"
+        else
+          echo "image=ghcr.io/scenetech/webscene-linux-arm64-finalizer@${{ steps.finalizer-build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+        fi
+
   native:
     name: Build ${{ matrix.rid }}
-    needs: metadata
+    needs: [metadata, linux-builder]
+    permissions:
+      actions: read
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         include:
         - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
+          dotnet_architecture: arm64
           cpu: arm64
           monolith: libv8_monolith.a
           script: unix
           v8_revision: 15.3.10
           partition_alloc: true
           v8_configuration: ReleasePartitionAlloc
-          v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
+          v8_cache_generation: v10-v8-15.3.10-pa-system-libcxx-macos-inspector
+          v8_cache_extra_paths: ''
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
-        - os: [self-hosted, Linux, X64]
-          rid: linux-x64
+        - os: [self-hosted, macOS, ARM64]
+          rid: osx-x64
+          dotnet_architecture: x64
           cpu: x64
           monolith: libv8_monolith.a
           script: unix
           v8_revision: 15.3.10
           partition_alloc: true
           v8_configuration: ReleasePartitionAlloc
-          v8_cache_generation: v12-v8-15.3.10-pa-no-process-shim-ubuntu22-gcc12-lld-no-crel-shared-inspector
+          v8_cache_generation: v10-v8-15.3.10-pa-system-libcxx-macos-inspector
+          v8_cache_extra_paths: ''
+          v8_cache_script: scripts/build-native-engine-runtime.sh
+          v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
+        - os: [self-hosted, Linux, X64]
+          rid: linux-x64
+          dotnet_architecture: x64
+          cpu: x64
+          monolith: libv8_monolith.a
+          script: unix
+          v8_revision: 15.3.10
+          partition_alloc: true
+          v8_configuration: ReleasePartitionAlloc
+          v8_cache_generation: v2-v8-15.3.10-glibc227-cross-x64
+          v8_cache_extra_paths: |
+            artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++
+            artifacts/native-engine-v8/linux-*/v8/out/*/*/obj/buildtools/third_party/libc++abi/libc++abi.a
+            artifacts/native-engine-v8/linux-*/v8/third_party/libc++/src/include
+            artifacts/native-engine-v8/linux-*/v8/third_party/libc++abi/src/include
+            artifacts/native-engine-v8/linux-*/v8/third_party/llvm-build/Release+Asserts
+          v8_cache_script: scripts/build-native-engine-runtime.sh
+          v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
+        - os: [self-hosted, Linux, X64]
+          rid: linux-arm64
+          dotnet_architecture: x64
+          cpu: arm64
+          monolith: libv8_monolith.a
+          script: unix
+          v8_revision: 15.3.10
+          partition_alloc: true
+          v8_configuration: ReleasePartitionAlloc
+          v8_cache_generation: v3-v8-15.3.10-glibc227-cross-arm64
+          v8_cache_extra_paths: |
+            artifacts/native-engine-v8/linux-*/v8/buildtools/third_party/libc++
+            artifacts/native-engine-v8/linux-*/v8/out/*/*/obj/buildtools/third_party/libc++abi/libc++abi.a
+            artifacts/native-engine-v8/linux-*/v8/third_party/libc++/src/include
+            artifacts/native-engine-v8/linux-*/v8/third_party/libc++abi/src/include
+            artifacts/native-engine-v8/linux-*/v8/third_party/llvm-build/Release+Asserts
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
         - os: windows-2022
           rid: win-x64
+          dotnet_architecture: x64
           cpu: x64
           monolith: v8_monolith.lib
           script: windows
@@ -227,6 +346,7 @@ jobs:
           partition_alloc: true
           v8_configuration: ReleasePartitionAlloc
           v8_cache_generation: v9-v8-15.3.10-pa-windows-compat-inspector
+          v8_cache_extra_paths: ''
           v8_cache_script: scripts/build-native-engine-runtime.ps1
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8WindowsCompatibilityPatch.txt
     runs-on: ${{ matrix.os }}
@@ -246,25 +366,17 @@ jobs:
       with:
         dotnet-version: 8.0.x
         global-json-file: global.json
+        architecture: ${{ matrix.dotnet_architecture }}
     - name: Test V8 Windows child environment
       if: matrix.rid == 'win-x64'
       shell: pwsh
       run: ./scripts/tests/test_v8_windows_environment.ps1
     - name: Expose the self-hosted Rust toolchain
-      if: matrix.rid == 'osx-arm64'
+      if: startsWith(matrix.rid, 'osx-')
       shell: bash
       run: |
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
         "$HOME/.cargo/bin/cargo" --version
-    - name: Build Ubuntu 22.04 Linux runtime image
-      if: matrix.rid == 'linux-x64'
-      shell: bash
-      run: |
-        docker build \
-          --platform linux/amd64 \
-          --file packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-x64 \
-          --tag webscene-native-linux-builder:ubuntu-22.04 \
-          packaging/WebScene.NativeEngine.Runtime
     - id: v8-cache-key
       name: Resolve pinned V8 SDK cache identity
       shell: bash
@@ -272,18 +384,21 @@ jobs:
         echo "image-version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
     - id: v8-cache
       name: Restore pinned V8 SDK
+      if: github.ref_type != 'tag'
       uses: actions/cache/restore@v4
       with:
         path: |
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a
+          ${{ matrix.v8_cache_extra_paths }}
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/icudtl.dat
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/icu/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/partition_alloc/src
-        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'scripts/V8WindowsEnvironment.psm1') }}
+        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'scripts/V8WindowsEnvironment.psm1', 'packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt', 'packaging/WebScene.NativeEngine.Runtime/patches/V8LibcxxMemoryResourcePatch.txt', 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
         restore-keys: |
           ${{ matrix.rid != 'win-x64' && format('webscene-v8-sdk-{0}-{1}-{2}-', matrix.v8_cache_generation, matrix.rid, hashFiles('third-party/v8-patches/**')) || '' }}
           ${{ matrix.rid != 'win-x64' && format('webscene-v8-sdk-{0}-{1}-', matrix.v8_cache_generation, matrix.rid) || '' }}
@@ -308,6 +423,25 @@ jobs:
             || { [[ -d "$root/third_party/partition_alloc/src" ]] \
               && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src/partition_alloc/buildflags.h" ]]; }
         }
+        libcxx_is_compatible() {
+          archive_is_regular() {
+            [[ -f "$1" ]] && [[ "$(head -c 7 "$1")" == '!<arch>' ]]
+          }
+          archive_has_memory_resource() {
+            "$root/third_party/llvm-build/Release+Asserts/bin/llvm-ar" t "$1" \
+              | grep -Eq '(^|/)memory_resource\.o$'
+          }
+          [[ '${{ matrix.rid }}' != linux-* ]] \
+            || { archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
+              && archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" \
+              && archive_has_memory_resource "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
+              && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
+              && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
+              && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
+              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/clang++" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/ld.lld" ]]; }
+        }
         args_are_compatible() {
           grep -Eq '^v8_enable_pointer_compression *= *true$' "$args" \
             && grep -Eq '^v8_enable_pointer_compression_shared_cage *= *true$' "$args" \
@@ -316,10 +450,13 @@ jobs:
               || [[ '${{ matrix.rid }}' == 'win-x64' ]] \
               || { grep -Eq '^use_allocator_shim *= *false$' "$args" \
                 && grep -Eq '^use_partition_alloc_as_malloc *= *false$' "$args"; }; } \
-            && { [[ '${{ matrix.rid }}' != 'linux-x64' ]] \
+            && { [[ '${{ matrix.rid }}' != linux-* ]] \
               || { grep -Eq '^use_lld *= *true$' "$args" \
-                && grep -Eq '^use_sysroot *= *false$' "$args" \
-                && grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$args"; }; }
+                && grep -Eq '^use_sysroot *= *true$' "$args" \
+                && grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$args" \
+                && grep -Eq '^use_custom_libcxx *= *true$' "$args"; }; } \
+            && { [[ '${{ matrix.rid }}' != osx-* ]] \
+              || grep -Eq '^use_custom_libcxx *= *false$' "$args"; }
         }
         if [[ -f "$root/include/v8.h" \
           && -f "$root/include/v8-inspector.h" \
@@ -330,7 +467,8 @@ jobs:
           && -f "$root/LICENSE" \
           && -f "$root/third_party/icu/LICENSE" ]] \
           && args_are_compatible \
-          && partition_alloc_is_compatible; then
+          && partition_alloc_is_compatible \
+          && libcxx_is_compatible; then
           echo "ready=true" >> "$GITHUB_OUTPUT"
         else
           echo "ready=false" >> "$GITHUB_OUTPUT"
@@ -340,7 +478,7 @@ jobs:
           fi
         fi
     - name: Prepare pinned Dawn runtime dependency
-      if: matrix.rid != 'linux-x64'
+      if: matrix.rid == 'osx-arm64' || matrix.rid == 'win-x64'
       uses: ./.github/actions/graphics-sdk
       with:
         rid: ${{ matrix.rid }}
@@ -354,7 +492,7 @@ jobs:
     - name: Build, pack, and test macOS runtime
       env:
         WEBSCENE_NATIVE_SKIP_HARDWARE_TESTS: '1'
-      if: matrix.rid == 'osx-arm64'
+      if: startsWith(matrix.rid, 'osx-')
       shell: bash
       run: |
         v8_root=
@@ -362,9 +500,13 @@ jobs:
         if [[ '${{ steps.restored-v8-sdk.outputs.ready }}' == 'true' ]]; then
           v8_root="$restored_v8"
         fi
+        graphics_args=()
+        if [[ '${{ matrix.rid }}' == osx-arm64 ]]; then
+          graphics_args+=(--graphics-sdk "$GITHUB_WORKSPACE/artifacts/graphics-sdk/${{ matrix.rid }}")
+        fi
         scripts/build-native-engine-runtime.sh \
           --rid '${{ matrix.rid }}' \
-          --graphics-sdk "$GITHUB_WORKSPACE/artifacts/graphics-sdk/${{ matrix.rid }}" \
+          "${graphics_args[@]}" \
           --package-version '${{ needs.metadata.outputs.package-version }}' \
           --v8-root "$v8_root" \
           --v8-revision '${{ matrix.v8_revision }}' \
@@ -372,7 +514,7 @@ jobs:
           --partition-alloc \
           --output "$GITHUB_WORKSPACE/artifacts/nuget-packages"
     - name: Upload exact macOS native symbols
-      if: matrix.rid == 'osx-arm64'
+      if: startsWith(matrix.rid, 'osx-')
       uses: actions/upload-artifact@v4
       with:
         name: native-symbols-${{ matrix.rid }}-${{ needs.metadata.outputs.package-version }}
@@ -380,36 +522,21 @@ jobs:
         if-no-files-found: error
         compression-level: 9
         retention-days: 3
-    - name: Build, pack, and test Linux runtime
-      if: matrix.rid == 'linux-x64'
+    - name: Build Linux runtime
+      if: startsWith(matrix.rid, 'linux-')
       shell: bash
       run: |
-        v8_root=
-        if [[ '${{ steps.restored-v8-sdk.outputs.ready }}' == 'true' ]]; then
-          v8_root="/workspace/artifacts/native-engine-v8/${{ matrix.rid }}/v8"
+        builder_args=()
+        if [[ -n '${{ needs.linux-builder.outputs.image }}' ]]; then
+          builder_args+=(--builder-image '${{ needs.linux-builder.outputs.image }}')
+          echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
         fi
-        docker run --rm \
-          --platform linux/amd64 \
-          --user "$(id -u):$(id -g)" \
-          --env HOME=/tmp/webscene-home \
-          --env DOTNET_CLI_HOME=/tmp/webscene-home \
-          --env CARGO_HOME=/tmp/webscene-home/.cargo \
-          --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
-          --volume "$GITHUB_WORKSPACE:/workspace" \
-          --workdir /workspace \
-          webscene-native-linux-builder:ubuntu-22.04 \
-          bash -lc "
-            mkdir -p \"\$HOME\"
-            mkdir -p \"\$CARGO_HOME\"
-            scripts/build-native-engine-runtime-linux-container.sh \
-              --rid '${{ matrix.rid }}' \
-              --package-version '${{ needs.metadata.outputs.package-version }}' \
-              --v8-root '$v8_root' \
-              --v8-revision '${{ matrix.v8_revision }}' \
-              --upstream-v8 \
-              --partition-alloc \
-              --output /workspace/artifacts/nuget-packages
-          "
+        scripts/build-linux-native-runtime.sh \
+          --rid '${{ matrix.rid }}' \
+          --package-version '${{ needs.metadata.outputs.package-version }}' \
+          --output "$GITHUB_WORKSPACE/artifacts/nuget-packages" \
+          --stage build \
+          "${builder_args[@]}"
     - name: Build, pack, and test Windows runtime
       env:
         WEBSCENE_NATIVE_SKIP_HARDWARE_TESTS: '1'
@@ -453,12 +580,13 @@ jobs:
         }
         Write-Host "Fresh Windows V8 checkout, GN generation, and Ninja output verified."
     - name: Run candidate compatibility discovery
+      if: matrix.rid != 'linux-arm64'
       continue-on-error: true
       shell: bash
       run: |
         case '${{ matrix.rid }}' in
-          osx-arm64) native_name=libwebscene_native_engine.dylib ;;
-          linux-x64) native_name=libwebscene_native_engine.so ;;
+          osx-arm64|osx-x64) native_name=libwebscene_native_engine.dylib ;;
+          linux-x64|linux-arm64) native_name=libwebscene_native_engine.so ;;
           win-x64) native_name=webscene_native_engine.dll ;;
           *) echo "Unsupported discovery RID '${{ matrix.rid }}'." >&2; exit 1 ;;
         esac
@@ -472,13 +600,28 @@ jobs:
           exit 1
         fi
         build_dir="${native_path%%/package-smoke/runtimes/*}"
-        dotnet run \
-          --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj \
-          -c Release --no-build -- \
-          --selection candidate \
-          --native-library "$native_path" \
-          --native-cache-directory "$build_dir/code-cache" \
-          --output "$build_dir/wpt-candidate-results"
+        runner_args=(
+          dotnet run
+          --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj
+          -c Release -f net10.0 --no-build --disable-build-servers --
+          --selection candidate
+          --native-library "$native_path"
+          --native-cache-directory "$build_dir/code-cache"
+          --output "$build_dir/wpt-candidate-results")
+        if [[ '${{ matrix.rid }}' == 'linux-x64' ]]; then
+          docker run --rm \
+            --platform linux/amd64 \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp/webscene-home \
+            --env DOTNET_CLI_HOME=/tmp/webscene-home \
+            --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            '${{ needs.linux-builder.outputs.image }}' \
+            "${runner_args[@]}"
+        else
+          "${runner_args[@]}"
+        fi
     - id: v8-sdk-ready
       name: Validate completed V8 SDK for caching
       if: always() && steps.v8-cache.outputs.cache-hit != 'true'
@@ -492,16 +635,38 @@ jobs:
             || { [[ -d "$root/third_party/partition_alloc/src" ]] \
               && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src/partition_alloc/buildflags.h" ]]; }
         }
+        libcxx_is_compatible() {
+          archive_is_regular() {
+            [[ -f "$1" ]] && [[ "$(head -c 7 "$1")" == '!<arch>' ]]
+          }
+          archive_has_memory_resource() {
+            "$root/third_party/llvm-build/Release+Asserts/bin/llvm-ar" t "$1" \
+              | grep -Eq '(^|/)memory_resource\.o$'
+          }
+          [[ '${{ matrix.rid }}' != linux-* ]] \
+            || { archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
+              && archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" \
+              && archive_has_memory_resource "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
+              && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
+              && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
+              && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
+              && [[ -f "$root/third_party/libc++abi/src/include/cxxabi.h" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/clang++" ]] \
+              && [[ -x "$root/third_party/llvm-build/Release+Asserts/bin/ld.lld" ]]; }
+        }
         args_are_compatible() {
           grep -Eq '^v8_enable_pointer_compression *= *true$' "$args" \
             && grep -Eq '^v8_enable_pointer_compression_shared_cage *= *true$' "$args" \
             && grep -Eq '^v8_enable_partition_alloc *= *${{ matrix.partition_alloc }}$' "$args" \
-            && { [[ '${{ matrix.rid }}' != 'linux-x64' ]] \
+            && { [[ '${{ matrix.rid }}' != linux-* ]] \
               || { grep -Eq '^use_lld *= *true$' "$args" \
-                && grep -Eq '^use_sysroot *= *false$' "$args" \
+                && grep -Eq '^use_sysroot *= *true$' "$args" \
                 && grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$args" \
+                && grep -Eq '^use_custom_libcxx *= *true$' "$args" \
                 && grep -Eq '^use_allocator_shim *= *false$' "$args" \
-                && grep -Eq '^use_partition_alloc_as_malloc *= *false$' "$args"; }; }
+                && grep -Eq '^use_partition_alloc_as_malloc *= *false$' "$args"; }; } \
+            && { [[ '${{ matrix.rid }}' != osx-* ]] \
+              || grep -Eq '^use_custom_libcxx *= *false$' "$args"; }
         }
         if [[ -f "$root/include/v8.h" \
           && -f "$root/include/v8-inspector.h" \
@@ -512,56 +677,179 @@ jobs:
           && -f "$root/LICENSE" \
           && -f "$root/third_party/icu/LICENSE" ]] \
           && args_are_compatible \
-          && partition_alloc_is_compatible; then
+          && partition_alloc_is_compatible \
+          && libcxx_is_compatible; then
           echo "ready=true" >> "$GITHUB_OUTPUT"
         else
           echo "ready=false" >> "$GITHUB_OUTPUT"
         fi
     - name: Save completed V8 SDK
-      if: always() && steps.v8-sdk-ready.outputs.ready == 'true'
+      if: always() && github.ref_type != 'tag' && steps.v8-sdk-ready.outputs.ready == 'true'
       uses: actions/cache/save@v4
       with:
         path: |
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/include
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}
+          artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a
+          ${{ matrix.v8_cache_extra_paths }}
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/icudtl.dat
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/icu/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/partition_alloc/src
-        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'scripts/V8WindowsEnvironment.psm1') }}
+        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'scripts/V8WindowsEnvironment.psm1', 'packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt', 'packaging/WebScene.NativeEngine.Runtime/patches/V8LibcxxMemoryResourcePatch.txt', 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
     - name: Upload required compatibility evidence
-      if: success()
+      if: success() && matrix.rid != 'linux-arm64'
       uses: actions/upload-artifact@v4
       with:
         name: compatibility-required-${{ matrix.rid }}-${{ needs.metadata.outputs.package-version }}
         path: artifacts/native-engine-runtime-build/**/wpt-results/**
         if-no-files-found: error
     - name: Upload failed compatibility evidence
-      if: failure()
+      if: failure() && matrix.rid != 'linux-arm64'
       uses: actions/upload-artifact@v4
       with:
         name: compatibility-required-${{ matrix.rid }}-${{ needs.metadata.outputs.package-version }}
         path: artifacts/native-engine-runtime-build/**/wpt-results/**
         if-no-files-found: warn
     - name: Upload candidate compatibility evidence
-      if: always()
+      if: always() && matrix.rid != 'linux-arm64'
       uses: actions/upload-artifact@v4
       with:
         name: compatibility-candidate-${{ matrix.rid }}-${{ needs.metadata.outputs.package-version }}
         path: artifacts/native-engine-runtime-build/**/wpt-candidate-results/**
         if-no-files-found: warn
     - name: Upload verified RID package
+      if: matrix.rid != 'linux-arm64'
       uses: actions/upload-artifact@v4
       with:
         name: native-${{ matrix.rid }}-${{ needs.metadata.outputs.package-version }}
-        path: artifacts/nuget-packages/*.nupkg
+        path: |
+          artifacts/nuget-packages/*.nupkg
+          artifacts/native-engine-runtime-build/**/*-abi.json
+        if-no-files-found: error
+    - name: Upload ARM64 cross-build stage
+      if: matrix.rid == 'linux-arm64'
+      uses: actions/upload-artifact@v4
+      with:
+        name: cross-stage-linux-arm64-${{ needs.metadata.outputs.package-version }}
+        path: |
+          artifacts/native-engine-runtime-build/linux-arm64-*/**
+          artifacts/native-engine-v8/linux-arm64/v8/include/**
+          artifacts/native-engine-v8/linux-arm64/v8/out/arm64/ReleasePartitionAlloc/**
+          artifacts/native-engine-v8/linux-arm64/v8/LICENSE
+          artifacts/native-engine-v8/linux-arm64/v8/third_party/icu/LICENSE
+          artifacts/native-engine-v8/linux-arm64/v8/third_party/partition_alloc/src/**
+        if-no-files-found: error
+        retention-days: 3
+
+  linux-arm64-finalize:
+    name: Finalize and test linux-arm64
+    needs: [metadata, linux-builder, native]
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - name: Build ARM64 finalizer for PR validation
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        docker build \
+          --platform linux/arm64 \
+          --file packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-arm64-finalizer \
+          --tag ghcr.io/scenetech/webscene-linux-arm64-finalizer:webscene-linux-glibc-v1 \
+          packaging/WebScene.NativeEngine.Runtime
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Download ARM64 cross-build stage
+      uses: actions/download-artifact@v4
+      with:
+        name: cross-stage-linux-arm64-${{ needs.metadata.outputs.package-version }}
+        path: artifacts
+    - name: Restore executable permissions
+      shell: bash
+      run: |
+        find artifacts/native-engine-runtime-build/linux-arm64-* -type f \
+          \( -name 'webscene_*' -o -name '*_tests' \) -exec chmod +x {} +
+    - name: Generate snapshot, test, and package under ARM64 emulation
+      shell: bash
+      run: |
+        docker run --rm \
+          --platform linux/arm64 \
+          --user "$(id -u):$(id -g)" \
+          --env HOME=/tmp/webscene-home \
+          --env DOTNET_CLI_HOME=/tmp/webscene-home \
+          --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
+          --volume "$GITHUB_WORKSPACE:/workspace" \
+          --workdir /workspace \
+          '${{ needs.linux-builder.outputs.arm64-finalizer-image }}' \
+          scripts/build-linux-native-runtime.sh \
+            --rid linux-arm64 \
+            --package-version '${{ needs.metadata.outputs.package-version }}' \
+            --output /workspace/artifacts/nuget-packages \
+            --stage finalize
+        native_path="$(find artifacts/native-engine-runtime-build -path '*/linux-arm64-*/libwebscene_native_engine.so' -print -quit)"
+        python3 scripts/verify-linux-native-abi.py "$native_path" \
+          --rid linux-arm64 \
+          --output "${native_path%/*}/linux-arm64-abi.json"
+    - name: Run ARM64 candidate compatibility discovery
+      continue-on-error: true
+      shell: bash
+      run: |
+        native_path="$(find artifacts/native-engine-runtime-build -path '*/package-smoke/runtimes/linux-arm64/native/libwebscene_native_engine.so' -print -quit)"
+        build_dir="${native_path%%/package-smoke/runtimes/*}"
+        docker run --rm \
+          --platform linux/arm64 \
+          --user "$(id -u):$(id -g)" \
+          --env HOME=/tmp/webscene-home \
+          --env DOTNET_CLI_HOME=/tmp/webscene-home \
+          --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
+          --volume "$GITHUB_WORKSPACE:/workspace" \
+          --workdir /workspace \
+          '${{ needs.linux-builder.outputs.arm64-finalizer-image }}' \
+          dotnet run \
+            --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj \
+            -c Release -f net10.0 --no-build -- \
+            --selection candidate \
+            --native-library "$native_path" \
+            --native-cache-directory "$build_dir/code-cache" \
+            --output "$build_dir/wpt-candidate-results"
+    - name: Upload ARM64 required compatibility evidence
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: compatibility-required-linux-arm64-${{ needs.metadata.outputs.package-version }}
+        path: artifacts/native-engine-runtime-build/**/wpt-results/**
+        if-no-files-found: error
+    - name: Upload ARM64 candidate compatibility evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: compatibility-candidate-linux-arm64-${{ needs.metadata.outputs.package-version }}
+        path: artifacts/native-engine-runtime-build/**/wpt-candidate-results/**
+        if-no-files-found: warn
+    - name: Upload verified ARM64 package and ABI evidence
+      uses: actions/upload-artifact@v4
+      with:
+        name: native-linux-arm64-${{ needs.metadata.outputs.package-version }}
+        path: |
+          artifacts/nuget-packages/*.nupkg
+          artifacts/native-engine-runtime-build/**/*-abi.json
         if-no-files-found: error
 
   required-evidence:
     name: Verify cross-RID required evidence
-    needs: [metadata, native]
+    needs: [metadata, native, linux-arm64-finalize]
     runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
@@ -577,6 +865,8 @@ jobs:
           --profile tests/WebPlatformSubset/webscene-component-profile.json \
           --selection required \
           --expected-rid osx-arm64 \
+          --expected-rid osx-x64 \
+          --expected-rid linux-arm64 \
           --expected-rid linux-x64 \
           --expected-rid win-x64 \
           --output artifacts/required-compatibility/cross-rid-summary.json
@@ -589,7 +879,7 @@ jobs:
 
   package-set:
     name: Verify release package set
-    needs: [metadata, packages, native, required-evidence]
+    needs: [metadata, packages, native, linux-arm64-finalize, required-evidence]
     runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
@@ -602,7 +892,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         pattern: native-*-${{ needs.metadata.outputs.package-version }}
-        path: artifacts/nuget-packages
+        path: artifacts
         merge-multiple: true
     - name: Verify versions, dependencies, symbols, and package inventory
       shell: bash
@@ -611,6 +901,8 @@ jobs:
           artifacts/nuget-packages \
           --version '${{ needs.metadata.outputs.package-version }}' \
           --native-rid osx-arm64 \
+          --native-rid osx-x64 \
+          --native-rid linux-arm64 \
           --native-rid linux-x64 \
           --native-rid win-x64 \
           --output artifacts/nuget-packages/release-packages.json
@@ -631,7 +923,7 @@ jobs:
 
   candidate-evidence:
     name: Verify cross-RID candidate evidence
-    needs: [metadata, native]
+    needs: [metadata, native, linux-arm64-finalize]
     if: always() && needs.metadata.result == 'success' && needs.native.result != 'cancelled'
     runs-on: [self-hosted, Linux, X64]
     steps:
@@ -651,6 +943,8 @@ jobs:
           --selection candidate \
           --advisory-test-failures \
           --expected-rid osx-arm64 \
+          --expected-rid osx-x64 \
+          --expected-rid linux-arm64 \
           --expected-rid linux-x64 \
           --expected-rid win-x64 \
           --output artifacts/candidate-compatibility/cross-rid-summary.json
@@ -664,17 +958,29 @@ jobs:
 
   consumer:
     name: Package consumer ${{ matrix.rid }}
-    needs: [metadata, package-set]
+    needs: [metadata, package-set, linux-builder]
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         include:
         - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
+          dotnet_architecture: arm64
+        - os: [self-hosted, macOS, ARM64]
+          rid: osx-x64
+          dotnet_architecture: x64
         - os: [self-hosted, Linux, X64]
           rid: linux-x64
+          dotnet_architecture: x64
+        - os: [self-hosted, Linux, X64]
+          rid: linux-arm64
+          dotnet_architecture: x64
         - os: windows-2022
           rid: win-x64
+          dotnet_architecture: x64
     runs-on: ${{ matrix.os }}
     env:
       # PR builds intentionally reuse package versions. Keep their extracted
@@ -690,47 +996,206 @@ jobs:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
+      if: matrix.rid != 'linux-arm64'
       uses: actions/setup-dotnet@v5
       env:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         dotnet-version: 8.0.x
         global-json-file: global.json
+        architecture: ${{ matrix.dotnet_architecture }}
+    - name: Set up ARM64 emulation
+      if: matrix.rid == 'linux-arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - name: Build ARM64 finalizer for PR consumer validation
+      if: github.event_name == 'pull_request' && matrix.rid == 'linux-arm64'
+      shell: bash
+      run: |
+        docker build \
+          --platform linux/arm64 \
+          --file packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-arm64-finalizer \
+          --tag ghcr.io/scenetech/webscene-linux-arm64-finalizer:webscene-linux-glibc-v1 \
+          packaging/WebScene.NativeEngine.Runtime
+    - name: Log in to GitHub Container Registry
+      if: matrix.rid == 'linux-arm64'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     - name: Download verified package set
       uses: actions/download-artifact@v4
       with:
         name: release-${{ needs.metadata.outputs.package-version }}
         path: artifacts/nuget-packages
     - name: Restore clean package consumer
+      if: matrix.rid != 'linux-arm64'
       shell: bash
       run: |
         dotnet restore tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+          -p:TargetFramework=net10.0 \
           -p:RuntimeIdentifier='${{ matrix.rid }}' \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}' \
-          --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config
+          --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+          --disable-build-servers
         dotnet restore tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
           -p:RuntimeIdentifier='${{ matrix.rid }}' \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}' \
-          --configfile tests/WebScene.Uno.PackageSmoke/NuGet.config
+          --configfile tests/WebScene.Uno.PackageSmoke/NuGet.config \
+          --disable-build-servers
     - name: Build and run clean package consumer
+      if: matrix.rid != 'linux-arm64'
       shell: bash
       run: |
         dotnet run \
           --project tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
-          -c Release \
+          -c Release -f net10.0 \
           -r '${{ matrix.rid }}' \
           --no-restore \
+          --disable-build-servers \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}'
         dotnet run \
           --project tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
           -c Release \
           -r '${{ matrix.rid }}' \
           --no-restore \
+          --disable-build-servers \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}'
+    - name: Restore, build, and run ARM64 package consumer under emulation
+      if: matrix.rid == 'linux-arm64'
+      shell: bash
+      run: |
+        docker run --rm \
+          --platform linux/arm64 \
+          --user "$(id -u):$(id -g)" \
+          --env HOME=/tmp/webscene-home \
+          --env DOTNET_CLI_HOME=/tmp/webscene-home \
+          --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
+          --env DOTNET_ROLL_FORWARD=Major \
+          --volume "$GITHUB_WORKSPACE:/workspace" \
+          --workdir /workspace \
+          '${{ needs.linux-builder.outputs.arm64-finalizer-image }}' \
+          bash -euo pipefail -c '
+            dotnet restore tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+              -p:TargetFramework=net10.0 \
+              -p:RuntimeIdentifier=linux-arm64 \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }} \
+              --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+              --disable-build-servers
+            dotnet restore tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
+              -p:RuntimeIdentifier=linux-arm64 \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }} \
+              --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+              --disable-build-servers
+            dotnet run --project tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+              -c Release -f net10.0 -r linux-arm64 --no-restore --disable-build-servers \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }}
+            dotnet run --project tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
+              -c Release -r linux-arm64 --no-restore --disable-build-servers \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }}'
 
+  linux-floor-smoke:
+    name: Linux floor ${{ matrix.distribution }} ${{ matrix.rid }}
+    needs: [metadata, package-set]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: [self-hosted, Linux, X64]
+          rid: linux-x64
+          platform: linux/amd64
+          distribution: ubuntu-18.04
+          image: ubuntu:18.04
+        - os: [self-hosted, Linux, X64]
+          rid: linux-arm64
+          platform: linux/arm64
+          distribution: ubuntu-18.04
+          image: ubuntu:18.04
+        - os: [self-hosted, Linux, X64]
+          rid: linux-x64
+          platform: linux/amd64
+          distribution: ubi-8.9
+          image: registry.access.redhat.com/ubi8/ubi:8.9
+        - os: [self-hosted, Linux, X64]
+          rid: linux-arm64
+          platform: linux/arm64
+          distribution: ubi-8.9
+          image: registry.access.redhat.com/ubi8/ubi:8.9
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up ARM64 emulation
+      if: matrix.platform == 'linux/arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - uses: actions/download-artifact@v4
+      with:
+        name: release-${{ needs.metadata.outputs.package-version }}
+        path: artifacts/nuget-packages
+    - name: Extract native package
+      shell: bash
+      run: |
+        mkdir -p artifacts/linux-floor-smoke
+        unzip -q \
+          "artifacts/nuget-packages/WebScene.NativeEngine.Runtime.${{ matrix.rid }}.${{ needs.metadata.outputs.package-version }}.nupkg" \
+          -d artifacts/linux-floor-smoke
+    - name: Load native runtime on support floor
+      shell: bash
+      run: |
+        docker run --rm \
+          --platform '${{ matrix.platform }}' \
+          --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+          --workdir /workspace \
+          '${{ matrix.image }}' \
+          env LD_PRELOAD="/workspace/artifacts/linux-floor-smoke/runtimes/${{ matrix.rid }}/native/libwebscene_native_engine.so" \
+            /bin/true
+
+  linux-compatibility-matrix:
+    name: Linux advisory ${{ matrix.distribution }} ${{ matrix.rid }}
+    needs: [metadata, package-set]
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: debian-10, image: 'debian:10' }
+        - { os: [self-hosted, Linux, X64], rid: linux-arm64, platform: linux/arm64, distribution: debian-10, image: 'debian:10' }
+        - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: fedora-38, image: 'fedora:38' }
+        - { os: [self-hosted, Linux, X64], rid: linux-arm64, platform: linux/arm64, distribution: fedora-38, image: 'fedora:38' }
+        - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
+        - { os: [self-hosted, Linux, X64], rid: linux-arm64, platform: linux/arm64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up ARM64 emulation
+      if: matrix.platform == 'linux/arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - uses: actions/download-artifact@v4
+      with:
+        name: release-${{ needs.metadata.outputs.package-version }}
+        path: artifacts/nuget-packages
+    - name: Extract and load native runtime
+      shell: bash
+      run: |
+        mkdir -p artifacts/linux-advisory
+        unzip -q \
+          "artifacts/nuget-packages/WebScene.NativeEngine.Runtime.${{ matrix.rid }}.${{ needs.metadata.outputs.package-version }}.nupkg" \
+          -d artifacts/linux-advisory
+        docker run --rm \
+          --platform '${{ matrix.platform }}' \
+          --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+          --workdir /workspace \
+          '${{ matrix.image }}' \
+          env LD_PRELOAD="/workspace/artifacts/linux-advisory/runtimes/${{ matrix.rid }}/native/libwebscene_native_engine.so" \
+            /bin/true
   publish:
     name: Publish to NuGet.org
-    needs: [metadata, consumer, release-ci-gate]
+    needs: [metadata, consumer, linux-floor-smoke, release-ci-gate]
     if: needs.metadata.outputs.publish == 'true'
     runs-on: [self-hosted, Linux, X64]
     environment: nuget.org
@@ -781,3 +1246,67 @@ jobs:
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
         done
+
+  linux-arm64-consumer-recheck:
+    name: Recheck package consumer linux-arm64
+    if: inputs.consumer_recheck_run_id != ''
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      actions: read
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up ARM64 emulation
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - name: Download verified package set
+      uses: actions/download-artifact@v4
+      with:
+        name: release-${{ inputs.consumer_recheck_version }}
+        path: artifacts/nuget-packages
+        run-id: ${{ inputs.consumer_recheck_run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - id: image
+      name: Resolve pinned ARM64 .NET image
+      shell: bash
+      run: |
+        image="$(python3 - <<'PY'
+        import json
+        from pathlib import Path
+        lock = json.loads(Path("packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json").read_text())
+        finalizer = lock["arm64Finalizer"]
+        print(f'{finalizer["image"]}@{finalizer["digest"]}')
+        PY
+        )"
+        echo "reference=$image" >> "$GITHUB_OUTPUT"
+    - name: Restore, build, and run ARM64 package consumer
+      shell: bash
+      run: |
+        docker run --rm \
+          --platform linux/arm64 \
+          --user "$(id -u):$(id -g)" \
+          --env HOME=/tmp/webscene-home \
+          --env DOTNET_CLI_HOME=/tmp/webscene-home \
+          --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
+          --volume "$GITHUB_WORKSPACE:/workspace" \
+          --workdir /workspace \
+          '${{ steps.image.outputs.reference }}' \
+          bash -euo pipefail -c '
+            dotnet restore tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+              -p:TargetFramework=net10.0 \
+              -p:RuntimeIdentifier=linux-arm64 \
+              -p:WebScenePackageVersion=${{ inputs.consumer_recheck_version }} \
+              --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+              --disable-build-servers
+            dotnet restore tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
+              -p:RuntimeIdentifier=linux-arm64 \
+              -p:WebScenePackageVersion=${{ inputs.consumer_recheck_version }} \
+              --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+              --disable-build-servers
+            dotnet run --project tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+              -c Release -f net10.0 -r linux-arm64 --no-restore --disable-build-servers \
+              -p:WebScenePackageVersion=${{ inputs.consumer_recheck_version }}
+            dotnet run --project tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
+              -c Release -r linux-arm64 --no-restore --disable-build-servers \
+              -p:WebScenePackageVersion=${{ inputs.consumer_recheck_version }}'

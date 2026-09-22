@@ -486,6 +486,8 @@ option(WEBSCENE_NATIVE_ENGINE_DENSE_LINK
     "Dead-strip unused native code and expose only the WebScene C ABI" OFF)
 option(WEBSCENE_NATIVE_ENGINE_THIN_LTO
     "Enable ThinLTO for the WebScene native engine and its V8 monolith link" OFF)
+option(WEBSCENE_NATIVE_ENGINE_DEFER_TARGET_EXECUTION
+    "Build target executables without running snapshot generation or tests" OFF)
 option(WEBSCENE_NATIVE_ENGINE_CERTIFICATION
     "Include certification telemetry, diagnostic snapshots, and native profiling hooks" OFF)
 option(WEBSCENE_NATIVE_ENGINE_BUILD_HTML_PARSER_BENCHMARK
@@ -619,12 +621,22 @@ if(WEBSCENE_NATIVE_ENGINE_HTML_PARSER STREQUAL "html5ever")
         "${CMAKE_CURRENT_SOURCE_DIR}/native/html_parser/Cargo.toml")
     set(WEBSCENE_HTML_PARSER_TARGET_DIR
         "${CMAKE_CURRENT_BINARY_DIR}/html-parser-target")
+    set(WEBSCENE_HTML_PARSER_LIBRARY_DIR
+        "${WEBSCENE_HTML_PARSER_TARGET_DIR}/release")
+    set(WEBSCENE_HTML_PARSER_CARGO_TARGET_ARGS)
+    if(DEFINED WEBSCENE_RUST_TARGET_TRIPLE
+        AND NOT WEBSCENE_RUST_TARGET_TRIPLE STREQUAL "")
+        set(WEBSCENE_HTML_PARSER_LIBRARY_DIR
+            "${WEBSCENE_HTML_PARSER_TARGET_DIR}/${WEBSCENE_RUST_TARGET_TRIPLE}/release")
+        list(APPEND WEBSCENE_HTML_PARSER_CARGO_TARGET_ARGS
+            --target "${WEBSCENE_RUST_TARGET_TRIPLE}")
+    endif()
     if(MSVC)
         set(WEBSCENE_HTML_PARSER_LIBRARY
-            "${WEBSCENE_HTML_PARSER_TARGET_DIR}/release/webscene_html_parser.lib")
+            "${WEBSCENE_HTML_PARSER_LIBRARY_DIR}/webscene_html_parser.lib")
     else()
         set(WEBSCENE_HTML_PARSER_LIBRARY
-            "${WEBSCENE_HTML_PARSER_TARGET_DIR}/release/libwebscene_html_parser.a")
+            "${WEBSCENE_HTML_PARSER_LIBRARY_DIR}/libwebscene_html_parser.a")
     endif()
     add_custom_command(
         OUTPUT "${WEBSCENE_HTML_PARSER_LIBRARY}"
@@ -632,7 +644,9 @@ if(WEBSCENE_NATIVE_ENGINE_HTML_PARSER STREQUAL "html5ever")
             "CARGO_TARGET_DIR=${WEBSCENE_HTML_PARSER_TARGET_DIR}"
             "${WEBSCENE_CARGO_EXECUTABLE}" build
             --manifest-path "${WEBSCENE_HTML_PARSER_MANIFEST}"
-            --release --locked ${WEBSCENE_HTML_PARSER_CARGO_FEATURES}
+            --release --locked
+            ${WEBSCENE_HTML_PARSER_CARGO_TARGET_ARGS}
+            ${WEBSCENE_HTML_PARSER_CARGO_FEATURES}
         DEPENDS
             "${WEBSCENE_HTML_PARSER_MANIFEST}"
             "${CMAKE_CURRENT_SOURCE_DIR}/native/html_parser/Cargo.lock"
@@ -1030,19 +1044,24 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             "${CMAKE_CURRENT_BINARY_DIR}/webscene_bootstrap_snapshot.bin")
         set(WEBSCENE_V8_SNAPSHOT_METADATA
             "${CMAKE_CURRENT_BINARY_DIR}/webscene_bootstrap_snapshot.meta")
-        add_custom_command(
-            OUTPUT "${WEBSCENE_V8_SNAPSHOT_BLOB}" "${WEBSCENE_V8_SNAPSHOT_METADATA}"
-            COMMAND "$<TARGET_FILE:webscene_v8_snapshot_builder>"
-                "${WEBSCENE_V8_ICU_DATA}"
-                "${WEBSCENE_V8_BOOTSTRAP_SOURCE}"
-                "${WEBSCENE_V8_SNAPSHOT_BLOB}"
-                "${WEBSCENE_V8_SNAPSHOT_METADATA}"
-            DEPENDS webscene_v8_snapshot_builder "${WEBSCENE_V8_BOOTSTRAP_SOURCE}"
-            COMMENT "Creating the WebScene V8 bootstrap snapshot"
-            VERBATIM)
-        add_custom_target(webscene_v8_bootstrap_snapshot ALL
-            DEPENDS "${WEBSCENE_V8_SNAPSHOT_BLOB}" "${WEBSCENE_V8_SNAPSHOT_METADATA}")
-        add_dependencies(webscene_native_engine webscene_v8_bootstrap_snapshot)
+        if(NOT WEBSCENE_NATIVE_ENGINE_DEFER_TARGET_EXECUTION)
+            add_custom_command(
+                OUTPUT "${WEBSCENE_V8_SNAPSHOT_BLOB}" "${WEBSCENE_V8_SNAPSHOT_METADATA}"
+                COMMAND "$<TARGET_FILE:webscene_v8_snapshot_builder>"
+                    "${WEBSCENE_V8_ICU_DATA}"
+                    "${WEBSCENE_V8_BOOTSTRAP_SOURCE}"
+                    "${WEBSCENE_V8_SNAPSHOT_BLOB}"
+                    "${WEBSCENE_V8_SNAPSHOT_METADATA}"
+                DEPENDS webscene_v8_snapshot_builder "${WEBSCENE_V8_BOOTSTRAP_SOURCE}"
+                COMMENT "Creating the WebScene V8 bootstrap snapshot"
+                VERBATIM)
+            add_custom_target(webscene_v8_bootstrap_snapshot ALL
+                DEPENDS "${WEBSCENE_V8_SNAPSHOT_BLOB}" "${WEBSCENE_V8_SNAPSHOT_METADATA}")
+            add_dependencies(webscene_native_engine webscene_v8_bootstrap_snapshot)
+        else()
+            message(STATUS
+                "WebScene native engine: target execution deferred for cross-build finalization")
+        endif()
         target_compile_definitions(webscene_native_engine PRIVATE
             WEBSCENE_V8_BOOTSTRAP_SNAPSHOT=1
             WEBSCENE_V8_SNAPSHOT_FILENAME="webscene_bootstrap_snapshot.bin"
@@ -1267,6 +1286,7 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=host-driven-close-veto"
             LABELS "native;runtime;lifecycle;performance" TIMEOUT 30)
         set_tests_properties(webscene_native_engine_tests PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
             ENVIRONMENT
                 "WEBSCENE_V8_DETAILED_MEMORY_METRICS=1;WEBSCENE_INTEROP_STRESS=1")
     endif()

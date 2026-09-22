@@ -211,7 +211,7 @@ public sealed class ReleaseCompatibilityGateTests
             workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "needs: [metadata, packages, native, required-evidence]",
+            "needs: [metadata, packages, native, linux-arm64-finalize, required-evidence]",
             workflow,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -261,7 +261,7 @@ public sealed class ReleaseCompatibilityGateTests
         Assert.Contains("--status completed", workflow, StringComparison.Ordinal);
         Assert.Contains("if [[ \"$conclusion\" != success ]]", workflow, StringComparison.Ordinal);
         Assert.Contains(
-            "needs: [metadata, consumer, release-ci-gate]",
+            "needs: [metadata, consumer, linux-floor-smoke, release-ci-gate]",
             workflow,
             StringComparison.Ordinal);
         Assert.Contains("fail-fast: false", ciWorkflow, StringComparison.Ordinal);

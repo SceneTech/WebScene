@@ -954,6 +954,10 @@ void install_navigator(
     constexpr auto platform = "Win32";
     constexpr auto user_agent_platform = "Windows NT 10.0; Win64; x64";
     constexpr auto client_platform = "Windows";
+#elif defined(__aarch64__)
+    constexpr auto platform = "Linux aarch64";
+    constexpr auto user_agent_platform = "X11; Linux aarch64";
+    constexpr auto client_platform = "Linux";
 #else
     constexpr auto platform = "Linux x86_64";
     constexpr auto user_agent_platform = "X11; Linux x86_64";

@@ -119,7 +119,7 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         self.assertGreaterEqual(
             package_workflow.count(
                 "hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, "
-                "'scripts/V8WindowsEnvironment.psm1')"
+                "'scripts/V8WindowsEnvironment.psm1',"
             ),
             2,
         )
@@ -139,33 +139,14 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(restore_keys.count("matrix.rid != 'win-x64'"), 2)
         self.assertNotIn("\n          webscene-v8-sdk-", restore_keys)
 
-    def test_linux_crash_diagnostics_honor_the_selected_v8_root(self) -> None:
+    def test_linux_cross_build_uses_the_selected_v8_root(self) -> None:
         wrapper = (
-            ROOT / "scripts/build-native-engine-runtime-linux-container.sh"
+            ROOT / "scripts/build-linux-native-runtime.sh"
         ).read_text(encoding="utf-8")
-
-        self.assertIn('--v8-root) v8_root="${arguments[++index]:-}"', wrapper)
-        self.assertIn(
-            'build_variant="-$html_parser-$css_parser-$selector_parser-'
-            '$dom_bindings-$v8_snapshot"',
-            wrapper,
-        )
-        self.assertIn('build_variant+=-inspector', wrapper)
-        self.assertIn(
-            'build_dir="$repo_root/artifacts/native-engine-runtime-build/'
-            'linux-x64$build_variant"',
-            wrapper,
-        )
-        self.assertIn(
-            'icu_data="$v8_root/out/x64/$v8_configuration/icudtl.dat"',
-            wrapper,
-        )
-        diagnostic = wrapper.split('native_test_status=0', 1)[1]
-        self.assertIn('if [[ -d "$build_dir" ]]', diagnostic)
-        self.assertNotIn(
-            'if [[ -f "$icu_data" && -d "$build_dir" ]]', diagnostic
-        )
-        self.assertIn('thread apply all bt', diagnostic)
+        self.assertIn('v8_root_host="$repo_root/artifacts/native-engine-v8/$rid/v8"', wrapper)
+        self.assertIn('common_args+=(--v8-root "/workspace/artifacts/native-engine-v8/$rid/v8")', wrapper)
+        self.assertIn('scripts/build-native-engine-runtime.sh "${common_args[@]}"', wrapper)
+        self.assertIn('scripts/verify-linux-native-abi.py', wrapper)
 
     def test_release_package_gate_covers_every_supported_rid(self) -> None:
         package_workflow = self.workflows[
@@ -187,7 +168,7 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
             "\n  publish:\n", 1
         )[0]
 
-        for rid in ("osx-arm64", "linux-x64", "win-x64"):
+        for rid in ("osx-arm64", "osx-x64", "linux-arm64", "linux-x64", "win-x64"):
             with self.subTest(rid=rid):
                 self.assertIn(f"rid: {rid}", native)
                 self.assertIn(f"--expected-rid {rid}", required)

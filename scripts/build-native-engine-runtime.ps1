@@ -363,7 +363,7 @@ $env:WEBSCENE_VARIABLE_FONT_INSTANCING = '1'
 try {
     & dotnet run `
         --project (Join-Path $repoRoot "tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj") `
-        -c Release -- `
+        -c Release -f net10.0 -- `
         --selection required `
         --native-library $packageNativePath `
         --native-cache-directory (Join-Path $buildDir "code-cache") `

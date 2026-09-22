@@ -1,0 +1,12 @@
+diff --git a/third_party/libc++/BUILD.gn b/third_party/libc++/BUILD.gn
+index 28a2db8..bfc9351 100644
+--- a/third_party/libc++/BUILD.gn
++++ b/third_party/libc++/BUILD.gn
+@@ -459,6 +459,7 @@ if (libcxx_is_shared) {
+     "//third_party/libc++/src/src/iostream.cpp",
+     "//third_party/libc++/src/src/locale.cpp",
+     "//third_party/libc++/src/src/memory.cpp",
++    "//third_party/libc++/src/src/memory_resource.cpp",
+     "//third_party/libc++/src/src/mutex.cpp",
+     "//third_party/libc++/src/src/mutex_destructor.cpp",
+     "//third_party/libc++/src/src/new_handler.cpp",

@@ -2378,6 +2378,10 @@ void test_navigator_platform_and_wheel_modifiers(webscene_engine* engine)
     require(
         navigator_result.find(R"("platform":"Win32")") != std::string::npos,
         "native navigator did not expose Windows platform identity: " + navigator_result);
+#elif defined(__aarch64__)
+    require(
+        navigator_result.find(R"("platform":"Linux aarch64")") != std::string::npos,
+        "native navigator did not expose Linux ARM64 platform identity: " + navigator_result);
 #else
     require(
         navigator_result.find(R"("platform":"Linux x86_64")") != std::string::npos,

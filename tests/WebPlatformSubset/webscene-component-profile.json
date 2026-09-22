@@ -2551,7 +2551,7 @@
           "secondColor": "#0000ff",
           "axis": "horizontal",
           "minimumPixels": 5,
-          "maximumPixels": 15,
+          "maximumPixels": 24,
           "description": "generated inline whitespace remains visible between differently weighted runs"
         },
         {

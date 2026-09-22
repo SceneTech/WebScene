@@ -140,7 +140,7 @@ jobs:
     - name: Avalonia headless tests
       run: dotnet test tests/WebScene.Backend.Avalonia.Tests/WebScene.Backend.Avalonia.Tests.csproj -c Release --no-build
     - name: WPT manifest integrity
-      run: dotnet run --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj -c Release --no-build -- --selection all --list
+      run: dotnet run --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj -c Release -f net10.0 --no-build -- --selection all --list
     - name: Native C++ portability build (without V8)
       run: >-
         cmake

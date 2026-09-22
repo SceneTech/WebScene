@@ -22,9 +22,17 @@ disable_wasm=false
 partition_alloc=false
 graphics_sdk=
 cmake_build_type=Release
+target_triple=
+rust_target_triple=
+sysroot=
+builder_identity=
+glibc_baseline=
+depot_tools_commit=ca054941f756b50e1a3d83727270d879bec1f331
+defer_target_execution=false
+finalize_only=false
 
 usage() {
-  echo "Usage: $0 --rid osx-arm64|osx-x64|linux-arm64|linux-x64 [--output DIR] [--package-version VERSION] [--v8-root DIR] [--v8-output-root DIR] [--v8-workspace DIR] [--v8-sdk-output DIR] [--v8-revision REVISION] [--html-parser legacy|html5ever] [--css-parser legacy|cssparser] [--selector-parser legacy|servo] [--dom-bindings legacy|generated] [--v8-snapshot none|bootstrap] [--cmake-build-type Release|RelWithDebInfo] [--upstream-v8] [--thin-lto] [--disable-wasm] [--partition-alloc] [--graphics-sdk DIR]" >&2
+  echo "Usage: $0 --rid osx-arm64|osx-x64|linux-arm64|linux-x64 [--output DIR] [--package-version VERSION] [--v8-root DIR] [--v8-output-root DIR] [--v8-workspace DIR] [--v8-sdk-output DIR] [--v8-revision REVISION] [--html-parser legacy|html5ever] [--css-parser legacy|cssparser] [--selector-parser legacy|servo] [--dom-bindings legacy|generated] [--v8-snapshot none|bootstrap] [--cmake-build-type Release|RelWithDebInfo] [--upstream-v8] [--thin-lto] [--disable-wasm] [--partition-alloc] [--graphics-sdk DIR] [--target-triple TRIPLE] [--rust-target-triple TRIPLE] [--sysroot DIR] [--builder-identity ID] [--glibc-baseline VERSION] [--depot-tools-commit SHA] [--defer-target-execution|--finalize-only]" >&2
 }
 
 while (($# > 0)); do
@@ -37,6 +45,14 @@ while (($# > 0)); do
     --v8-workspace) v8_workspace="${2:-}"; shift 2 ;;
     --v8-sdk-output) v8_sdk_output="${2:-}"; shift 2 ;;
     --v8-revision) v8_revision="${2:-}"; shift 2 ;;
+    --target-triple) target_triple="${2:-}"; shift 2 ;;
+    --rust-target-triple) rust_target_triple="${2:-}"; shift 2 ;;
+    --sysroot) sysroot="${2:-}"; shift 2 ;;
+    --builder-identity) builder_identity="${2:-}"; shift 2 ;;
+    --glibc-baseline) glibc_baseline="${2:-}"; shift 2 ;;
+    --depot-tools-commit) depot_tools_commit="${2:-}"; shift 2 ;;
+    --defer-target-execution) defer_target_execution=true; shift ;;
+    --finalize-only) finalize_only=true; shift ;;
     --html-parser) html_parser="${2:-}"; shift 2 ;;
     --css-parser) css_parser="${2:-}"; shift 2 ;;
     --selector-parser) selector_parser="${2:-}"; shift 2 ;;
@@ -134,9 +150,80 @@ if [[ -z "$package_version" && "${WEBSCENE_NATIVE_V8_ONLY:-0}" != 1 ]]; then
   exit 1
 fi
 
-if [[ "$(uname -s)" != "$expected_kernel" || "$(uname -m)" != "$expected_machine" ]]; then
-  echo "RID '$rid' must be built natively on $expected_kernel/$expected_machine; current host is $(uname -s)/$(uname -m)." >&2
+macos_arm64_to_x64=false
+host_kernel="$(uname -s)"
+host_machine="$(uname -m)"
+if [[ "$rid" == osx-x64 && "$host_kernel" == Darwin && "$host_machine" == arm64 ]]; then
+  macos_arm64_to_x64=true
+fi
+if [[ "$expected_kernel" == Darwin \
+    && ( "$host_kernel" != "$expected_kernel" \
+      || ( "$host_machine" != "$expected_machine" && "$macos_arm64_to_x64" != true ) ) ]]; then
+  echo "RID '$rid' must be built natively on $expected_kernel/$expected_machine; current host is $host_kernel/$host_machine." >&2
   exit 1
+fi
+if [[ "$expected_kernel" == Darwin && -z "$rust_target_triple" ]]; then
+  if [[ "$cpu" == x64 ]]; then
+    rust_target_triple=x86_64-apple-darwin
+  else
+    rust_target_triple=aarch64-apple-darwin
+  fi
+fi
+if [[ "$expected_kernel" == Darwin ]]; then
+  rust_version=1.90.0
+  rust_mac_arm64_sha256=9772d20d5cd736079a0ee84d00e6697cf2084f0fc4621b011e24e6f2d08d2d7f
+  rust_mac_x64_std_sha256=dd731e6f9f30cb9b2928b92b084d2f12a3abf06a481ecbd8c3553c3e6f742139
+  rust_prefix="${RUNNER_TOOL_CACHE:-${RUNNER_TEMP:-$repo_root/artifacts/toolchains}}/webscene-rust-$rust_version"
+  rust_complete="$rust_prefix/.webscene-complete"
+  if [[ ! -f "$rust_complete" ]]; then
+    rust_download_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/webscene-rust.XXXXXX")"
+    (
+      cd "$rust_download_dir"
+      host_archive="rust-$rust_version-aarch64-apple-darwin.tar.xz"
+      x64_std_archive="rust-std-$rust_version-x86_64-apple-darwin.tar.xz"
+      curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+        --remote-name "https://static.rust-lang.org/dist/$host_archive"
+      echo "$rust_mac_arm64_sha256  $host_archive" | shasum -a 256 -c -
+      tar -xf "$host_archive"
+      "${host_archive%.tar.xz}/install.sh" --prefix="$rust_prefix" --without=rust-docs
+      curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+        --remote-name "https://static.rust-lang.org/dist/$x64_std_archive"
+      echo "$rust_mac_x64_std_sha256  $x64_std_archive" | shasum -a 256 -c -
+      tar -xf "$x64_std_archive"
+      "${x64_std_archive%.tar.xz}/install.sh" --prefix="$rust_prefix"
+      : > "$rust_complete"
+    )
+  fi
+  export PATH="$rust_prefix/bin:$PATH"
+  if [[ "$(rustc --version)" != "rustc $rust_version "* ]]; then
+    echo "Pinned macOS Rust toolchain validation failed: $(rustc --version)" >&2
+    exit 1
+  fi
+fi
+if [[ "$expected_kernel" == Linux ]]; then
+  case "$rid:$target_triple" in
+    linux-x64:x86_64-linux-gnu|linux-arm64:aarch64-linux-gnu) ;;
+    *) echo "RID '$rid' requires its locked Linux target triple, not '$target_triple'." >&2; exit 1 ;;
+  esac
+  case "$rid:$rust_target_triple" in
+    linux-x64:x86_64-unknown-linux-gnu|linux-arm64:aarch64-unknown-linux-gnu) ;;
+    *) echo "RID '$rid' requires its locked Rust target triple, not '$rust_target_triple'." >&2; exit 1 ;;
+  esac
+  if [[ "$finalize_only" == false && ! -d "$sysroot" ]]; then
+    echo "Linux cross-build sysroot is missing: $sysroot" >&2
+    exit 1
+  fi
+  if [[ -z "$builder_identity" || -z "$glibc_baseline" ]]; then
+    echo "Linux release builds require --builder-identity and --glibc-baseline." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$finalize_only" == true && -z "$v8_root" ]]; then
+  v8_workspace="${v8_workspace:-$repo_root/artifacts/native-engine-v8/$rid}"
+  v8_root="$v8_workspace/v8"
 fi
 
 if [[ -z "$v8_root" ]]; then
@@ -145,7 +232,10 @@ if [[ -z "$v8_root" ]]; then
   v8_root="$v8_workspace/v8"
   mkdir -p "$v8_workspace"
 
-  if [[ ! -d "$depot_tools/.git" ]]; then
+  if [[ ! -d "$depot_tools/.git" && -d /opt/depot_tools/.git ]]; then
+    git clone --no-checkout /opt/depot_tools "$depot_tools"
+    git -C "$depot_tools" checkout --detach "$depot_tools_commit"
+  elif [[ ! -d "$depot_tools/.git" ]]; then
     clone_attempt=1
     while ! git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$depot_tools"; do
       if ((clone_attempt >= 3)); then
@@ -156,6 +246,10 @@ if [[ -z "$v8_root" ]]; then
       rm -rf "$depot_tools"
       clone_attempt=$((clone_attempt + 1))
     done
+  fi
+  if [[ "$(git -C "$depot_tools" rev-parse HEAD)" != "$depot_tools_commit" ]]; then
+    git -C "$depot_tools" fetch origin "$depot_tools_commit"
+    git -C "$depot_tools" checkout --detach "$depot_tools_commit"
   fi
   export PATH="$depot_tools:$PATH"
   if [[ ! -f "$depot_tools/python3_bin_reldir.txt" ]]; then
@@ -210,17 +304,26 @@ if [[ -z "$v8_root" ]]; then
       "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt"
   fi
   if [[ "$expected_kernel" == Linux ]]; then
+    webscene_apply_patch_once "$v8_root/buildtools" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8LibcxxMemoryResourcePatch.txt"
     webscene_apply_patch_once "$v8_root/build" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt"
+    if [[ "$cpu" == arm64 ]]; then
+      webscene_apply_patch_once "$v8_root/third_party/partition_alloc/src" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt"
+    fi
   fi
 
-  gn_args="chrome_pgo_phase=0 fatal_linker_warnings=false is_cfi=false is_component_build=false is_debug=false symbol_level=0 target_cpu=\"$cpu\" treat_warnings_as_errors=false use_clang_modules=false use_custom_libcxx=false use_thin_lto=$thin_lto v8_embedder_string=\"-WebScene\" v8_enable_fuzztest=false v8_enable_partition_alloc=$partition_alloc v8_enable_pointer_compression=true v8_enable_pointer_compression_shared_cage=true v8_enable_sandbox=false v8_enable_static_roots=false v8_enable_31bit_smis_on_64bit_arch=false v8_enable_temporal_support=false v8_enable_webassembly=$v8_webassembly v8_monolithic=true v8_use_external_startup_data=false v8_target_cpu=\"$cpu\""
+  gn_args="chrome_pgo_phase=0 fatal_linker_warnings=false is_cfi=false is_component_build=false is_debug=false symbol_level=0 target_cpu=\"$cpu\" treat_warnings_as_errors=false use_clang_modules=false use_thin_lto=$thin_lto v8_embedder_string=\"-WebScene\" v8_enable_fuzztest=false v8_enable_partition_alloc=$partition_alloc v8_enable_pointer_compression=true v8_enable_pointer_compression_shared_cage=true v8_enable_sandbox=false v8_enable_static_roots=false v8_enable_31bit_smis_on_64bit_arch=false v8_enable_temporal_support=false v8_enable_webassembly=$v8_webassembly v8_monolithic=true v8_use_external_startup_data=false v8_target_cpu=\"$cpu\""
   if [[ "$expected_kernel" == Linux ]]; then
-    # V8 15.3 requires C++20 library headers that are newer than its downloaded
-    # Debian Bullseye sysroot. Build inside the pinned Ubuntu 22.04 image
-    # against that image's libstdc++ and glibc 2.35 instead.
+    # V8 15.3 requires C++20 library headers that are newer than the glibc 2.27
+    # target sysroot provides. Use Chromium's bundled libc++ while retaining
+    # the locked old-glibc sysroot for the platform ABI.
     # Keep V8's bundled LLD for its host tools; the reviewed build patch above
     # disables only CREL emission so Jammy can consume the archive.
-    gn_args+=" use_lld=true use_sysroot=false v8_monolithic_for_shared_library=true"
+    gn_args+=" use_custom_libcxx=true use_lld=true use_sysroot=true target_sysroot=\"$sysroot\" use_glib=false v8_monolithic_for_shared_library=true"
+  elif [[ "$expected_kernel" == Darwin ]]; then
+    # WebScene's embedding targets use the libc++ supplied by the selected
+    # macOS SDK. Build V8 against the same ABI; Chromium's bundled libc++ uses
+    # the std::__Cr namespace and cannot be linked with Apple's system libc++.
+    gn_args+=" use_custom_libcxx=false"
   fi
   if [[ "$partition_alloc" == true \
       && ( "$expected_kernel" == Linux || "$expected_kernel" == Darwin ) ]]; then
@@ -233,7 +336,64 @@ if [[ -z "$v8_root" ]]; then
   (
     cd "$v8_root"
     gn gen "out/$cpu/$v8_configuration" --args="$gn_args"
-    ninja -C "out/$cpu/$v8_configuration" obj/libv8_monolith.a
+    if [[ "$expected_kernel" == Linux && "$cpu" == arm64 ]]; then
+      partition_alloc_buildflags_relative="gen/third_party/partition_alloc/src/partition_alloc/buildflags.h"
+      partition_alloc_buildflags="out/$cpu/$v8_configuration/$partition_alloc_buildflags_relative"
+      ninja -C "out/$cpu/$v8_configuration" "$partition_alloc_buildflags_relative"
+      if [[ ! -f "$partition_alloc_buildflags" ]]; then
+        echo "PartitionAlloc build flags were not generated at '$partition_alloc_buildflags'." >&2
+        exit 1
+      fi
+      # V8's embedder overrides can retain ARM MTE even when the standalone
+      # PartitionAlloc default is patched. glibc 2.27 has no sys/ifunc.h, so
+      # force the generated target flag off before Ninja consumes it.
+      sed -i \
+        's/^#define PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (1)$/#define PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (0)/' \
+        "$partition_alloc_buildflags"
+      if ! grep -Fqx '#define PA_BUILDFLAG_INTERNAL_HAS_MEMORY_TAGGING() (0)' "$partition_alloc_buildflags"; then
+        echo "Unable to disable PartitionAlloc memory tagging for the glibc 2.27 ARM64 target." >&2
+        exit 1
+      fi
+    fi
+    v8_ninja_targets=(obj/libv8_monolith.a)
+    if [[ "$expected_kernel" == Linux ]]; then
+      # Cross builds need target-architecture C++ runtime archives in the
+      # primary toolchain. V8's ARM64 monolith otherwise builds libc++ only for
+      # the x64 host-tools toolchain used by mksnapshot.
+      v8_ninja_targets+=(
+        obj/buildtools/third_party/libc++/libc++.a
+        obj/buildtools/third_party/libc++abi/libc++abi.a)
+    fi
+    ninja -C "out/$cpu/$v8_configuration" "${v8_ninja_targets[@]}"
+    if [[ "$expected_kernel" == Linux ]]; then
+      # Chromium emits thin archives here. They only contain paths to the
+      # adjacent object files, so restoring just the archives from the V8 SDK
+      # cache makes the final WebScene link fail. Repack every member into a
+      # regular deterministic archive before the cache is populated.
+      llvm_ar="$v8_root/third_party/llvm-build/Release+Asserts/bin/llvm-ar"
+      for archive in \
+          "out/$cpu/$v8_configuration/obj/buildtools/third_party/libc++/libc++.a" \
+          "out/$cpu/$v8_configuration/obj/buildtools/third_party/libc++abi/libc++abi.a"; do
+        archive_dir="$(dirname "$archive")"
+        archive_name="$(basename "$archive")"
+        regular_archive="$archive_name.regular.$$"
+        (
+          cd "$archive_dir"
+          mapfile -t archive_members < <("$llvm_ar" t "$archive_name")
+          if (( ${#archive_members[@]} == 0 )); then
+            echo "V8 C++ runtime archive has no members: $archive" >&2
+            exit 1
+          fi
+          rm -f "$regular_archive"
+          "$llvm_ar" rcD "$regular_archive" "${archive_members[@]}"
+          if [[ "$(head -c 7 "$regular_archive")" != '!<arch>' ]]; then
+            echo "Failed to materialize regular V8 C++ runtime archive: $archive" >&2
+            exit 1
+          fi
+          mv "$regular_archive" "$archive_name"
+        )
+      done
+    fi
   )
   v8_output_root="$v8_root/out/$cpu/$v8_configuration"
 fi
@@ -299,8 +459,24 @@ if [[ "$expected_kernel" == Linux ]] \
   exit 1
 fi
 if [[ "$expected_kernel" == Linux ]] \
+    && { ! grep -Eq '^use_sysroot *= *true$' "$v8_args" \
+      || ! grep -Fq "target_sysroot = \"$sysroot\"" "$v8_args"; }; then
+  echo "The V8 SDK at '$v8_root' was not built against the locked target sysroot." >&2
+  exit 1
+fi
+if [[ "$expected_kernel" == Linux ]] \
     && ! grep -Eq '^v8_monolithic_for_shared_library *= *true$' "$v8_args"; then
   echo "The V8 SDK at '$v8_root' is not safe to link into a shared library." >&2
+  exit 1
+fi
+if [[ "$expected_kernel" == Linux ]] \
+    && ! grep -Eq '^use_custom_libcxx *= *true$' "$v8_args"; then
+  echo "The V8 SDK at '$v8_root' was not built with Chromium's required Linux libc++." >&2
+  exit 1
+fi
+if [[ "$expected_kernel" == Darwin ]] \
+    && ! grep -Eq '^use_custom_libcxx *= *false$' "$v8_args"; then
+  echo "The V8 SDK at '$v8_root' was not built with the macOS system libc++." >&2
   exit 1
 fi
 if [[ "$partition_alloc" == true \
@@ -347,10 +523,19 @@ cmake_args=(
   -DWEBSCENE_NATIVE_ENGINE_V8_SNAPSHOT="$v8_snapshot"
   -DWEBSCENE_V8_ROOT="$v8_root"
   -DWEBSCENE_V8_OUTPUT_ROOT="$v8_output_root"
+  -DWEBSCENE_NATIVE_ENGINE_DEFER_TARGET_EXECUTION="$defer_target_execution"
 )
-macos_deployment_target=12.0
+macos_deployment_target=14.0
 if [[ "$expected_kernel" == Darwin ]]; then
-  cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_deployment_target")
+  macos_architecture=arm64
+  if [[ "$cpu" == x64 ]]; then
+    macos_architecture=x86_64
+  fi
+  cmake_args+=(
+    -DCMAKE_OSX_ARCHITECTURES="$macos_architecture"
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_deployment_target"
+    -DWEBSCENE_RUST_TARGET_TRIPLE="$rust_target_triple"
+  )
 fi
 if [[ "$thin_lto" == true ]]; then
   v8_llvm_bin="$v8_root/third_party/llvm-build/Release+Asserts/bin"
@@ -384,42 +569,131 @@ if [[ "$thin_lto" == true ]]; then
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
   )
-elif [[ "$expected_kernel" == Linux ]]; then
-  # V8's Linux archive must be linked with LLD. The compiler is selectable so
-  # the Ubuntu 22.04 compatibility image can use GCC 11's complete C++20
-  # standard library instead of Jammy's Clang 14 source_location support.
-  linux_cxx="${CXX:-clang++}"
-  if ! command -v "$linux_cxx" >/dev/null 2>&1 || ! command -v ld.lld >/dev/null 2>&1; then
-    echo "Linux native runtime builds require '$linux_cxx' and ld.lld." >&2
+elif [[ "$expected_kernel" == Linux && "$finalize_only" == false ]]; then
+  # Compile the embedding library with the exact Chromium LLVM and libc++
+  # revision used for V8. New libc++ headers can require compiler features and
+  # configuration defines absent from the builder image's host toolchain.
+  target_library_dir="$sysroot/usr/lib/$target_triple"
+  target_include_dir="$sysroot/usr/include"
+  v8_libcxx_config_include="$v8_root/buildtools/third_party/libc++"
+  v8_libcxx_include="$v8_root/third_party/libc++/src/include"
+  v8_libcxxabi_include="$v8_root/third_party/libc++abi/src/include"
+  v8_libcxx_archive="$v8_output_root/obj/buildtools/third_party/libc++/libc++.a"
+  v8_libcxxabi_archive="$v8_output_root/obj/buildtools/third_party/libc++abi/libc++abi.a"
+  v8_llvm_root="$v8_root/third_party/llvm-build/Release+Asserts"
+  v8_llvm_bin="$v8_llvm_root/bin"
+  for target_dependency in \
+      "$target_include_dir/openssl/ssl.h" \
+      "$target_library_dir/libcrypto.a" \
+      "$target_library_dir/libssl.a" \
+      "$target_include_dir/zlib.h" \
+      "$target_library_dir/libz.a" \
+      "$v8_libcxx_config_include/__config_site" \
+      "$v8_libcxx_config_include/__assertion_handler" \
+      "$v8_libcxx_include/source_location" \
+      "$v8_libcxxabi_include/cxxabi.h" \
+      "$v8_libcxx_archive" \
+      "$v8_libcxxabi_archive" \
+      "$v8_llvm_bin/clang" \
+      "$v8_llvm_bin/clang++" \
+      "$v8_llvm_bin/llvm-ar" \
+      "$v8_llvm_bin/ld.lld"; do
+    if [[ ! -e "$target_dependency" ]]; then
+      echo "Linux sysroot is missing required native dependency '$target_dependency'." >&2
+      exit 1
+    fi
+  done
+  for runtime_archive in "$v8_libcxx_archive" "$v8_libcxxabi_archive"; do
+    if [[ "$(head -c 7 "$runtime_archive")" != '!<arch>' ]]; then
+      echo "Linux V8 C++ runtime dependency is not a self-contained regular archive: '$runtime_archive'." >&2
+      exit 1
+    fi
+  done
+  if ! "$v8_llvm_bin/llvm-ar" t "$v8_libcxx_archive" \
+      | grep -Eq '(^|/)memory_resource\.o$'; then
+    echo "Linux V8 libc++ archive does not provide std::pmr support: '$v8_libcxx_archive'." >&2
     exit 1
   fi
+  v8_llvm_ranlib="$v8_llvm_bin/llvm-ranlib"
+  if [[ ! -x "$v8_llvm_ranlib" ]]; then
+    ln -s "$v8_llvm_bin/llvm-ar" "$v8_llvm_ranlib"
+  fi
   cmake_args+=(
-    -DCMAKE_CXX_COMPILER="$linux_cxx"
+    -DCMAKE_TOOLCHAIN_FILE="$repo_root/scripts/linux-glibc-toolchain.cmake"
+    -DCMAKE_SYSROOT="$sysroot"
+    -DCMAKE_C_COMPILER="$v8_llvm_bin/clang"
+    -DCMAKE_CXX_COMPILER="$v8_llvm_bin/clang++"
+    -DCMAKE_AR="$v8_llvm_bin/llvm-ar"
+    -DCMAKE_RANLIB="$v8_llvm_ranlib"
+    -DCMAKE_C_COMPILER_AR="$v8_llvm_bin/llvm-ar"
+    -DCMAKE_C_COMPILER_RANLIB="$v8_llvm_ranlib"
+    -DCMAKE_CXX_COMPILER_AR="$v8_llvm_bin/llvm-ar"
+    -DCMAKE_CXX_COMPILER_RANLIB="$v8_llvm_ranlib"
+    -DCMAKE_LINKER="$v8_llvm_bin/ld.lld"
+    -DWEBSCENE_LINUX_TARGET_TRIPLE="$target_triple"
+    -DWEBSCENE_RUST_TARGET_TRIPLE="$rust_target_triple"
+    -DOPENSSL_ROOT_DIR="$sysroot/usr"
+    -DOPENSSL_INCLUDE_DIR="$target_include_dir"
+    -DOPENSSL_CRYPTO_LIBRARY="$target_library_dir/libcrypto.a"
+    -DOPENSSL_SSL_LIBRARY="$target_library_dir/libssl.a"
+    -DZLIB_INCLUDE_DIR="$target_include_dir"
+    -DZLIB_LIBRARY="$target_library_dir/libz.a"
+    -DCMAKE_SKIP_RPATH=TRUE
+    "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
+    "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -I$v8_libcxx_config_include -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include -include new -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCPP_INSTRUMENTED_WITH_ASAN=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"
+    "-DCMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive $v8_libcxxabi_archive -pthread"
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
-    -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
+    "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,--build-id=sha1"
   )
 fi
 if [[ "$expected_kernel" == Darwin && "$cmake_build_type" == Release ]]; then
-  # Keep line tables only until dsymutil has emitted the exact shipped
-  # binary's external symbols. strip removes them from the runtime before
-  # packaging, so diagnostics do not increase the installed footprint.
   cmake_args+=("-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -gline-tables-only")
 fi
-cmake "${cmake_args[@]}"
-cmake --build "$build_dir" --config "$cmake_build_type" --parallel
-cmake -E copy_if_different "$icu_data" "$build_dir/icudtl.dat"
-ctest_args=(--test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure)
-# Hosted package builders prove linkage and CPU contracts; real GPU execution
-# remains mandatory on the explicitly enrolled hardware qualification runners.
-if [[ "${WEBSCENE_NATIVE_SKIP_HARDWARE_TESTS:-0}" == 1 ]]; then
-  ctest_args+=(-LE hardware)
+if [[ "$finalize_only" == false ]]; then
+  cmake "${cmake_args[@]}"
+  cmake --build "$build_dir" --config "$cmake_build_type" --parallel
+  cmake -E copy_if_different "$icu_data" "$build_dir/icudtl.dat"
 fi
-ctest "${ctest_args[@]}"
+
+if [[ "$finalize_only" == true ]]; then
+  snapshot_builder="$build_dir/webscene_v8_snapshot_builder"
+  if [[ ! -x "$snapshot_builder" ]]; then
+    echo "Cross-build output is missing its target snapshot builder: $snapshot_builder" >&2
+    exit 1
+  fi
+  "$snapshot_builder" \
+    "$icu_data" \
+    "$build_dir/webscene_v8_bootstrap.js" \
+    "$build_dir/webscene_bootstrap_snapshot.bin" \
+    "$build_dir/webscene_bootstrap_snapshot.meta"
+fi
+if [[ "$defer_target_execution" == false || "$finalize_only" == true ]]; then
+  if [[ "$expected_kernel" == Linux ]]; then
+    # Production DSOs intentionally contain no RPATH. Give native test
+    # executables an explicit, process-local route to the just-built DSO.
+    test_library_path="$build_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    ctest_args=(--test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure)
+    if [[ "${WEBSCENE_NATIVE_SKIP_HARDWARE_TESTS:-0}" == 1 ]]; then
+      ctest_args+=(-LE hardware)
+    fi
+    cmake -E env "LD_LIBRARY_PATH=$test_library_path" ctest "${ctest_args[@]}"
+  else
+    ctest_args=(--test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure)
+    if [[ "${WEBSCENE_NATIVE_SKIP_HARDWARE_TESTS:-0}" == 1 ]]; then
+      ctest_args+=(-LE hardware)
+    fi
+    ctest "${ctest_args[@]}"
+  fi
+fi
 
 native_path="$build_dir/$native_name"
 if [[ ! -f "$native_path" ]]; then
   echo "Native engine build did not produce '$native_path'." >&2
   exit 1
+fi
+if [[ "$defer_target_execution" == true && "$finalize_only" == false ]]; then
+  echo "Cross-build staged for native finalization: $build_dir"
+  exit 0
 fi
 if [[ "$expected_kernel" == Darwin ]]; then
   actual_macos_deployment_target="$(
@@ -430,6 +704,7 @@ if [[ "$expected_kernel" == Darwin ]]; then
     echo "Native engine deployment target is '$actual_macos_deployment_target'; expected '$macos_deployment_target'." >&2
     exit 1
   fi
+
   native_dsym_path="$native_path.dSYM"
   cmake -E remove_directory "$native_dsym_path"
   dsymutil "$native_path" -o "$native_dsym_path"
@@ -504,6 +779,9 @@ pack_args=(
   "-p:WebSceneNativeEngineDomBindings=$dom_bindings"
   "-p:WebSceneNativeEngineV8Snapshot=$v8_snapshot"
   "-p:WebSceneNativeEngineConfiguration=$cmake_build_type"
+  "-p:WebSceneNativeEngineBuilderIdentity=$builder_identity"
+  "-p:WebSceneNativeEngineTargetTriple=$target_triple"
+  "-p:WebSceneNativeEngineGlibcBaseline=$glibc_baseline"
 )
 if [[ -n "$graphics_sdk" ]]; then
   graphics_stage_root="$(mktemp -d "$build_dir/graphics-package.XXXXXX")"
@@ -521,7 +799,14 @@ if [[ "$html_parser" == html5ever ]]; then
     "-p:WebSceneNativeEngineHtmlParserNoticesPath=$repo_root/experiments/WebScene.NativeEngine.Probe/native/html_parser/THIRD-PARTY-NOTICES.md")
 fi
 pack_args+=("-p:PackageVersion=$package_version")
-dotnet pack "${pack_args[@]}"
+# Self-hosted runners retain .NET build-server processes between invocations and
+# jobs. This is especially problematic when an Apple Silicon runner alternates
+# between native arm64 and Rosetta x64 SDKs: a later command can wait forever on
+# a server from the other architecture. Ensure validation is isolated from any
+# persistent server state and do not create new reusable servers below.
+dotnet build-server shutdown
+
+dotnet pack "${pack_args[@]}" --disable-build-servers
 
 package_path="$output_dir/WebScene.NativeEngine.Runtime.$rid.$package_version.nupkg"
 if [[ ! -f "$package_path" ]]; then
@@ -536,7 +821,7 @@ package_native_path="$package_smoke_dir/runtimes/$rid/native/$native_name"
 
 WEBSCENE_VARIABLE_FONT_INSTANCING=1 dotnet run \
   --project "$repo_root/tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj" \
-  -c Release -- \
+  -c Release -f net10.0 --disable-build-servers -- \
   --selection required \
   --native-library "$package_native_path" \
   --native-cache-directory "$build_dir/code-cache" \
@@ -555,13 +840,13 @@ done
 WEBSCENE_TEST_NATIVE_LIBRARY="$package_native_path" \
   WEBSCENE_VARIABLE_FONT_INSTANCING=1 \
   dotnet test "$repo_root/tests/WebScene.Backend.Avalonia.Tests/WebScene.Backend.Avalonia.Tests.csproj" \
-    -c Release -f net10.0 \
+    -c Release -f net10.0 --disable-build-servers \
     --filter 'FullyQualifiedName~NativeWebFontCacheTests|FullyQualifiedName~VariableWebFontTests|FullyQualifiedName~SvgPictureRenderingTests'
 
 WEBSCENE_NATIVE_ENGINE_PATH="$package_native_path" \
   dotnet run \
     --project "$repo_root/benchmarks/WebScene.NativeEngine.Benchmarks/WebScene.NativeEngine.Benchmarks.csproj" \
-    -c Release -- \
+    -c Release --disable-build-servers -- \
     probe native-interop-race --batches 100 --width 32
 
 consumer_smoke_root="$repo_root/artifacts/native-engine-consumer-smoke"

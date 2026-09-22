@@ -2390,10 +2390,17 @@
                     break;
                 }
                 const auto number = shorthand.substr(number_start, index - number_start);
-                const std::string number_text{number};
-                char* parsed_end = nullptr;
-                const auto parsed_size = std::strtof(number_text.c_str(), &parsed_end);
-                if (parsed_end == number_text.c_str() + number_text.size()
+                // Floating-point std::from_chars is only available from macOS
+                // 26 in the current Apple SDK. strtof is available on the
+                // macOS 14 deployment baseline; copy the bounded view so its
+                // end can still be validated exactly.
+                const std::string number_text(number);
+                char* parse_end = nullptr;
+                errno = 0;
+                const auto parsed_size = std::strtof(number_text.c_str(), &parse_end);
+                if (parse_end == number_text.c_str() + number_text.size()
+                    && parse_end != number_text.c_str()
+                    && errno != ERANGE
                     && std::isfinite(parsed_size)
                     && parsed_size > 0.0F) {
                     result.size = parsed_size;

@@ -45,8 +45,13 @@ webscene_restore_v8_patches() {
   webscene_restore_patch_if_applied \
     "$v8_root/build" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt"
   webscene_restore_patch_if_applied \
+    "$v8_root/buildtools" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8LibcxxMemoryResourcePatch.txt"
+  webscene_restore_patch_if_applied \
     "$v8_root/third_party/icu" "$repo_root/third-party/v8-patches/ICUPatch.txt"
   webscene_restore_patch_if_applied \
     "$v8_root/third_party/partition_alloc" \
     "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt"
+  webscene_restore_patch_if_applied \
+    "$v8_root/third_party/partition_alloc/src" \
+    "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt"
 }

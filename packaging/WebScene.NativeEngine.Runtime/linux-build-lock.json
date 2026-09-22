@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "builderIdentity": "webscene-linux-glibc-v1",
+  "hostPlatform": "linux/amd64",
+  "hostRuntimePackages": {
+    "dejavu-sans-fonts": "2.37-3.azl3",
+    "dejavu-sans-mono-fonts": "2.37-3.azl3",
+    "dejavu-serif-fonts": "2.37-3.azl3",
+    "fontconfig": "2.14.2-2.azl3"
+  },
+  "arm64Finalizer": {
+    "image": "mcr.microsoft.com/dotnet/sdk:10.0.302-noble-arm64v8",
+    "digest": "sha256:683d16913974bf1311381ccd6d6aba55213f313501c39ef964b0458f44c0c4bc",
+    "packages": {
+      "binutils": "2.42-4ubuntu2.10",
+      "cmake": "3.28.3-1build7",
+      "fontconfig": "2.15.0-1.1ubuntu2",
+      "fonts-dejavu-core": "2.37-8",
+      "python3": "3.12.3-0ubuntu2.1"
+    }
+  },
+  "dotnetSdk": {
+    "version": "10.0.302",
+    "image": "mcr.microsoft.com/dotnet/sdk:10.0.302-noble-amd64",
+    "digest": "sha256:7a91ccecc26d71bf7688c627a6b5eae2e27bb2cd1e37e8abe738348904245692"
+  },
+  "sysroots": {
+    "linux-x64": {
+      "targetTriple": "x86_64-linux-gnu",
+      "rustTargetTriple": "x86_64-unknown-linux-gnu",
+      "path": "/crossrootfs/x64",
+      "sourceImage": "mcr.microsoft.com/dotnet-buildtools/prereqs:azurelinux-3.0-net10.0-cross-amd64",
+      "digest": "sha256:2962cae8ca49b18fb533504513c89308927ed3721372a0cc58630c350a2936b8"
+    },
+    "linux-arm64": {
+      "targetTriple": "aarch64-linux-gnu",
+      "rustTargetTriple": "aarch64-unknown-linux-gnu",
+      "path": "/crossrootfs/arm64",
+      "sourceImage": "mcr.microsoft.com/dotnet-buildtools/prereqs:azurelinux-3.0-net10.0-cross-arm64",
+      "digest": "sha256:619e1c013b88c504d34c8e064e0860313cebeb3ee1fc6e2e838406744c9857a8"
+    }
+  },
+  "compatibility": {
+    "libc": "glibc",
+    "maximumGlibc": "2.27",
+    "maximumGlibcxx": "3.4.24",
+    "maximumCxxabi": "1.3.11"
+  },
+  "toolchain": {
+    "rust": "1.90.0",
+    "rustArchiveSha256": "bff8974f2d3ee6c0e6ac926b533f65bbdd3697d2c2b925bdae5f45b9eed10a67",
+    "rustArm64StdSha256": "4952abb7d9d3ed7cea4f7ea44dcb23dc67631fae4ac44a5f059b90a4b5e9223f",
+    "rustMacArm64ArchiveSha256": "9772d20d5cd736079a0ee84d00e6697cf2084f0fc4621b011e24e6f2d08d2d7f",
+    "rustMacX64StdSha256": "dd731e6f9f30cb9b2928b92b084d2f12a3abf06a481ecbd8c3553c3e6f742139",
+    "depotToolsCommit": "ca054941f756b50e1a3d83727270d879bec1f331",
+    "v8Revision": "15.3.10"
+  },
+  "patches": {
+    "v8PartitionAllocGlibc227Arm64": {
+      "path": "patches/V8PartitionAllocGlibc227Arm64Patch.txt",
+      "sha256": "cf9226f0a461a0b85f56f4c1afe5d6cd8ea8f544392411afcd3b89b05d2a366e"
+    }
+  }
+}

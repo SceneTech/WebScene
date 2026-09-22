@@ -751,7 +751,7 @@ package_native_path="$package_smoke_dir/runtimes/$rid/native/$native_name"
 
 WEBSCENE_VARIABLE_FONT_INSTANCING=1 dotnet run \
   --project "$repo_root/tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj" \
-  -c Release -- \
+  -c Release -f net10.0 -- \
   --selection required \
   --native-library "$package_native_path" \
   --native-cache-directory "$build_dir/code-cache" \

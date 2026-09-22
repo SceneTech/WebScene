@@ -451,7 +451,7 @@ jobs:
         build_dir="${native_path%%/package-smoke/runtimes/*}"
         dotnet run \
           --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj \
-          -c Release --no-build -- \
+          -c Release -f net10.0 --no-build -- \
           --selection candidate \
           --native-library "$native_path" \
           --native-cache-directory "$build_dir/code-cache" \
@@ -628,7 +628,7 @@ jobs:
         build_dir="${native_path%%/package-smoke/runtimes/*}"
         dotnet run \
           --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj \
-          -c Release --no-build -- \
+          -c Release -f net10.0 --no-build -- \
           --selection candidate \
           --native-library "$native_path" \
           --native-cache-directory "$build_dir/code-cache" \

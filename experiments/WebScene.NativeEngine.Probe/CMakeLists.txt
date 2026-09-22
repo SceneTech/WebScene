@@ -1089,6 +1089,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             webscene_native_engine
             ixwebsocket)
         add_test(NAME webscene_native_engine_tests COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_websocket_file_reader
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_websocket_file_reader PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=websocket-file-reader"
+            LABELS "native;websocket;file-reader;performance;lifecycle"
+            TIMEOUT 30)
         add_executable(webscene_css_containment_tests
             tests/native_css_containment_tests.cpp)
         target_compile_features(webscene_css_containment_tests PRIVATE cxx_std_20)

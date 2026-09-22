@@ -109,6 +109,11 @@ class LinuxBuildPolicyTests(unittest.TestCase):
             'CMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive;$v8_libcxxabi_archive',
             self.build_script,
         )
+        self.assertIn(
+            'CMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive '
+            '$v8_libcxxabi_archive -pthread',
+            self.build_script,
+        )
 
     def test_arm_mac_can_cross_build_intel_runtime(self) -> None:
         self.assertIn("macos_arm64_to_x64=true", self.build_script)

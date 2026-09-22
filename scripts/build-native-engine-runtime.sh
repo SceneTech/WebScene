@@ -571,7 +571,7 @@ elif [[ "$expected_kernel" == Linux ]]; then
     -DZLIB_LIBRARY="$target_library_dir/libz.so"
     "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
     "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -I$v8_libcxx_config_include -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include -include new -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCPP_INSTRUMENTED_WITH_ASAN=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"
-    "-DCMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive $v8_libcxxabi_archive"
+    "-DCMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive $v8_libcxxabi_archive -pthread"
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,--build-id=sha1"
   )

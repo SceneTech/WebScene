@@ -736,7 +736,14 @@ if [[ "$html_parser" == html5ever ]]; then
     "-p:WebSceneNativeEngineHtmlParserNoticesPath=$repo_root/experiments/WebScene.NativeEngine.Probe/native/html_parser/THIRD-PARTY-NOTICES.md")
 fi
 pack_args+=("-p:PackageVersion=$package_version")
-dotnet pack "${pack_args[@]}"
+# Self-hosted runners retain .NET build-server processes between invocations and
+# jobs. This is especially problematic when an Apple Silicon runner alternates
+# between native arm64 and Rosetta x64 SDKs: a later command can wait forever on
+# a server from the other architecture. Ensure validation is isolated from any
+# persistent server state and do not create new reusable servers below.
+dotnet build-server shutdown
+
+dotnet pack "${pack_args[@]}" --disable-build-servers
 
 package_path="$output_dir/WebScene.NativeEngine.Runtime.$rid.$package_version.nupkg"
 if [[ ! -f "$package_path" ]]; then
@@ -751,7 +758,7 @@ package_native_path="$package_smoke_dir/runtimes/$rid/native/$native_name"
 
 WEBSCENE_VARIABLE_FONT_INSTANCING=1 dotnet run \
   --project "$repo_root/tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj" \
-  -c Release -f net10.0 -- \
+  -c Release -f net10.0 --disable-build-servers -- \
   --selection required \
   --native-library "$package_native_path" \
   --native-cache-directory "$build_dir/code-cache" \
@@ -760,13 +767,13 @@ WEBSCENE_VARIABLE_FONT_INSTANCING=1 dotnet run \
 WEBSCENE_TEST_NATIVE_LIBRARY="$package_native_path" \
   WEBSCENE_VARIABLE_FONT_INSTANCING=1 \
   dotnet test "$repo_root/tests/WebScene.Backend.Avalonia.Tests/WebScene.Backend.Avalonia.Tests.csproj" \
-    -c Release -f net10.0 \
+    -c Release -f net10.0 --disable-build-servers \
     --filter 'FullyQualifiedName~NativeWebFontCacheTests|FullyQualifiedName~VariableWebFontTests|FullyQualifiedName~SvgPictureRenderingTests'
 
 WEBSCENE_NATIVE_ENGINE_PATH="$package_native_path" \
   dotnet run \
     --project "$repo_root/benchmarks/WebScene.NativeEngine.Benchmarks/WebScene.NativeEngine.Benchmarks.csproj" \
-    -c Release -- \
+    -c Release --disable-build-servers -- \
     probe native-interop-race --batches 100 --width 32
 
 consumer_smoke_root="$repo_root/artifacts/native-engine-consumer-smoke"

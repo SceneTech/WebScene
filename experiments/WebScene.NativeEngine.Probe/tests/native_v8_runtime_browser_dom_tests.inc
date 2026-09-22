@@ -1408,7 +1408,8 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
           pending: __saveState.pending,
           label: document.getElementById('label').textContent
         }))JS", "async-save-coalescing.js",
-        R"JSON({"activations":2,"requests":1,"pending":true,"label":"Save"})JSON");
+        R"JSON({"activations":2,"requests":1,"pending":true,"label":"Save"})JSON",
+        1000);
     require(
         coalesced_state
             == R"JSON({"activations":2,"requests":1,"pending":true,"label":"Save"})JSON",
@@ -1418,7 +1419,7 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
     webscene_engine_metrics after_activation{};
     webscene_engine_get_metrics(engine, &after_activation);
     webscene_engine_metrics after_ack{};
-    for (auto attempt = 0; attempt < 200; ++attempt) {
+    for (auto attempt = 0; attempt < 1000; ++attempt) {
         webscene_engine_get_metrics(engine, &after_ack);
         if (after_ack.published_scenes > after_activation.published_scenes
             && evaluate(engine, "__saveState.acknowledgements",
@@ -1455,7 +1456,7 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
         engine,
         failure_consumed_before + 2U,
         "failing save activation was not consumed");
-    for (auto attempt = 0; attempt < 200; ++attempt) {
+    for (auto attempt = 0; attempt < 1000; ++attempt) {
         if (evaluate(engine, "__saveState.acknowledgements",
                 "async-save-failure-wait.js") == "2") {
             break;

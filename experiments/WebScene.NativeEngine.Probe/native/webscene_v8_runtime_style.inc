@@ -2633,9 +2633,11 @@
         } else if (apply_border_declaration(node->style, name, value)) {
             node->style.inline_property_mask |= inline_border;
         } else if (name == "width") {
+            css::retain_anchor_function(node->style, "width", value);
             node->style.width = native_document::parse_length(value);
             node->style.inline_property_mask |= inline_width;
         } else if (name == "height") {
+            css::retain_anchor_function(node->style, "height", value);
             node->style.height = native_document::parse_length(value);
             node->style.inline_property_mask |= inline_height;
         } else if (name == "minWidth") {
@@ -2651,15 +2653,19 @@
             node->style.max_height = value == "none" ? css_length{} : native_document::parse_length(value);
             node->style.inline_property_mask |= inline_max_height;
         } else if (name == "left") {
+            css::retain_anchor_function(node->style, "left", value);
             node->style.left = parse_inset_length(value);
             node->style.inline_property_mask |= inline_left;
         } else if (name == "top") {
+            css::retain_anchor_function(node->style, "top", value);
             node->style.top = parse_inset_length(value);
             node->style.inline_property_mask |= inline_top;
         } else if (name == "right") {
+            css::retain_anchor_function(node->style, "right", value);
             node->style.right = parse_inset_length(value);
             node->style.inline_property_mask |= inline_right;
         } else if (name == "bottom") {
+            css::retain_anchor_function(node->style, "bottom", value);
             node->style.bottom = parse_inset_length(value);
             node->style.inline_property_mask |= inline_bottom;
         }

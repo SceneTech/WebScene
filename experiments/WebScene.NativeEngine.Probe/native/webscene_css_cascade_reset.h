@@ -1,4 +1,5 @@
 #pragma once
+#include "webscene_css_anchor_values.h"
 #include "webscene_css_property_mask.h"
 #include "webscene_css_variables.h"
 #include "webscene_css_visibility_values.h"
@@ -201,6 +202,7 @@ inline void reset_cascaded_style(dom_node& node,
         if ((node.style.inline_property_mask & inline_opacity) == 0U) node.style.opacity = 1;
         if ((node.style.inline_property_mask & inline_color) == 0U) node.style.foreground_rgba = 0;
         if ((node.style.inline_property_mask & inline_font_size) == 0U) node.style.font_size = -1;
+        bool restore_inline_anchor_functions = false;
         if (auto* textual = node.style.mutable_textual_if_present();
             textual != nullptr) {
             if ((node.style.inline_property_mask & inline_font_family) == 0U) {
@@ -217,6 +219,14 @@ inline void reset_cascaded_style(dom_node& node,
                 textual->svg_stroke_width.clear();
             textual->list_style_position.clear();
             textual->list_style_type.clear();
+            for (const auto& [property, value] : textual->effect_values) {
+                if ((value.starts_with("anchor(") || value.starts_with("anchor-size("))
+                    && (property == "left" || property == "top" || property == "right"
+                        || property == "bottom" || property == "width" || property == "height")) {
+                    restore_inline_anchor_functions = true;
+                    break;
+                }
+            }
             textual->effect_values.clear();
             if ((node.style.inline_property_mask & inline_text_align) == 0U) {
                 textual->text_align.clear();
@@ -234,6 +244,19 @@ inline void reset_cascaded_style(dom_node& node,
             textual->overscroll_x = overscroll_behavior::automatic;
             textual->overscroll_y = overscroll_behavior::automatic;
             textual->touch_action_value = touch_action::automatic;
+        }
+        // The hot numeric inset/size fields survive a recascade when they came
+        // from inline CSSOM. Their sparse anchor() tokens must survive with
+        // them: ordinary inline dimensions are deliberately not replayed by
+        // apply_matched_declarations(). This is the path used by a detached
+        // overlay styled before it is appended to the document.
+        if (restore_inline_anchor_functions) {
+            for (const auto* property : {"left", "top", "right", "bottom", "width", "height"}) {
+                const auto authored = node.authored_style().declarations.find(property);
+                if (authored != node.authored_style().declarations.end()) {
+                    retain_anchor_function(node.style, property, authored->second);
+                }
+            }
         }
         if ((node.style.inline_property_mask & inline_font_weight) == 0U) node.style.font_weight = 0;
         node.style.isolation_stacking_context = false;

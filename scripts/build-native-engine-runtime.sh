@@ -351,6 +351,35 @@ if [[ -z "$v8_root" ]]; then
         obj/buildtools/third_party/libc++abi/libc++abi.a)
     fi
     ninja -C "out/$cpu/$v8_configuration" "${v8_ninja_targets[@]}"
+    if [[ "$expected_kernel" == Linux ]]; then
+      # Chromium emits thin archives here. They only contain paths to the
+      # adjacent object files, so restoring just the archives from the V8 SDK
+      # cache makes the final WebScene link fail. Repack every member into a
+      # regular deterministic archive before the cache is populated.
+      llvm_ar="$v8_root/third_party/llvm-build/Release+Asserts/bin/llvm-ar"
+      for archive in \
+          "out/$cpu/$v8_configuration/obj/buildtools/third_party/libc++/libc++.a" \
+          "out/$cpu/$v8_configuration/obj/buildtools/third_party/libc++abi/libc++abi.a"; do
+        archive_dir="$(dirname "$archive")"
+        archive_name="$(basename "$archive")"
+        regular_archive="$archive_name.regular.$$"
+        (
+          cd "$archive_dir"
+          mapfile -t archive_members < <("$llvm_ar" t "$archive_name")
+          if (( ${#archive_members[@]} == 0 )); then
+            echo "V8 C++ runtime archive has no members: $archive" >&2
+            exit 1
+          fi
+          rm -f "$regular_archive"
+          "$llvm_ar" rcD "$regular_archive" "${archive_members[@]}"
+          if [[ "$(head -c 7 "$regular_archive")" != '!<arch>' ]]; then
+            echo "Failed to materialize regular V8 C++ runtime archive: $archive" >&2
+            exit 1
+          fi
+          mv "$regular_archive" "$archive_name"
+        )
+      done
+    fi
   )
   v8_output_root="$v8_root/out/$cpu/$v8_configuration"
 fi
@@ -542,6 +571,12 @@ elif [[ "$expected_kernel" == Linux ]]; then
       "$v8_llvm_bin/ld.lld"; do
     if [[ ! -e "$target_dependency" ]]; then
       echo "Linux sysroot is missing required native dependency '$target_dependency'." >&2
+      exit 1
+    fi
+  done
+  for runtime_archive in "$v8_libcxx_archive" "$v8_libcxxabi_archive"; do
+    if [[ "$(head -c 7 "$runtime_archive")" != '!<arch>' ]]; then
+      echo "Linux V8 C++ runtime dependency is not a self-contained regular archive: '$runtime_archive'." >&2
       exit 1
     fi
   done

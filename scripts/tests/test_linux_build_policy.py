@@ -105,6 +105,9 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn("third_party/llvm-build/Release+Asserts", self.build_script)
         self.assertIn("_LIBCPP_HARDENING_MODE_EXTENSIVE", self.build_script)
         self.assertIn("-include new", self.build_script)
+        self.assertIn('llvm_ar" rcD "$regular_archive"', self.build_script)
+        self.assertIn("'!<arch>'", self.build_script)
+        self.assertIn("archive_is_regular", self.workflow)
         self.assertNotIn(
             'CMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive;$v8_libcxxabi_archive',
             self.build_script,

@@ -326,9 +326,12 @@ jobs:
               && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src/partition_alloc/buildflags.h" ]]; }
         }
         libcxx_is_compatible() {
+          archive_is_regular() {
+            [[ -f "$1" ]] && [[ "$(head -c 7 "$1")" == '!<arch>' ]]
+          }
           [[ '${{ matrix.rid }}' != linux-* ]] \
-            || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
-              && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" ]] \
+            || { archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
+              && archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
@@ -462,9 +465,12 @@ jobs:
               && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/gen/third_party/partition_alloc/src/partition_alloc/buildflags.h" ]]; }
         }
         libcxx_is_compatible() {
+          archive_is_regular() {
+            [[ -f "$1" ]] && [[ "$(head -c 7 "$1")" == '!<arch>' ]]
+          }
           [[ '${{ matrix.rid }}' != linux-* ]] \
-            || { [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" ]] \
-              && [[ -f "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" ]] \
+            || { archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
+              && archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \

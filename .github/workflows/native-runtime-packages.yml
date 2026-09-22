@@ -878,6 +878,7 @@ jobs:
       shell: bash
       run: |
         dotnet restore tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+          -p:TargetFramework=net10.0 \
           -p:RuntimeIdentifier='${{ matrix.rid }}' \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}' \
           --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
@@ -893,7 +894,7 @@ jobs:
       run: |
         dotnet run \
           --project tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
-          -c Release \
+          -c Release -f net10.0 \
           -r '${{ matrix.rid }}' \
           --no-restore \
           --disable-build-servers \
@@ -920,6 +921,7 @@ jobs:
           '${{ needs.linux-builder.outputs.arm64-finalizer-image }}' \
           bash -euo pipefail -c '
             dotnet restore tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+              -p:TargetFramework=net10.0 \
               -p:RuntimeIdentifier=linux-arm64 \
               -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }} \
               --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
@@ -930,7 +932,7 @@ jobs:
               --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
               --disable-build-servers
             dotnet run --project tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
-              -c Release -r linux-arm64 --no-restore --disable-build-servers \
+              -c Release -f net10.0 -r linux-arm64 --no-restore --disable-build-servers \
               -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }}
             dotnet run --project tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
               -c Release -r linux-arm64 --no-restore --disable-build-servers \

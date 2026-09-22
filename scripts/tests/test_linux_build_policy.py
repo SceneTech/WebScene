@@ -43,8 +43,18 @@ class LinuxBuildPolicyTests(unittest.TestCase):
             "2.37-3.azl3",
             self.lock["hostRuntimePackages"]["dejavu-sans-fonts"],
         )
+        self.assertEqual(
+            "2.37-3.azl3",
+            self.lock["hostRuntimePackages"]["dejavu-sans-mono-fonts"],
+        )
+        self.assertEqual(
+            "2.37-3.azl3",
+            self.lock["hostRuntimePackages"]["dejavu-serif-fonts"],
+        )
         self.assertIn("fontconfig-2.14.2-2.azl3", self.dockerfile)
         self.assertIn("dejavu-sans-fonts-2.37-3.azl3", self.dockerfile)
+        self.assertIn("dejavu-sans-mono-fonts-2.37-3.azl3", self.dockerfile)
+        self.assertIn("dejavu-serif-fonts-2.37-3.azl3", self.dockerfile)
         finalizer = self.lock["arm64Finalizer"]
         self.assertIn(
             f'{finalizer["image"]}@{finalizer["digest"]}',

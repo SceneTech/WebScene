@@ -4,6 +4,8 @@
   "hostPlatform": "linux/amd64",
   "hostRuntimePackages": {
     "dejavu-sans-fonts": "2.37-3.azl3",
+    "dejavu-sans-mono-fonts": "2.37-3.azl3",
+    "dejavu-serif-fonts": "2.37-3.azl3",
     "fontconfig": "2.14.2-2.azl3"
   },
   "arm64Finalizer": {

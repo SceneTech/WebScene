@@ -10,6 +10,20 @@ namespace WebScene.Backend.Avalonia.Tests;
 public sealed class NativeTextShapingTests
 {
     [Fact]
+    public void LinuxGenericFamiliesResolveThroughFontconfig()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        var sansSerif = NativeTextShaping.ResolveTypeface("sans-serif", 400);
+        var serif = NativeTextShaping.ResolveTypeface("serif", 400);
+        var monospace = NativeTextShaping.ResolveTypeface("monospace", 400);
+
+        Assert.NotEqual(sansSerif.FamilyName, serif.FamilyName);
+        Assert.NotEqual(sansSerif.FamilyName, monospace.FamilyName);
+        Assert.NotEqual(serif.FamilyName, monospace.FamilyName);
+    }
+
+    [Fact]
     public void WindowsGenericFamiliesKeepSystemUiAndSansSerifDistinct()
     {
         if (!OperatingSystem.IsWindows()) return;

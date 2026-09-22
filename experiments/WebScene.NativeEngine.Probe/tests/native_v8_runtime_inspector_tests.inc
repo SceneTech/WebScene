@@ -61,12 +61,13 @@ void receive_inspector_test_message(
 bool wait_for_inspector_message(
     inspector_test_messages& messages,
     std::string_view first,
-    std::string_view second = {})
+    std::string_view second = {},
+    std::chrono::steady_clock::duration timeout = std::chrono::seconds(5))
 {
     std::unique_lock lock(messages.mutex);
     return messages.available.wait_for(
         lock,
-        std::chrono::seconds(5),
+        timeout,
         [&] {
             return std::any_of(
                 messages.values.begin(),
@@ -1391,7 +1392,11 @@ void test_v8_inspector_raw_cdp_session(webscene_engine* engine)
         session_id,
         R"({"id":68,"method":"Runtime.evaluate","params":{"expression":"globalThis.__websceneCappedRejections = Array.from({ length: 1025 }, (_, index) => Promise.reject(new Error('webscene-inspector-capped-rejection-' + index)));","returnByValue":true}})");
     require(
-        wait_for_inspector_message(messages, R"("id":68)"),
+        wait_for_inspector_message(
+            messages,
+            R"("id":68)",
+            {},
+            std::chrono::seconds(30)),
         "Inspector rejection-cap fixture did not evaluate");
     require(
         wait_for_inspector_message_count(

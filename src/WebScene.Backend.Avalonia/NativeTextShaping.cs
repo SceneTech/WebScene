@@ -468,9 +468,15 @@ public static class NativeTextShaping
                         ? ".AppleSystemUIFont"
                         : OperatingSystem.IsWindows() ? "Segoe UI" : "sans-serif";
                 else if (genericFamily == "sans-serif")
-                    family = OperatingSystem.IsMacOS() ? "Helvetica" : "Arial";
-                else if (genericFamily == "serif") family = "Times New Roman";
-                else if (genericFamily == "monospace") family = OperatingSystem.IsMacOS() ? "Menlo" : "Consolas";
+                    family = OperatingSystem.IsMacOS()
+                        ? "Helvetica"
+                        : OperatingSystem.IsWindows() ? "Arial" : "sans-serif";
+                else if (genericFamily == "serif")
+                    family = OperatingSystem.IsLinux() ? "serif" : "Times New Roman";
+                else if (genericFamily == "monospace")
+                    family = OperatingSystem.IsMacOS()
+                        ? "Menlo"
+                        : OperatingSystem.IsWindows() ? "Consolas" : "monospace";
 
                 var candidate = SKTypeface.FromFamilyName(
                     family,

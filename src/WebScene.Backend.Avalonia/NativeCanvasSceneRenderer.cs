@@ -3187,15 +3187,19 @@ internal sealed unsafe class NativeCanvasSceneRenderer
                 if (generic is "-apple-system" or "blinkmacsystemfont" or "system-ui"
                     or "sans-serif")
                 {
-                    family = OperatingSystem.IsMacOS() ? ".AppleSystemUIFont" : "Arial";
+                    family = OperatingSystem.IsMacOS()
+                        ? ".AppleSystemUIFont"
+                        : OperatingSystem.IsWindows() ? "Arial" : "sans-serif";
                 }
                 else if (generic == "serif")
                 {
-                    family = "Times New Roman";
+                    family = OperatingSystem.IsLinux() ? "serif" : "Times New Roman";
                 }
                 else if (generic == "monospace")
                 {
-                    family = OperatingSystem.IsMacOS() ? "Menlo" : "Consolas";
+                    family = OperatingSystem.IsMacOS()
+                        ? "Menlo"
+                        : OperatingSystem.IsWindows() ? "Consolas" : "monospace";
                 }
                 var candidate = SKTypeface.FromFamilyName(
                     family,

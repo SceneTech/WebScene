@@ -21,6 +21,8 @@ COPY --from=dotnet-sdk /usr/share/dotnet /usr/share/dotnet
 
 RUN tdnf install -y \
         dejavu-sans-fonts-2.37-3.azl3 \
+        dejavu-sans-mono-fonts-2.37-3.azl3 \
+        dejavu-serif-fonts-2.37-3.azl3 \
         fontconfig-2.14.2-2.azl3 \
     && tdnf clean all
 

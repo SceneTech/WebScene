@@ -1563,9 +1563,13 @@
               }
             };
             const queueWriterCommand = (stream, command) => {
-              if (!writerStates.has(stream)) {
+              const state = writerStates.get(stream);
+              if (!state) {
 )JS",
         R"JS(                return Promise.reject(new TypeError('Illegal invocation'));
+              }
+              if (!state.transaction) {
+                return Promise.reject(new TypeError('Writer is closed'));
               }
               let writer;
               try { writer = WritableStream.prototype.getWriter.call(stream); }

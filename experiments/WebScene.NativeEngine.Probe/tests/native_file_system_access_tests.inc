@@ -1683,11 +1683,23 @@ void test_native_file_system_access_picker_and_handle_contract()
             && write_state.find("\"instance\":true") != std::string::npos
             && write_state.find("\"closed\":true") != std::string::npos,
         "createWritable stream identity or close changed: " + write_state);
-    require(evaluate(engine.get(), R"JS((async()=>{
-      try { await __writeStream.write('late'); return 'unexpected'; }
-      catch (error) { return error.name; }
-    })())JS", "file-handle-write-after-close.js") == "\"TypeError\"",
-        "write after close did not reject TypeError");
+    execute(engine.get(), R"JS(globalThis.__closedCommandState = 'pending'; (async()=>{
+      const errors = [];
+      for (const command of [
+        () => __writeStream.write('late'),
+        () => __writeStream.seek(0),
+        () => __writeStream.truncate(0)]) {
+        try { await command(); errors.push('resolved'); }
+        catch (error) { errors.push(error.name); }
+      }
+      globalThis.__closedCommandState = errors.join(',');
+    })())JS", "file-handle-command-after-close.js");
+    const auto closed_command_state = evaluate_until_equals(engine.get(),
+        "__closedCommandState", "file-handle-command-after-close-result.js",
+        "\"TypeError,TypeError,TypeError\"");
+    require(closed_command_state == "\"TypeError,TypeError,TypeError\"",
+        "write/seek/truncate after close did not reject TypeError: "
+            + closed_command_state);
 
     activate_file_picker(engine.get(), 50005U);
     execute(engine.get(), R"JS(
@@ -1770,6 +1782,7 @@ void test_native_file_system_access_picker_and_handle_contract()
     execute(engine.get(), R"JS(
       globalThis.__abortedWrite='pending';
       __saveHandle.createWritable().then(async stream => {
+        globalThis.__abortedStream = stream;
         await stream.abort('discard');
         __abortedWrite='aborted';
       }, error => { __abortedWrite=error.name; });
@@ -1795,6 +1808,23 @@ void test_native_file_system_access_picker_and_handle_contract()
     require(evaluate(engine.get(), "__abortedWrite",
                 "file-handle-create-writable-abort-result.js") == "\"aborted\"",
         "stream abort did not preserve terminal state");
+    execute(engine.get(), R"JS(globalThis.__abortedCommandState = 'pending'; (async()=>{
+      const errors = [];
+      for (const command of [
+        () => __abortedStream.write('late'),
+        () => __abortedStream.seek(0),
+        () => __abortedStream.truncate(0)]) {
+        try { await command(); errors.push('resolved'); }
+        catch (error) { errors.push(error.name); }
+      }
+      globalThis.__abortedCommandState = errors.join(',');
+    })())JS", "file-handle-command-after-abort.js");
+    const auto aborted_command_state = evaluate_until_equals(engine.get(),
+        "__abortedCommandState", "file-handle-command-after-abort-result.js",
+        "\"TypeError,TypeError,TypeError\"");
+    require(aborted_command_state == "\"TypeError,TypeError,TypeError\"",
+        "write/seek/truncate after abort did not reject TypeError: "
+            + aborted_command_state);
 
     execute(engine.get(), R"JS(
       globalThis.__writeFailure='pending';

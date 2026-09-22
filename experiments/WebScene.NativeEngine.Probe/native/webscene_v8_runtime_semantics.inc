@@ -1168,13 +1168,10 @@
         auto next = *current + direction * step;
         if (minimum) next = std::max(next, *minimum);
         if (maximum) next = std::min(next, *maximum);
-        std::array<char, 64U> buffer{};
-        const auto formatted = std::to_chars(
-            buffer.data(), buffer.data() + buffer.size(), next,
-            std::chars_format::general);
-        if (formatted.ec != std::errc{}) return false;
+        const auto formatted = forms::format_finite_number(next);
+        if (!formatted) return false;
         const auto previous = node.form_control().value;
-        node.mutable_form_control().value.assign(buffer.data(), formatted.ptr);
+        node.mutable_form_control().value = *formatted;
         node.mutable_form_control().value_initialized = true;
         node.mutable_form_control().dirty_value = true;
         recascade_form_value_selector_transition(

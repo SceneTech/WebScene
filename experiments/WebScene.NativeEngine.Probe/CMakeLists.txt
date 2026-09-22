@@ -735,6 +735,22 @@ else()
 endif()
 
 if(BUILD_TESTING)
+    add_executable(webscene_native_form_charconv_portability_tests
+        tests/native_form_charconv_portability_tests.cpp)
+    target_compile_features(webscene_native_form_charconv_portability_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_native_form_charconv_portability_tests PRIVATE native)
+    if(APPLE)
+        target_compile_options(webscene_native_form_charconv_portability_tests PRIVATE
+            -mmacosx-version-min=12.0)
+        target_link_options(webscene_native_form_charconv_portability_tests PRIVATE
+            -mmacosx-version-min=12.0)
+        target_compile_definitions(webscene_native_form_charconv_portability_tests PRIVATE
+            WEBSCENE_NATIVE_FORM_FORCE_PORTABLE_FLOAT_CHARCONV=1)
+    endif()
+    add_test(NAME webscene_native_form_charconv_portability_tests
+        COMMAND webscene_native_form_charconv_portability_tests)
+    set_tests_properties(webscene_native_form_charconv_portability_tests PROPERTIES
+        LABELS "native;forms;compatibility;performance" TIMEOUT 10)
     add_executable(webscene_css_pseudo_font_size_tests
         tests/css_pseudo_font_size_tests.cpp
         native/webscene_native_dom.cpp)
@@ -1052,11 +1068,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
     message(STATUS "WebScene native engine: V8 enabled (${WEBSCENE_V8_MONOLITH})")
 
     if(BUILD_TESTING)
-        # Direct native_document unit fixtures remain local to the test
+        # Direct DOM and WebSocket white-box fixtures remain local to the test
         # executable instead of widening the production C ABI export surface.
         add_executable(webscene_native_engine_tests
             tests/native_v8_runtime_tests.cpp
-            native/webscene_native_dom.cpp)
+            native/webscene_native_dom.cpp
+            native/webscene_native_websocket.cpp)
         target_compile_features(webscene_native_engine_tests PRIVATE cxx_std_20)
         if(WEBSCENE_NATIVE_ENGINE_INTRINSIC_SIZE_HASH_CACHE_CONTROL)
             # The white-box fixture compiles native DOM sources directly, so
@@ -1072,6 +1089,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             webscene_native_engine
             ixwebsocket)
         add_test(NAME webscene_native_engine_tests COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_websocket_file_reader
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_websocket_file_reader PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=websocket-file-reader"
+            LABELS "native;websocket;file-reader;performance;lifecycle"
+            TIMEOUT 30)
         add_executable(webscene_css_containment_tests
             tests/native_css_containment_tests.cpp)
         target_compile_features(webscene_css_containment_tests PRIVATE cxx_std_20)

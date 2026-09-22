@@ -19,7 +19,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 COPY --from=arm64-sysroot /crossrootfs/arm64 /crossrootfs/arm64
 COPY --from=dotnet-sdk /usr/share/dotnet /usr/share/dotnet
 
-RUN tdnf install -y fontconfig-2.14.2-2.azl3 \
+RUN tdnf install -y \
+        dejavu-sans-fonts-2.37-3.azl3 \
+        fontconfig-2.14.2-2.azl3 \
     && tdnf clean all
 
 RUN set -eux; \

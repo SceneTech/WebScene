@@ -32,7 +32,12 @@ class LinuxBuildPolicyTests(unittest.TestCase):
             "2.14.2-2.azl3",
             self.lock["hostRuntimePackages"]["fontconfig"],
         )
-        self.assertIn("tdnf install -y fontconfig-2.14.2-2.azl3", self.dockerfile)
+        self.assertEqual(
+            "2.37-3.azl3",
+            self.lock["hostRuntimePackages"]["dejavu-sans-fonts"],
+        )
+        self.assertIn("fontconfig-2.14.2-2.azl3", self.dockerfile)
+        self.assertIn("dejavu-sans-fonts-2.37-3.azl3", self.dockerfile)
         expected = [self.lock["dotnetSdk"], *self.lock["sysroots"].values()]
         for item in expected:
             image = item.get("image", item.get("sourceImage"))

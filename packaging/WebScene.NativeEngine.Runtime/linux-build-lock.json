@@ -3,6 +3,7 @@
   "builderIdentity": "webscene-linux-glibc-v1",
   "hostPlatform": "linux/amd64",
   "hostRuntimePackages": {
+    "dejavu-sans-fonts": "2.37-3.azl3",
     "fontconfig": "2.14.2-2.azl3"
   },
   "dotnetSdk": {

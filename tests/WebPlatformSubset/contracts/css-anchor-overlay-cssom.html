@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSOM-created named anchor overlay geometry</title>
+<style>
+  html, body { margin: 0; padding: 0; }
+  #workbench { position: relative; width: 800px; height: 600px; }
+</style>
+<div id="workbench"></div>
+<output id="result">PENDING</output>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const workbench = document.getElementById('workbench');
+  const box = node => {
+    const rect = node.getBoundingClientRect();
+    return [rect.x, rect.y, rect.width, rect.height].map(Math.round);
+  };
+  const record = (name, actual, expected) => {
+    const pass = actual.join(',') === expected.join(',');
+    state.results.push({ name, status: pass ? 'PASS' : 'FAIL',
+      message: pass ? null : `${name}: expected ${expected}, got ${actual}`, stack: null });
+    state.diagnostics.push(JSON.stringify({ name, actual, expected }));
+  };
+
+  // VS Code creates the anchor and overlay after the workbench is running.
+  // The dimensions and insets below use CSSStyleDeclaration named setters;
+  // setProperty() only assigns the anchor identifiers.
+  const anchor = document.createElement('div');
+  anchor.style.cssText = 'position:absolute;left:140px;top:90px;width:220px;height:160px';
+  anchor.style.setProperty('anchor-name', '--cssom-editor');
+  workbench.appendChild(anchor);
+  const overlay = document.createElement('div');
+  overlay.style.position = 'fixed';
+  overlay.style.setProperty('position-anchor', '--cssom-editor');
+  overlay.style.top = 'anchor(top)';
+  overlay.style.left = 'anchor(left)';
+  overlay.style.width = 'anchor-size(width)';
+  overlay.style.height = 'anchor-size(height)';
+  workbench.appendChild(overlay);
+  record('named CSSOM setters position a newly attached overlay',
+    box(overlay), [140, 90, 220, 160]);
+  record('named CSSOM setters retain authored functions', [
+    overlay.style.top, overlay.style.left, overlay.style.width, overlay.style.height
+  ], ['anchor(top)', 'anchor(left)', 'anchor-size(width)', 'anchor-size(height)']);
+
+  anchor.style.left = '180px';
+  anchor.style.width = '260px';
+  record('named CSSOM overlay follows anchor move and resize',
+    box(overlay), [180, 90, 260, 160]);
+  overlay.style.top = '12px';
+  record('replacing an anchor inset clears its used function',
+    box(overlay), [180, 12, 260, 160]);
+  overlay.style.top = 'anchor(top)';
+  overlay.style.width = '80px';
+  record('replacing anchor-size clears its used function',
+    box(overlay), [180, 90, 80, 160]);
+  overlay.style.width = 'anchor-size(width)';
+  record('restoring named CSSOM functions restores anchor geometry',
+    box(overlay), [180, 90, 260, 160]);
+
+  const opposite = document.createElement('div');
+  opposite.style.position = 'fixed';
+  opposite.style.setProperty('position-anchor', '--cssom-editor');
+  opposite.style.right = 'anchor(right)';
+  opposite.style.bottom = 'anchor(bottom)';
+  opposite.style.width = 'anchor-size(width)';
+  opposite.style.height = 'anchor-size(height)';
+  workbench.appendChild(opposite);
+  record('named right and bottom setters resolve the same box',
+    box(opposite), [180, 90, 260, 160]);
+
+  const started = performance.now();
+  let last = [];
+  for (let index = 0; index < 64; ++index) {
+    anchor.style.left = `${180 + index}px`;
+    last = box(overlay);
+    if (last[0] !== 180 + index) break;
+  }
+  const milliseconds = performance.now() - started;
+  record('named CSSOM overlay follows 64 panel moves', last, [243, 90, 260, 160]);
+  state.diagnostics.push(JSON.stringify({ name: '64 CSSOM move cycles', milliseconds }));
+  record('64 named CSSOM moves stay within 500 ms', [milliseconds <= 500], [true]);
+  state.harness = {
+    status: state.results.every(result => result.status === 'PASS') ? 0 : 1,
+    message: state.results.find(result => result.status === 'FAIL')?.message || null,
+    stack: null
+  };
+  state.complete = true;
+  document.getElementById('result').textContent = JSON.stringify(state.diagnostics);
+</script>

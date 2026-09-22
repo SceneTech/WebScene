@@ -543,7 +543,7 @@ if [[ "$thin_lto" == true ]]; then
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
   )
-elif [[ "$expected_kernel" == Linux ]]; then
+elif [[ "$expected_kernel" == Linux && "$finalize_only" == false ]]; then
   # Compile the embedding library with the exact Chromium LLVM and libc++
   # revision used for V8. New libc++ headers can require compiler features and
   # configuration defines absent from the builder image's host toolchain.

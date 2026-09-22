@@ -103,6 +103,10 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn("CMAKE_SYSROOT", self.toolchain)
 
     def test_linux_openssl_is_resolved_only_from_the_target_sysroot(self) -> None:
+        self.assertIn(
+            'elif [[ "$expected_kernel" == Linux && "$finalize_only" == false ]]; then',
+            self.build_script,
+        )
         self.assertIn('target_library_dir="$sysroot/usr/lib/$target_triple"', self.build_script)
         self.assertIn('-DOPENSSL_CRYPTO_LIBRARY="$target_library_dir/libcrypto.a"', self.build_script)
         self.assertIn('-DOPENSSL_SSL_LIBRARY="$target_library_dir/libssl.a"', self.build_script)

@@ -639,7 +639,15 @@ if [[ "$finalize_only" == true ]]; then
     "$build_dir/webscene_bootstrap_snapshot.meta"
 fi
 if [[ "$defer_target_execution" == false || "$finalize_only" == true ]]; then
-  ctest --test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure
+  if [[ "$expected_kernel" == Linux ]]; then
+    # Production DSOs intentionally contain no RPATH. Give native test
+    # executables an explicit, process-local route to the just-built DSO.
+    test_library_path="$build_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cmake -E env "LD_LIBRARY_PATH=$test_library_path" \
+      ctest --test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure
+  else
+    ctest --test-dir "$build_dir" -C "$cmake_build_type" --output-on-failure
+  fi
 fi
 
 native_path="$build_dir/$native_name"

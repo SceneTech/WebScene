@@ -7,11 +7,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        binutils=2.42-4ubuntu2 \
+        binutils=2.42-4ubuntu2.10 \
         cmake=3.28.3-1build7 \
         fontconfig=2.15.0-1.1ubuntu2 \
         fonts-dejavu-core=2.37-8 \
-        python3=3.12.3-0ubuntu1 \
+        python3=3.12.3-0ubuntu2.1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

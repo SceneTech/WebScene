@@ -10,11 +10,11 @@
     "image": "mcr.microsoft.com/dotnet/sdk:10.0.302-noble-arm64v8",
     "digest": "sha256:683d16913974bf1311381ccd6d6aba55213f313501c39ef964b0458f44c0c4bc",
     "packages": {
-      "binutils": "2.42-4ubuntu2",
+      "binutils": "2.42-4ubuntu2.10",
       "cmake": "3.28.3-1build7",
       "fontconfig": "2.15.0-1.1ubuntu2",
       "fonts-dejavu-core": "2.37-8",
-      "python3": "3.12.3-0ubuntu1"
+      "python3": "3.12.3-0ubuntu2.1"
     }
   },
   "dotnetSdk": {

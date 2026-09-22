@@ -28,6 +28,11 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertNotIn("apt-get", self.dockerfile)
 
     def test_lock_and_dockerfile_are_synchronized(self) -> None:
+        self.assertEqual(
+            "2.14.2-2.azl3",
+            self.lock["hostRuntimePackages"]["fontconfig"],
+        )
+        self.assertIn("tdnf install -y fontconfig-2.14.2-2.azl3", self.dockerfile)
         expected = [self.lock["dotnetSdk"], *self.lock["sysroots"].values()]
         for item in expected:
             image = item.get("image", item.get("sourceImage"))

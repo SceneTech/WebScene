@@ -2,6 +2,9 @@
   "schemaVersion": 1,
   "builderIdentity": "webscene-linux-glibc-v1",
   "hostPlatform": "linux/amd64",
+  "hostRuntimePackages": {
+    "fontconfig": "2.14.2-2.azl3"
+  },
   "dotnetSdk": {
     "version": "10.0.302",
     "image": "mcr.microsoft.com/dotnet/sdk:10.0.302-noble-amd64",

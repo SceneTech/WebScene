@@ -1,0 +1,17 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0.302-noble-arm64v8@sha256:683d16913974bf1311381ccd6d6aba55213f313501c39ef964b0458f44c0c4bc
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    NUGET_XMLDOC_MODE=skip
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        binutils=2.42-4ubuntu2 \
+        cmake=3.28.3-1build7 \
+        fontconfig=2.15.0-1.1ubuntu2 \
+        fonts-dejavu-core=2.37-8 \
+        python3=3.12.3-0ubuntu1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace

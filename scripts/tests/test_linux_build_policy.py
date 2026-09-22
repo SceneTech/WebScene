@@ -16,12 +16,19 @@ class LinuxBuildPolicyTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.lock = json.loads((PACKAGING / "linux-build-lock.json").read_text())
         cls.dockerfile = (PACKAGING / "Dockerfile.linux-glibc").read_text()
+        cls.finalizer_dockerfile = (
+            PACKAGING / "Dockerfile.linux-arm64-finalizer"
+        ).read_text()
         cls.workflow = (ROOT / ".github/workflows/native-runtime-packages.yml").read_text()
         cls.build_script = (ROOT / "scripts/build-native-engine-runtime.sh").read_text()
         cls.toolchain = (ROOT / "scripts/linux-glibc-toolchain.cmake").read_text()
 
     def test_all_container_inputs_are_digest_pinned(self) -> None:
-        from_lines = re.findall(r"^FROM\s+(\S+)", self.dockerfile, re.MULTILINE)
+        from_lines = re.findall(
+            r"^FROM\s+(\S+)",
+            self.dockerfile + "\n" + self.finalizer_dockerfile,
+            re.MULTILINE,
+        )
         external = [value for value in from_lines if value not in {"x64-sysroot"}]
         self.assertTrue(external)
         self.assertTrue(all("@sha256:" in value for value in external), external)
@@ -38,6 +45,13 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         )
         self.assertIn("fontconfig-2.14.2-2.azl3", self.dockerfile)
         self.assertIn("dejavu-sans-fonts-2.37-3.azl3", self.dockerfile)
+        finalizer = self.lock["arm64Finalizer"]
+        self.assertIn(
+            f'{finalizer["image"]}@{finalizer["digest"]}',
+            self.finalizer_dockerfile,
+        )
+        for package, version in finalizer["packages"].items():
+            self.assertIn(f"{package}={version}", self.finalizer_dockerfile)
         expected = [self.lock["dotnetSdk"], *self.lock["sysroots"].values()]
         for item in expected:
             image = item.get("image", item.get("sourceImage"))
@@ -67,6 +81,9 @@ class LinuxBuildPolicyTests(unittest.TestCase):
             self.assertIn(f"--expected-rid {rid}", self.workflow)
             self.assertIn(f"--native-rid {rid}", self.workflow)
         self.assertIn("github.ref_type != 'tag'", self.workflow)
+        self.assertIn("runs-on: [self-hosted, Linux, X64]", self.workflow)
+        self.assertIn("--platform linux/arm64", self.workflow)
+        self.assertNotIn("runs-on: [self-hosted, Linux, ARM64]", self.workflow)
 
     def test_linux_libcxx_cache_paths_do_not_invalidate_macos_caches(self) -> None:
         self.assertEqual(2, self.workflow.count("v8_cache_extra_paths: |"))

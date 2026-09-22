@@ -1068,11 +1068,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
     message(STATUS "WebScene native engine: V8 enabled (${WEBSCENE_V8_MONOLITH})")
 
     if(BUILD_TESTING)
-        # Direct native_document unit fixtures remain local to the test
+        # Direct DOM and WebSocket white-box fixtures remain local to the test
         # executable instead of widening the production C ABI export surface.
         add_executable(webscene_native_engine_tests
             tests/native_v8_runtime_tests.cpp
-            native/webscene_native_dom.cpp)
+            native/webscene_native_dom.cpp
+            native/webscene_native_websocket.cpp)
         target_compile_features(webscene_native_engine_tests PRIVATE cxx_std_20)
         if(WEBSCENE_NATIVE_ENGINE_INTRINSIC_SIZE_HASH_CACHE_CONTROL)
             # The white-box fixture compiles native DOM sources directly, so

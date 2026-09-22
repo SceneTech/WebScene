@@ -85,6 +85,10 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn('-DZLIB_LIBRARY="$target_library_dir/libz.a"', self.build_script)
         self.assertIn('-DCMAKE_SKIP_RPATH=TRUE', self.build_script)
         self.assertIn('LD_LIBRARY_PATH=$test_library_path', self.build_script)
+        self.assertIn(
+            'WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."',
+            (ROOT / "experiments/WebScene.NativeEngine.Probe/CMakeLists.txt").read_text(),
+        )
 
     def test_toolchain_exposes_target_multiarch_search_paths(self) -> None:
         self.assertIn("CMAKE_LIBRARY_ARCHITECTURE", self.toolchain)

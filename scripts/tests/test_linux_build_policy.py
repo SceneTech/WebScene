@@ -108,6 +108,10 @@ class LinuxBuildPolicyTests(unittest.TestCase):
         self.assertIn('llvm_ar" rcD "$regular_archive"', self.build_script)
         self.assertIn("'!<arch>'", self.build_script)
         self.assertIn("archive_is_regular", self.workflow)
+        self.assertIn("V8LibcxxMemoryResourcePatch.txt", self.build_script)
+        self.assertIn("V8LibcxxMemoryResourcePatch.txt", self.workflow)
+        self.assertIn("archive_has_memory_resource", self.workflow)
+        self.assertIn("memory_resource\\.o", self.build_script)
         self.assertNotIn(
             'CMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive;$v8_libcxxabi_archive',
             self.build_script,

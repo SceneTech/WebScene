@@ -309,7 +309,7 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/icu/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/partition_alloc/src
-        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt', 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
+        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt', 'packaging/WebScene.NativeEngine.Runtime/patches/V8LibcxxMemoryResourcePatch.txt', 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
         restore-keys: |
           webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-
           webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-
@@ -329,9 +329,14 @@ jobs:
           archive_is_regular() {
             [[ -f "$1" ]] && [[ "$(head -c 7 "$1")" == '!<arch>' ]]
           }
+          archive_has_memory_resource() {
+            "$root/third_party/llvm-build/Release+Asserts/bin/llvm-ar" t "$1" \
+              | grep -Eq '(^|/)memory_resource\.o$'
+          }
           [[ '${{ matrix.rid }}' != linux-* ]] \
             || { archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
               && archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" \
+              && archive_has_memory_resource "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
@@ -468,9 +473,14 @@ jobs:
           archive_is_regular() {
             [[ -f "$1" ]] && [[ "$(head -c 7 "$1")" == '!<arch>' ]]
           }
+          archive_has_memory_resource() {
+            "$root/third_party/llvm-build/Release+Asserts/bin/llvm-ar" t "$1" \
+              | grep -Eq '(^|/)memory_resource\.o$'
+          }
           [[ '${{ matrix.rid }}' != linux-* ]] \
             || { archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
               && archive_is_regular "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++abi/libc++abi.a" \
+              && archive_has_memory_resource "$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/buildtools/third_party/libc++/libc++.a" \
               && [[ -f "$root/buildtools/third_party/libc++/__config_site" ]] \
               && [[ -f "$root/buildtools/third_party/libc++/__assertion_handler" ]] \
               && [[ -f "$root/third_party/libc++/src/include/source_location" ]] \
@@ -522,7 +532,7 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/icu/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/partition_alloc/src
-        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
+        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocGlibc227Arm64Patch.txt', 'packaging/WebScene.NativeEngine.Runtime/patches/V8LibcxxMemoryResourcePatch.txt', 'packaging/WebScene.NativeEngine.Runtime/Dockerfile.linux-glibc', 'packaging/WebScene.NativeEngine.Runtime/linux-build-lock.json', 'scripts/linux-glibc-toolchain.cmake') }}
     - name: Upload required compatibility evidence
       if: success() && matrix.rid != 'linux-arm64'
       uses: actions/upload-artifact@v4

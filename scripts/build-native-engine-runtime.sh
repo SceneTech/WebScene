@@ -289,6 +289,9 @@ if [[ -z "$v8_root" ]]; then
       "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt"
   fi
   if [[ "$expected_kernel" == Linux ]]; then
+    apply_patch_once \
+      "$v8_root/buildtools" \
+      "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8LibcxxMemoryResourcePatch.txt"
     apply_patch_once "$v8_root/build" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt"
     if [[ "$cpu" == arm64 ]]; then
       apply_patch_once \
@@ -580,6 +583,11 @@ elif [[ "$expected_kernel" == Linux ]]; then
       exit 1
     fi
   done
+  if ! "$v8_llvm_bin/llvm-ar" t "$v8_libcxx_archive" \
+      | grep -Eq '(^|/)memory_resource\.o$'; then
+    echo "Linux V8 libc++ archive does not provide std::pmr support: '$v8_libcxx_archive'." >&2
+    exit 1
+  fi
   v8_llvm_ranlib="$v8_llvm_bin/llvm-ranlib"
   if [[ ! -x "$v8_llvm_ranlib" ]]; then
     ln -s "$v8_llvm_bin/llvm-ar" "$v8_llvm_ranlib"

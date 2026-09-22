@@ -1,11 +1,140 @@
 #pragma once
 #include "webscene_native_dom.h"
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
+#include <limits>
 #include <regex>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 
 namespace webscene_native::forms {
+#if defined(__APPLE__)
+inline locale_t numeric_c_locale() noexcept {
+    static const auto locale = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    return locale;
+}
+
+inline std::optional<double> parse_portable_decimal(std::string_view text) {
+    const auto locale = numeric_c_locale();
+    if (locale == nullptr) return std::nullopt;
+    const std::string copy(text);
+    char* end = nullptr;
+    errno = 0;
+    const auto value = strtod_l(copy.c_str(), &end, locale);
+    if (end != copy.c_str() + copy.size() || !std::isfinite(value))
+        return std::nullopt;
+    // strtod_l reports ERANGE for representable subnormals too. Reject only
+    // a nonzero decimal that rounded all the way down to zero.
+    if (errno == ERANGE && value == 0.0) {
+        const auto exponent = text.find_first_of("eE");
+        const auto mantissa = text.substr(0, exponent);
+        if (mantissa.find_first_of("123456789") != std::string_view::npos)
+            return std::nullopt;
+    }
+    return value;
+}
+
+inline std::string shortest_portable_decimal_notation(std::string_view rendered) {
+    const bool negative = !rendered.empty() && rendered.front() == '-';
+    const auto body = rendered.substr(negative ? 1U : 0U);
+    const auto exponent_marker = body.find_first_of("eE");
+    const auto mantissa = body.substr(0, exponent_marker);
+    const auto decimal_mark = mantissa.find('.');
+    int decimal_position = static_cast<int>(decimal_mark == std::string_view::npos
+        ? mantissa.size() : decimal_mark);
+    if (exponent_marker != std::string_view::npos) {
+        const auto exponent_text = body.substr(exponent_marker + 1U);
+        int exponent = 0;
+        const auto* exponent_begin = exponent_text.data()
+            + (!exponent_text.empty() && exponent_text.front() == '+' ? 1U : 0U);
+        const auto parsed = std::from_chars(exponent_begin,
+            exponent_text.data() + exponent_text.size(), exponent);
+        if (parsed.ec != std::errc{}
+            || parsed.ptr != exponent_text.data() + exponent_text.size())
+            return std::string(rendered);
+        decimal_position += exponent;
+    }
+    std::string digits;
+    for (const auto character : mantissa)
+        if (character != '.') digits.push_back(character);
+    const auto first_digit = digits.find_first_not_of('0');
+    if (first_digit == std::string::npos) return std::string(rendered);
+    decimal_position -= static_cast<int>(first_digit);
+    digits.erase(0U, first_digit);
+    while (digits.size() > 1U && digits.back() == '0') digits.pop_back();
+    const int exponent = decimal_position - 1;
+    const auto exponent_digits = std::to_string(std::abs(exponent));
+    std::string result;
+    result.reserve(rendered.size() + 2U);
+    if (negative) result.push_back('-');
+    // Match floating to_chars general notation: fixed in [-4, 5],
+    // scientific outside that exponent range.
+    if (exponent >= -4 && exponent < 6) {
+        if (decimal_position <= 0) {
+            result += "0.";
+            result.append(static_cast<size_t>(-decimal_position), '0');
+            result += digits;
+        } else if (decimal_position >= static_cast<int>(digits.size())) {
+            result += digits;
+            result.append(static_cast<size_t>(decimal_position) - digits.size(), '0');
+        } else {
+            result.append(digits, 0U, static_cast<size_t>(decimal_position));
+            result.push_back('.');
+            result.append(digits, static_cast<size_t>(decimal_position),
+                std::string::npos);
+        }
+    } else {
+        result.push_back(digits.front());
+        if (digits.size() > 1U) {
+            result.push_back('.');
+            result.append(digits, 1U, std::string::npos);
+        }
+        result += exponent < 0 ? "e-" : "e+";
+        if (exponent_digits.size() < 2U) result.push_back('0');
+        result += exponent_digits;
+    }
+    return result;
+}
+
+inline std::optional<std::string> format_portable_decimal(
+    double value, bool fixed = false, int precision = 0) {
+    const auto locale = numeric_c_locale();
+    if (locale == nullptr) return std::nullopt;
+    std::array<char, 64U> buffer{};
+    const auto format = [&](int digits) {
+        return snprintf_l(buffer.data(), buffer.size(), locale,
+            fixed ? "%.*f" : "%.*g", digits, value);
+    };
+    if (fixed) {
+        const auto count = format(precision);
+        if (count < 0 || static_cast<size_t>(count) >= buffer.size())
+            return std::nullopt;
+        return std::string(buffer.data(), static_cast<size_t>(count));
+    }
+    // Select the shortest decimal that round-trips to the same finite double.
+    // Ordinary form values usually finish at one or two significant digits.
+    for (int digits = 1; digits <= std::numeric_limits<double>::max_digits10;
+        ++digits) {
+        const auto count = format(digits);
+        if (count < 0 || static_cast<size_t>(count) >= buffer.size())
+            return std::nullopt;
+        char* end = nullptr;
+        errno = 0;
+        const auto candidate = strtod_l(buffer.data(), &end, locale);
+        if (end == buffer.data() + count
+            && candidate == value
+            && std::signbit(candidate) == std::signbit(value))
+            return shortest_portable_decimal_notation(
+                std::string_view(buffer.data(), static_cast<size_t>(count)));
+    }
+    return std::nullopt;
+}
+#endif
+
 enum class numeric_range_state : uint8_t {
     not_applicable,
     in_range,
@@ -113,11 +242,15 @@ inline std::optional<double> finite_number(std::string_view text)
             if(cursor==exponent_begin) return std::nullopt;
         }
         if(cursor!=text.size()) return std::nullopt;
+#if defined(__APPLE__) && (__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 260000 || defined(WEBSCENE_NATIVE_FORM_FORCE_PORTABLE_FLOAT_CHARCONV))
+        return parse_portable_decimal(text);
+#else
         double result{};
         const auto parsed=std::from_chars(text.data(),text.data()+text.size(),result);
         if(parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size()
             || !std::isfinite(result)) return std::nullopt;
         return result;
+#endif
     }
 
 enum class numeric_input_kind : uint8_t {
@@ -354,11 +487,15 @@ inline bool numeric_step_mismatch(
 
 inline std::optional<std::string> format_finite_number(double value) {
     if(!std::isfinite(value)) return std::nullopt;
+#if defined(__APPLE__) && (__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 130300 || defined(WEBSCENE_NATIVE_FORM_FORCE_PORTABLE_FLOAT_CHARCONV))
+    return format_portable_decimal(value);
+#else
     std::array<char,64U> buffer{};
     const auto formatted=std::to_chars(
         buffer.data(),buffer.data()+buffer.size(),value,std::chars_format::general);
     if(formatted.ec!=std::errc{}) return std::nullopt;
     return std::string(buffer.data(),formatted.ptr);
+#endif
 }
 
 inline std::string padded_decimal(uint64_t value,size_t width) {
@@ -426,15 +563,20 @@ inline std::optional<std::string> format_time_number(double value) {
     auto result=padded_decimal(hour,2U)+":"+padded_decimal(minute,2U);
     if(value==0.0) return result;
     const auto seconds=value/1000.0;
+#if defined(__APPLE__) && (__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 130300 || defined(WEBSCENE_NATIVE_FORM_FORCE_PORTABLE_FLOAT_CHARCONV))
+    auto seconds_text = format_portable_decimal(seconds, true, 15);
+    if (!seconds_text.has_value()) return std::nullopt;
+#else
     std::array<char,64U> buffer{};
     const auto formatted=std::to_chars(buffer.data(),buffer.data()+buffer.size(),
         seconds,std::chars_format::fixed,15);
     if(formatted.ec!=std::errc{}) return std::nullopt;
-    std::string seconds_text(buffer.data(),formatted.ptr);
-    while(seconds_text.ends_with('0')) seconds_text.pop_back();
-    if(seconds_text.ends_with('.')) seconds_text.pop_back();
-    if(seconds<10.0) seconds_text.insert(0U,1U,'0');
-    return result+":"+seconds_text;
+    auto seconds_text = std::optional<std::string>{std::string(buffer.data(),formatted.ptr)};
+#endif
+    while(seconds_text->ends_with('0')) seconds_text->pop_back();
+    if(seconds_text->ends_with('.')) seconds_text->pop_back();
+    if(seconds<10.0) seconds_text->insert(0U,1U,'0');
+    return result+":"+*seconds_text;
 }
 
 inline std::optional<std::string> format_numeric_value(

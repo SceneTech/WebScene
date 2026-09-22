@@ -735,6 +735,22 @@ else()
 endif()
 
 if(BUILD_TESTING)
+    add_executable(webscene_native_form_charconv_portability_tests
+        tests/native_form_charconv_portability_tests.cpp)
+    target_compile_features(webscene_native_form_charconv_portability_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_native_form_charconv_portability_tests PRIVATE native)
+    if(APPLE)
+        target_compile_options(webscene_native_form_charconv_portability_tests PRIVATE
+            -mmacosx-version-min=12.0)
+        target_link_options(webscene_native_form_charconv_portability_tests PRIVATE
+            -mmacosx-version-min=12.0)
+        target_compile_definitions(webscene_native_form_charconv_portability_tests PRIVATE
+            WEBSCENE_NATIVE_FORM_FORCE_PORTABLE_FLOAT_CHARCONV=1)
+    endif()
+    add_test(NAME webscene_native_form_charconv_portability_tests
+        COMMAND webscene_native_form_charconv_portability_tests)
+    set_tests_properties(webscene_native_form_charconv_portability_tests PROPERTIES
+        LABELS "native;forms;compatibility;performance" TIMEOUT 10)
     add_executable(webscene_css_pseudo_font_size_tests
         tests/css_pseudo_font_size_tests.cpp
         native/webscene_native_dom.cpp)

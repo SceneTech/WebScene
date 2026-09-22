@@ -1387,7 +1387,7 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
               state.pending = false;
               state.acknowledgements++;
               if (!shouldFail) label.textContent = '';
-            }, 250);
+            }, 1000);
           });
         })()
     )JS", "async-save-publication-setup.js");
@@ -1396,6 +1396,21 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
     const auto consumed_before = consumed_input_count(engine);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 30, 20, 9102U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 30, 20, 9103U, false);
+    wait_for_consumed_inputs(
+        engine,
+        consumed_before + 2U,
+        "initial async-save activation was not consumed");
+    const auto initial_state = evaluate_until_equals(engine, R"JS(({ activations: __saveState.activations,
+          requests: __saveState.requests,
+          pending: __saveState.pending
+        }))JS", "async-save-initial-activation.js",
+        R"JSON({"activations":1,"requests":1,"pending":true})JSON",
+        1000);
+    require(
+        initial_state
+            == R"JSON({"activations":1,"requests":1,"pending":true})JSON",
+        "initial activation did not start an asynchronous save: "
+            + initial_state);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 30, 20, 9104U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 30, 20, 9105U, false);
     wait_for_consumed_inputs(

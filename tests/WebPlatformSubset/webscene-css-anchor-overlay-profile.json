@@ -12,6 +12,13 @@
       "reason": "Named-anchor and fixed-overlay geometry used by unchanged Code OSS webviews."
     },
     {
+      "path": "contracts/css-anchor-overlay-cssom.html",
+      "type": "contract",
+      "capabilities": ["css-anchor-positioning", "dynamic-anchor-layout", "cssom-style-named-setters"],
+      "evidence": ["code-oss-markdown-preview-overlay-20260922", "chrome-browser-reference"],
+      "reason": "A runtime-created overlay must retain anchor functions assigned through CSSStyleDeclaration named setters."
+    },
+    {
       "path": "contracts/css-anchor-overlay-paint.html",
       "type": "reftest",
       "reference": "contracts/css-anchor-overlay-paint-ref.html",

@@ -821,48 +821,74 @@ jobs:
 
   consumer:
     name: Package consumer ${{ matrix.rid }}
-    needs: [metadata, package-set]
+    needs: [metadata, package-set, linux-builder]
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         include:
         - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
+          dotnet_architecture: arm64
         - os: [self-hosted, macOS, ARM64]
           rid: osx-x64
+          dotnet_architecture: x64
         - os: [self-hosted, Linux, X64]
           rid: linux-x64
-        - os: [self-hosted, Linux, ARM64]
+          dotnet_architecture: x64
+        - os: [self-hosted, Linux, X64]
           rid: linux-arm64
+          dotnet_architecture: x64
         - os: windows-2022
           rid: win-x64
+          dotnet_architecture: x64
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
     - name: Setup .NET
+      if: matrix.rid != 'linux-arm64'
       uses: actions/setup-dotnet@v5
       env:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
         global-json-file: global.json
         dotnet-version: 8.0.x
+        architecture: ${{ matrix.dotnet_architecture }}
+    - name: Set up ARM64 emulation
+      if: matrix.rid == 'linux-arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - name: Log in to GitHub Container Registry
+      if: matrix.rid == 'linux-arm64'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     - name: Download verified package set
       uses: actions/download-artifact@v4
       with:
         name: release-${{ needs.metadata.outputs.package-version }}
         path: artifacts/nuget-packages
     - name: Restore clean package consumer
+      if: matrix.rid != 'linux-arm64'
       shell: bash
       run: |
         dotnet restore tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
           -p:RuntimeIdentifier='${{ matrix.rid }}' \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}' \
-          --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config
+          --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+          --disable-build-servers
         dotnet restore tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
           -p:RuntimeIdentifier='${{ matrix.rid }}' \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}' \
-          --configfile tests/WebScene.Uno.PackageSmoke/NuGet.config
+          --configfile tests/WebScene.Uno.PackageSmoke/NuGet.config \
+          --disable-build-servers
     - name: Build and run clean package consumer
+      if: matrix.rid != 'linux-arm64'
       shell: bash
       run: |
         dotnet run \
@@ -870,13 +896,45 @@ jobs:
           -c Release \
           -r '${{ matrix.rid }}' \
           --no-restore \
+          --disable-build-servers \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}'
         dotnet run \
           --project tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
           -c Release \
           -r '${{ matrix.rid }}' \
           --no-restore \
+          --disable-build-servers \
           -p:WebScenePackageVersion='${{ needs.metadata.outputs.package-version }}'
+    - name: Restore, build, and run ARM64 package consumer under emulation
+      if: matrix.rid == 'linux-arm64'
+      shell: bash
+      run: |
+        docker run --rm \
+          --platform linux/arm64 \
+          --user "$(id -u):$(id -g)" \
+          --env HOME=/tmp/webscene-home \
+          --env DOTNET_CLI_HOME=/tmp/webscene-home \
+          --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
+          --volume "$GITHUB_WORKSPACE:/workspace" \
+          --workdir /workspace \
+          '${{ needs.linux-builder.outputs.arm64-finalizer-image }}' \
+          bash -euo pipefail -c '
+            dotnet restore tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+              -p:RuntimeIdentifier=linux-arm64 \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }} \
+              --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+              --disable-build-servers
+            dotnet restore tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
+              -p:RuntimeIdentifier=linux-arm64 \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }} \
+              --configfile tests/WebScene.Runtime.PackageSmoke/NuGet.config \
+              --disable-build-servers
+            dotnet run --project tests/WebScene.Runtime.PackageSmoke/WebScene.Runtime.PackageSmoke.csproj \
+              -c Release -r linux-arm64 --no-restore --disable-build-servers \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }}
+            dotnet run --project tests/WebScene.Uno.PackageSmoke/WebScene.Uno.PackageSmoke.csproj \
+              -c Release -r linux-arm64 --no-restore --disable-build-servers \
+              -p:WebScenePackageVersion=${{ needs.metadata.outputs.package-version }}'
 
   linux-floor-smoke:
     name: Linux floor ${{ matrix.distribution }} ${{ matrix.rid }}
@@ -890,7 +948,7 @@ jobs:
           platform: linux/amd64
           distribution: ubuntu-18.04
           image: ubuntu:18.04
-        - os: [self-hosted, Linux, ARM64]
+        - os: [self-hosted, Linux, X64]
           rid: linux-arm64
           platform: linux/arm64
           distribution: ubuntu-18.04
@@ -900,7 +958,7 @@ jobs:
           platform: linux/amd64
           distribution: ubi-8.9
           image: registry.access.redhat.com/ubi8/ubi:8.9
-        - os: [self-hosted, Linux, ARM64]
+        - os: [self-hosted, Linux, X64]
           rid: linux-arm64
           platform: linux/arm64
           distribution: ubi-8.9
@@ -908,6 +966,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ARM64 emulation
+      if: matrix.platform == 'linux/arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
     - uses: actions/download-artifact@v4
       with:
         name: release-${{ needs.metadata.outputs.package-version }}
@@ -939,14 +1002,19 @@ jobs:
       matrix:
         include:
         - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: debian-10, image: 'debian:10' }
-        - { os: [self-hosted, Linux, ARM64], rid: linux-arm64, platform: linux/arm64, distribution: debian-10, image: 'debian:10' }
+        - { os: [self-hosted, Linux, X64], rid: linux-arm64, platform: linux/arm64, distribution: debian-10, image: 'debian:10' }
         - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: fedora-38, image: 'fedora:38' }
-        - { os: [self-hosted, Linux, ARM64], rid: linux-arm64, platform: linux/arm64, distribution: fedora-38, image: 'fedora:38' }
+        - { os: [self-hosted, Linux, X64], rid: linux-arm64, platform: linux/arm64, distribution: fedora-38, image: 'fedora:38' }
         - { os: [self-hosted, Linux, X64], rid: linux-x64, platform: linux/amd64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
-        - { os: [self-hosted, Linux, ARM64], rid: linux-arm64, platform: linux/arm64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
+        - { os: [self-hosted, Linux, X64], rid: linux-arm64, platform: linux/arm64, distribution: opensuse-15.5, image: 'opensuse/leap:15.5' }
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ARM64 emulation
+      if: matrix.platform == 'linux/arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
     - uses: actions/download-artifact@v4
       with:
         name: release-${{ needs.metadata.outputs.package-version }}

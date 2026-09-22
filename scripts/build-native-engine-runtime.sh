@@ -558,10 +558,10 @@ elif [[ "$expected_kernel" == Linux ]]; then
   v8_llvm_bin="$v8_llvm_root/bin"
   for target_dependency in \
       "$target_include_dir/openssl/ssl.h" \
-      "$target_library_dir/libcrypto.so" \
-      "$target_library_dir/libssl.so" \
+      "$target_library_dir/libcrypto.a" \
+      "$target_library_dir/libssl.a" \
       "$target_include_dir/zlib.h" \
-      "$target_library_dir/libz.so" \
+      "$target_library_dir/libz.a" \
       "$v8_libcxx_config_include/__config_site" \
       "$v8_libcxx_config_include/__assertion_handler" \
       "$v8_libcxx_include/source_location" \
@@ -608,10 +608,11 @@ elif [[ "$expected_kernel" == Linux ]]; then
     -DWEBSCENE_RUST_TARGET_TRIPLE="$rust_target_triple"
     -DOPENSSL_ROOT_DIR="$sysroot/usr"
     -DOPENSSL_INCLUDE_DIR="$target_include_dir"
-    -DOPENSSL_CRYPTO_LIBRARY="$target_library_dir/libcrypto.so"
-    -DOPENSSL_SSL_LIBRARY="$target_library_dir/libssl.so"
+    -DOPENSSL_CRYPTO_LIBRARY="$target_library_dir/libcrypto.a"
+    -DOPENSSL_SSL_LIBRARY="$target_library_dir/libssl.a"
     -DZLIB_INCLUDE_DIR="$target_include_dir"
-    -DZLIB_LIBRARY="$target_library_dir/libz.so"
+    -DZLIB_LIBRARY="$target_library_dir/libz.a"
+    -DCMAKE_SKIP_RPATH=TRUE
     "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=."
     "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$repo_root=. -fdebug-prefix-map=$repo_root=. -nostdinc++ -nostdlib++ -I$v8_libcxx_config_include -isystem$v8_libcxx_include -isystem$v8_libcxxabi_include -include new -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS -D_LIBCPP_INSTRUMENTED_WITH_ASAN=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"
     "-DCMAKE_CXX_STANDARD_LIBRARIES=$v8_libcxx_archive $v8_libcxxabi_archive -pthread"

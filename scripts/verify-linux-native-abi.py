@@ -13,6 +13,9 @@ import subprocess
 ALLOWED_NEEDED = {
     "libc.so.6", "libdl.so.2", "libgcc_s.so.1", "libm.so.6",
     "libpthread.so.0", "librt.so.1", "libstdc++.so.6", "libutil.so.1",
+    # glibc's linker scripts can retain the architecture loader as an
+    # AS_NEEDED dependency. It is part of the glibc ABI on every target distro.
+    "ld-linux-aarch64.so.1", "ld-linux-x86-64.so.2",
 }
 EXPECTED_MACHINES = {
     "linux-x64": "Advanced Micro Devices X86-64",
@@ -116,7 +119,7 @@ def main() -> int:
         if line.strip() and not line.lstrip().startswith("#")
     }
     completed = subprocess.run(
-        ["readelf", "-h", "-l", "-d", "--version-info", "--dyn-syms", str(args.library)],
+        ["readelf", "--wide", "-h", "-l", "-d", "--version-info", "--dyn-syms", str(args.library)],
         check=False, capture_output=True, text=True,
     )
     if completed.returncode:

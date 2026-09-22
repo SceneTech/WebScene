@@ -56,6 +56,21 @@ class LinuxNativeAbiVerifierTests(unittest.TestCase):
         self.assertEqual("fail", report["status"])
         self.assertTrue(any("ELF interpreter" in issue for issue in report["issues"]))
 
+    def test_accepts_glibc_architecture_loader_dependency(self) -> None:
+        text = elf_text() + "\n 0x0 (NEEDED) Shared library: [ld-linux-aarch64.so.1]\n"
+        report = MODULE.verify_text(text, "linux-arm64", "2.27", "3.4.24", "1.3.11")
+        self.assertEqual("pass", report["status"], report)
+
+    def test_rejects_dynamic_openssl_and_zlib_dependencies(self) -> None:
+        text = elf_text() + """
+ 0x0 (NEEDED) Shared library: [libssl.so.1.1]
+ 0x0 (NEEDED) Shared library: [libcrypto.so.1.1]
+ 0x0 (NEEDED) Shared library: [libz.so.1]
+"""
+        report = MODULE.verify_text(text, "linux-arm64", "2.27", "3.4.24", "1.3.11")
+        self.assertEqual("fail", report["status"])
+        self.assertTrue(any("libssl.so.1.1" in issue for issue in report["issues"]))
+
 
 if __name__ == "__main__":
     unittest.main()

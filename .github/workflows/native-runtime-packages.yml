@@ -472,13 +472,28 @@ jobs:
           exit 1
         fi
         build_dir="${native_path%%/package-smoke/runtimes/*}"
-        dotnet run \
-          --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj \
-          -c Release -f net10.0 --no-build -- \
-          --selection candidate \
-          --native-library "$native_path" \
-          --native-cache-directory "$build_dir/code-cache" \
-          --output "$build_dir/wpt-candidate-results"
+        runner_args=(
+          dotnet run
+          --project tests/WebPlatformSubset/runner/WebScene.WebPlatformSubset.Runner.csproj
+          -c Release -f net10.0 --no-build --disable-build-servers --
+          --selection candidate
+          --native-library "$native_path"
+          --native-cache-directory "$build_dir/code-cache"
+          --output "$build_dir/wpt-candidate-results")
+        if [[ '${{ matrix.rid }}' == 'linux-x64' ]]; then
+          docker run --rm \
+            --platform linux/amd64 \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp/webscene-home \
+            --env DOTNET_CLI_HOME=/tmp/webscene-home \
+            --env NUGET_PACKAGES=/tmp/webscene-home/.nuget/packages \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            '${{ needs.linux-builder.outputs.image }}' \
+            "${runner_args[@]}"
+        else
+          "${runner_args[@]}"
+        fi
     - id: v8-sdk-ready
       name: Validate completed V8 SDK for caching
       if: always() && steps.v8-cache.outputs.cache-hit != 'true'
@@ -740,7 +755,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         pattern: native-*-${{ needs.metadata.outputs.package-version }}
-        path: artifacts/nuget-packages
+        path: artifacts
         merge-multiple: true
     - name: Verify versions, dependencies, symbols, and package inventory
       shell: bash

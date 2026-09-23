@@ -71,6 +71,8 @@ internal static partial class HeadlessProof
                 return 0;
             }
             var initialEvidence = WaitForWebSocketEvidence(view, window);
+            if (arguments.Contains("--submenu-proof", StringComparer.Ordinal))
+                return CaptureSubmenuEvidence(view, window, output, width, height);
             if (arguments.Contains("--preview-lines-proof", StringComparer.Ordinal))
                 return CapturePreviewLinesEvidence(view, window, output, width, height);
             if (arguments.Contains("--table-view-proof", StringComparer.Ordinal))

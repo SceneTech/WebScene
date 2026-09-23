@@ -16,7 +16,7 @@ on:
       consumer_recheck_version:
         description: Package version in the existing release artifact
         required: false
-        default: 1.0.35
+        default: 1.0.36
         type: string
   push:
     branches:

@@ -124,6 +124,13 @@ int main()
     if (const auto* filter = std::getenv("WEBSCENE_NATIVE_ENGINE_TEST_FILTER");
         filter != nullptr) {
         const auto selected = std::string_view(filter);
+        if (selected == "nested-fixed-submenu") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_nested_fixed_submenu_escapes_parent_overflow_clip(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "youtube-embed") { test_youtube_embed_fallback(); return 0; }
         if (selected == "table-cell-copy") { test_table_cell_click_copies_text_to_host(); return 0; }
         if (selected == "resource-failure-diagnostics") { test_resource_failure_diagnostics(); return 0; }
@@ -665,6 +672,7 @@ int main()
     test_appending_child_invalidates_empty_selector(engine);
     test_inline_block_preserves_vertical_padding(engine);
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
+    test_nested_fixed_submenu_escapes_parent_overflow_clip(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
     test_enter_dispatches_browser_keypress_for_interval_commit(engine);
     test_css_linear_gradient_reaches_the_retained_scene(engine);

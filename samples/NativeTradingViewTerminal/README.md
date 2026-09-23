@@ -76,6 +76,16 @@ dotnet run --project samples/NativeTradingViewTerminal -c Release -- \
   --output artifacts/native-tradingview-terminal
 ```
 
+Verify the price-axis Labels and Lines child menus through native right-click
+and hover input, then compare their painted surfaces with the parent menu:
+
+```bash
+dotnet run --project samples/NativeTradingViewTerminal -c Release -- \
+  --headless-proof --submenu-proof \
+  --native-library /absolute/path/to/libwebscene_native_engine.dylib \
+  --output artifacts/native-tradingview-submenu
+```
+
 Profile desktop startup until the chart iframe has rendered at least eight canvases
 and hidden its loading indicator:
 

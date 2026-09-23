@@ -575,6 +575,14 @@
       "reason": "Required after the product-neutral interaction passes the native runner. It requires browser pointer/mouse boundary ordering, fixed-child popup geometry and hit ownership, parent hover continuity across the descendant, child activation, and one close on exit. Evidence: artifacts/web-platform-submenu-lifecycle-v3/{native,managed}/results.json."
     },
     {
+      "path": "contracts/nested-fixed-submenu-overflow-paint.html",
+      "type": "reftest",
+      "reference": "contracts/nested-fixed-submenu-overflow-paint-ref.html",
+      "capabilities": ["nested-fixed-menu-paint", "fixed-descendant-overflow-escape"],
+      "evidence": ["tradingview-price-scale-child-submenus"],
+      "reason": "TradingView mounts a fixed child submenu inside an overflow-clipped scroll wrapper of another fixed menu. The child must paint outside that clip, matching a separately promoted fixed sibling."
+    },
+    {
       "path": "contracts/cursor-pointer-external-anchor.html",
       "type": "testharness",
       "capabilities": ["cursor-pointer-cascade", "cursor-inheritance", "nested-anchor-hit-testing", "cancellable-anchor-activation", "external-navigation-host-handoff"],

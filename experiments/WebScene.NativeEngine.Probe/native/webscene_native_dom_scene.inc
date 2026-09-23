@@ -18,8 +18,8 @@ void native_document::build_scene(
         [](const auto* left, const auto* right) {
             return left->paint_z_index < right->paint_z_index;
         });
-    for (const auto* fixed_node : fixed) {
-        if (!display_tree_allows_render(*this, *fixed_node)) continue;
+    const auto paint_fixed_layer = [&](const auto& self, const dom_node* fixed_node) -> void {
+        if (!display_tree_allows_render(*this, *fixed_node)) return;
         auto inherited_visibility_hidden = false;
         std::vector<const dom_node*> ancestors;
         for (auto* ancestor = composed_parent(*fixed_node);
@@ -38,8 +38,21 @@ void native_document::build_scene(
             strings,
             string_bytes,
             inherited_visibility_hidden,
-            false);
-    }
+            true);
+        // A nested fixed box belongs to this stacking scope but not to an
+        // intervening overflow clip. Paint it after the parent's clip closes,
+        // before advancing to the next outer fixed stacking scope.
+        std::vector<dom_node*> nested_fixed;
+        for (auto* child : composed_children(*fixed_node)) {
+            collect_outermost_fixed_positioned_nodes(*this, *child, nested_fixed);
+        }
+        std::stable_sort(nested_fixed.begin(), nested_fixed.end(),
+            [](const auto* left, const auto* right) {
+                return left->paint_z_index < right->paint_z_index;
+            });
+        for (const auto* nested : nested_fixed) self(self, nested);
+    };
+    for (const auto* fixed_node : fixed) paint_fixed_layer(paint_fixed_layer, fixed_node);
 }
 
 void native_document::build_canvas_layouts(

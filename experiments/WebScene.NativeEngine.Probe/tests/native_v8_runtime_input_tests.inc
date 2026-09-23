@@ -84,6 +84,85 @@ void pointer_button(
     require(webscene_engine_enqueue(engine, &input) != 0, "pointer button was rejected");
 }
 
+void test_nested_fixed_submenu_escapes_parent_overflow_clip(webscene_engine* engine)
+{
+    resize(engine, 400, 180, 78'810U);
+    execute(engine, R"JS(
+      document.body.innerHTML = `<style>
+        body { margin:0; }
+        #portal { position:fixed; left:0; top:0; width:0; height:0; z-index:1; }
+        #menu { position:fixed; left:140px; top:20px; width:120px; height:100px;
+          background:#1e1e1e; z-index:500; }
+        #scroll { width:120px; height:100px; overflow:hidden auto; }
+        #row { width:120px; height:40px; }
+        #submenu { display:none; position:fixed; left:20px; top:40px;
+          width:80px; height:60px; background:#008000; z-index:500; }
+      </style><div id="portal"><div id="menu"><div id="scroll">
+        <div id="row"><div id="submenu"></div></div>
+      </div></div></div>`;
+      globalThis.submenuEntries = 0;
+      document.getElementById('row').addEventListener('mouseenter', () => {
+        document.getElementById('submenu').style.display = 'block';
+        ++globalThis.submenuEntries;
+      });
+    )JS", "nested-fixed-submenu-setup.js");
+
+    const auto initial_hit = evaluate(engine,
+        "document.elementFromPoint(160, 40)?.id || null",
+        "nested-fixed-submenu-initial-hit.js");
+    require(initial_hit == "\"row\"",
+        "fixed parent menu did not expose its row to hit-testing: " + initial_hit);
+
+    const auto consumed_before = consumed_input_count(engine);
+    pointer_move(engine, 160, 40, 78'811U);
+    wait_for_consumed_inputs(engine, consumed_before + 1U,
+        "nested fixed submenu pointer move was not consumed");
+    const auto state = evaluate(engine, R"JS((() => {
+      const child = document.getElementById('submenu');
+      const rect = child.getBoundingClientRect();
+      return {entries:submenuEntries,display:getComputedStyle(child).display,
+        x:rect.x,y:rect.y,hit:document.elementFromPoint(50,50)?.id};
+    })())JS", "nested-fixed-submenu-state.js");
+    require(state == R"({"entries":1,"display":"block","x":20,"y":40,"hit":"submenu"})",
+        "hover did not open the fixed child submenu with correct hit ownership: " + state);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    bool saw_child_fill = false;
+    bool child_was_clipped = false;
+    for (auto attempt = 0; attempt < 100 && !saw_child_fill; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            std::vector<bool> menu_clip_stack;
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind == 12U) {
+                    menu_clip_stack.push_back(
+                        std::abs(command.x - 140.0F) < 0.1F
+                        && std::abs(command.y - 20.0F) < 0.1F
+                        && std::abs(command.width - 120.0F) < 0.1F);
+                } else if (command.kind == 13U) {
+                    if (!menu_clip_stack.empty()) menu_clip_stack.pop_back();
+                } else if (command.rgba == 0x008000FFU
+                    && std::abs(command.x - 20.0F) < 0.1F
+                    && std::abs(command.y - 40.0F) < 0.1F
+                    && std::abs(command.width - 80.0F) < 0.1F) {
+                    saw_child_fill = true;
+                    child_was_clipped = std::find(
+                        menu_clip_stack.begin(), menu_clip_stack.end(), true)
+                        != menu_clip_stack.end();
+                    break;
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!saw_child_fill) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(saw_child_fill, "fixed child submenu fill was omitted from the retained scene");
+    require(!child_was_clipped,
+        "fixed child submenu was painted inside its ancestor menu overflow clip");
+}
+
 void animation_frame(webscene_engine* engine, double timestamp, uint64_t sequence)
 {
     const webscene_input_event input{

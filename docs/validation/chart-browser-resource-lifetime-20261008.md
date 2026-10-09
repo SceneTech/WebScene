@@ -1,7 +1,7 @@
-# Browser resource ownership on release/1.0.36
+# Browser resource ownership on release/1.0.37
 
-Target: `release/1.0.36`, base `5b1839345541d534288cdfc20c0817ad7381a08c`.
-Branch: `release/1.0.36` (maintenance release 1.0.37). This is a local candidate, not a
+Based on `release/1.0.36`, commit `5b1839345541d534288cdfc20c0817ad7381a08c`.
+Branch: `release/1.0.37` (maintenance release 1.0.37). This is a local candidate, not a
 published runtime package or Windows qualification.
 
 ## Cause and change

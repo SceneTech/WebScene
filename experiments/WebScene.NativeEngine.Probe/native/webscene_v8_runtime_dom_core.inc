@@ -786,12 +786,7 @@
             [&](const auto& task) {
                 return task.context.Get(isolate) == local_context;
             });
-        std::erase_if(
-            resize_observers,
-            [&](const auto& observer) {
-                return observer != nullptr
-                    && observer->context.Get(isolate) == local_context;
-            });
+        retire_browser_resources_for_context(local_context);
         for (auto iterator = websocket_bindings.begin();
              iterator != websocket_bindings.end();) {
             if (iterator->second.context.Get(isolate) != local_context) {
@@ -845,14 +840,16 @@
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
-            std::erase_if(listeners, [&](const auto& listener) {
+            std::erase_if(listeners, [&](auto& listener) {
                 const auto listener_context = listener.context.Get(isolate);
-                return std::any_of(
+                const auto detached = std::any_of(
                     detached_contexts.begin(),
                     detached_contexts.end(),
                     [&](const auto context) {
                         return listener_context == context;
                     });
+                if (detached) clear_event_listener(listener);
+                return detached;
             });
         }
     }
@@ -1260,6 +1257,7 @@
                 observer->delivered_sizes.erase(id);
                 observer->observed_boxes.erase(id);
             }
+            update_resize_observer_lifetime(*observer);
         }
         std::erase_if(provisional_frame_bodies, [&](const auto& entry) {
             return node_ids.contains(entry.first) || nodes.contains(entry.second);
@@ -1295,8 +1293,10 @@
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
-            std::erase_if(listeners, [&](const auto& listener) {
-                return node_ids.contains(listener.target);
+            std::erase_if(listeners, [&](auto& listener) {
+                if (!node_ids.contains(listener.target)) return false;
+                clear_event_listener(listener);
+                return true;
             });
         }
         if (nodes.contains(active_element)) active_element = nullptr;

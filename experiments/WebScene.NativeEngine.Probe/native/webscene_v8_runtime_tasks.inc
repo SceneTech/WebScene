@@ -737,10 +737,11 @@
     {
         // Authored callbacks can call matchMedia and reallocate the owner vector.
         // Keep only the stable pointee across calls and snapshot the dispatch set.
-        const auto query_count = media_query_lists.size();
-        for (size_t query_index = 0; query_index < query_count; ++query_index) {
-            auto* state = media_query_lists[query_index].get();
-            if (state == nullptr) continue;
+        std::vector<std::pair<std::shared_ptr<media_query_list_state>, v8::Local<v8::Object>>> pending;
+        for (const auto& state : media_query_lists) {
+            if (!state->wrapper.IsEmpty()) pending.emplace_back(state, state->wrapper.Get(isolate));
+        }
+        for (const auto& [state, retained_wrapper] : pending) {
             const auto matches = media_query_matches(state->query);
             if (matches == state->matches) continue;
             state->matches = matches;
@@ -748,6 +749,17 @@
             auto wrapper = state->wrapper.Get(isolate);
             if (local_context.IsEmpty() || wrapper.IsEmpty()) continue;
             v8::Context::Scope context_scope(local_context);
+            struct dispatch_guard final {
+                media_query_list_state& state;
+                v8::Isolate* isolate;
+                dispatch_guard(media_query_list_state& state, v8::Isolate* isolate)
+                    : state(state), isolate(isolate) { ++state.dispatch_depth; }
+                ~dispatch_guard() {
+                    if (--state.dispatch_depth == 0)
+                        std::erase_if(state.listeners, [](const auto& listener) { return listener.callback.IsEmpty(); });
+                    update_media_query_list_lifetime(state, isolate);
+                }
+            } guard(*state, isolate);
             wrapper->Set(
                 local_context,
                 js_string(isolate, "matches"),
@@ -778,7 +790,7 @@
                 v8::False(isolate)).Check();
             v8::Local<v8::Value> arguments[] = {event};
             const auto listener_count = state->listeners.size();
-            for (size_t index = 0; index < listener_count; ++index) {
+            for (size_t index = 0; index < listener_count && index < state->listeners.size(); ++index) {
                 auto& registration = state->listeners[index];
                 auto callback = registration.callback.Get(isolate);
                 if (callback.IsEmpty()) continue;
@@ -798,9 +810,6 @@
                     return false;
                 }
             }
-            std::erase_if(
-                state->listeners,
-                [](const auto& listener) { return listener.callback.IsEmpty(); });
             v8::Local<v8::Value> onchange;
             if (!wrapper->Get(
                     local_context,
@@ -880,15 +889,13 @@
                             local_context,
                             js_string(isolate, "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(isolate)) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,
@@ -1008,15 +1015,13 @@
                                 local_frame_context,
                                 js_string(isolate, "aborted")).ToLocal(&aborted)
                             && aborted->BooleanValue(isolate)) {
-                            listener.callback.Reset();
-                            listener.signal.Reset();
+                            clear_event_listener(listener);
                             continue;
                         }
                     }
                     const auto passive = listener.passive;
                     if (listener.once) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        clear_event_listener(listener);
                     }
                     event->Set(
                         local_frame_context,
@@ -1137,12 +1142,12 @@
         const auto requested_scale = viewport_provider().device_scale_factor;
         const auto scale = std::isfinite(requested_scale) && requested_scale > 0
             ? requested_scale : 1.0;
-        std::vector<resize_observer_state*> pending;
+        std::vector<std::pair<std::shared_ptr<resize_observer_state>, v8::Local<v8::Object>>> pending;
         pending.reserve(resize_observers.size());
         for (const auto& observer : resize_observers) {
-            if (observer != nullptr) pending.push_back(observer.get());
+            if (!observer->wrapper.IsEmpty()) pending.emplace_back(observer, observer->wrapper.Get(isolate));
         }
-        for (auto* observer : pending) {
+        for (const auto& [observer, wrapper] : pending) {
             if (observer == nullptr || observer->nodes.empty()) continue;
             std::vector<dom_node*> changed_nodes;
             changed_nodes.reserve(observer->nodes.size());
@@ -1218,7 +1223,7 @@
                     make_box_array(device_pixels)).Check();
                 entries->Set(observer_context, index, entry).Check();
             }
-            v8::Local<v8::Value> arguments[] = {entries, v8::Undefined(isolate)};
+            v8::Local<v8::Value> arguments[] = {entries, wrapper};
             v8::TryCatch try_catch(isolate);
             if (callback->Call(
                     observer_context,
@@ -1648,15 +1653,13 @@
                             local_context,
                             js_string(isolate, "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(isolate)) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,

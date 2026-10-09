@@ -116,7 +116,7 @@
     std::string last_mousemove_ancestry;
 #endif
     std::vector<event_listener_registration> resize_listeners;
-    std::vector<std::unique_ptr<media_query_list_state>> media_query_lists;
+    std::vector<std::shared_ptr<media_query_list_state>> media_query_lists;
     std::vector<timer_task> timers;
     std::deque<pending_window_message> pending_window_messages;
     std::vector<pending_programmatic_scroll_event>
@@ -134,7 +134,7 @@
     std::mutex console_message_mutex;
     std::deque<std::string> console_messages;
     uint64_t next_host_request_id{0};
-    std::vector<std::unique_ptr<resize_observer_state>> resize_observers;
+    std::vector<std::shared_ptr<resize_observer_state>> resize_observers;
     bool resize_observers_pending{false};
     // DOM mutations stay on the native fast path until a realm registers its
     // first custom element. Once activated, the flag remains enabled for this

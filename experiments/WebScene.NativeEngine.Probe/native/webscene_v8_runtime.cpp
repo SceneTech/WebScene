@@ -4469,10 +4469,11 @@ uint32_t v8_dom_runtime::current_cursor_kind() const noexcept
 void v8_dom_runtime::notify_low_memory()
 {
     if (impl_->isolate == nullptr) return;
-    impl_->compact_retained_native_capacity();
     auto isolate_locker = impl_->lock_shared_isolate();
     v8::Isolate::Scope isolate_scope(impl_->isolate);
     impl_->isolate->LowMemoryNotification();
+    impl_->retire_collected_browser_resources();
+    impl_->compact_retained_native_capacity();
     // Idle tasks may previously have declined to collect weak wrappers. Now
     // that V8 has collected, revisit roots in the normal bounded idle slices,
     // including workloads smaller than the mutation-triggered GC threshold.

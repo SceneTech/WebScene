@@ -355,6 +355,60 @@
             arguments);
     }
 
+    void retain_dom_event_listener(
+        event_listener_registration& registration,
+        v8::Local<v8::Object> target)
+    {
+        auto local_context = registration.context.Get(isolate);
+        const auto key = v8::Private::ForApi(
+            isolate, js_string(isolate, "webscene.dom-event-listeners"));
+        v8::Local<v8::Value> existing;
+        v8::Local<v8::Map> entries;
+        if (target->GetPrivate(local_context, key).ToLocal(&existing)
+            && existing->IsMap()) {
+            entries = existing.As<v8::Map>();
+        } else {
+            entries = v8::Map::New(isolate);
+            target->SetPrivate(local_context, key, entries).Check();
+        }
+        auto entry = v8::Object::New(isolate);
+        entry->Set(local_context, js_string(isolate, "callback"),
+            registration.callback.Get(isolate)).Check();
+        if (!registration.signal.IsEmpty()) {
+            entry->Set(local_context, js_string(isolate, "signal"),
+                registration.signal.Get(isolate)).Check();
+        }
+        entries->Set(local_context, entry, v8::True(isolate)).ToLocalChecked();
+        registration.node_owner.Reset(isolate, target);
+        registration.node_entry.Reset(isolate, entry);
+        registration.node_owner.SetWeak();
+        registration.node_entry.SetWeak();
+        registration.callback.SetWeak();
+        if (!registration.signal.IsEmpty()) registration.signal.SetWeak();
+    }
+
+    void clear_event_listener(event_listener_registration& registration)
+    {
+        // Remove the JS ownership edge as well as the native dispatch entry.
+        // Otherwise removed/once/aborted callbacks accumulate on live targets.
+        if (!registration.node_owner.IsEmpty() && !registration.node_entry.IsEmpty()) {
+            auto local_context = registration.context.Get(isolate);
+            v8::Context::Scope context_scope(local_context);
+            const auto key = v8::Private::ForApi(
+                isolate, js_string(isolate, "webscene.dom-event-listeners"));
+            v8::Local<v8::Value> entries;
+            if (registration.node_owner.Get(isolate)->GetPrivate(local_context, key)
+                    .ToLocal(&entries) && entries->IsMap()) {
+                entries.As<v8::Map>()->Delete(local_context,
+                    registration.node_entry.Get(isolate)).Check();
+            }
+        }
+        registration.node_owner.Reset();
+        registration.node_entry.Reset();
+        registration.callback.Reset();
+        registration.signal.Reset();
+    }
+
     static void add_event_listener(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
@@ -490,9 +544,16 @@
                 use_capture,
                 use_once,
                 use_passive,
+                {},
+                {},
                 {}};
             if (!use_signal.IsEmpty()) {
                 registration.signal.Reset(info.GetIsolate(), use_signal);
+            }
+            if (target_node_id != 0U
+                && target_node_id != std::numeric_limits<uint32_t>::max()
+                && unwrap_node(info.This()) != nullptr) {
+                self->retain_dom_event_listener(registration, info.This());
             }
             registrations.push_back(std::move(registration));
         } else if (type == "resize") {
@@ -519,6 +580,8 @@
                 use_capture,
                 use_once,
                 use_passive,
+                {},
+                {},
                 {}};
             if (!use_signal.IsEmpty()) {
                 registration.signal.Reset(info.GetIsolate(), use_signal);
@@ -595,8 +658,7 @@
                 }
                 // Do not erase while an event may be iterating the vector. The
                 // dispatch tail compacts this tombstone.
-                registration.callback.Reset();
-                registration.signal.Reset();
+                self->clear_event_listener(registration);
                 break;
             }
             return;
@@ -610,8 +672,7 @@
                 || !callback->StrictEquals(requested)) {
                 continue;
             }
-            registration.callback.Reset();
-            registration.signal.Reset();
+            self->clear_event_listener(registration);
             break;
         }
     }
@@ -893,13 +954,65 @@
             static_cast<int>(output.size())).ToLocalChecked());
     }
 
+    template <typename State>
+    static State* browser_resource_state(v8::Isolate* isolate,
+        v8::Local<v8::Value> owner, const char* name)
+    {
+        if (!owner->IsObject()) return nullptr;
+        v8::Local<v8::Value> data;
+        if (!owner.As<v8::Object>()->GetPrivate(isolate->GetCurrentContext(),
+                v8::Private::ForApi(isolate, js_string(isolate, name))).ToLocal(&data)
+            || !data->IsExternal()) return nullptr;
+        return static_cast<State*>(data.As<v8::External>()->Value(
+            v8::kExternalPointerTypeTagDefault));
+    }
+
+    void retire_collected_browser_resources()
+    {
+        std::erase_if(resize_observers, [](const auto& state) { return state->wrapper.IsEmpty(); });
+        std::erase_if(media_query_lists, [](const auto& state) { return state->wrapper.IsEmpty(); });
+    }
+
+    void retire_browser_resources_for_context(v8::Local<v8::Context> retired_context)
+    {
+        // Extracted methods can outlive an iframe. Invalidate their private
+        // state pointer before releasing native ownership. Dispatch snapshots
+        // share ownership so retiring a frame in a callback is safe as well.
+        const auto invalidate = [&](auto& state, const char* key) {
+            if (!state.wrapper.IsEmpty()) state.wrapper.Get(isolate)->DeletePrivate(
+                retired_context, v8::Private::ForApi(isolate, js_string(isolate, key))).Check();
+            state.wrapper.Reset();
+            state.context.Reset();
+        };
+        std::erase_if(resize_observers, [&](const auto& state) {
+            if (state->context.Get(isolate) != retired_context) return false;
+            invalidate(*state, "webscene.resize-observer-state");
+            state->callback.Reset();
+            state->nodes.clear();
+            state->observed_boxes.clear();
+            state->delivered_sizes.clear();
+            return true;
+        });
+        std::erase_if(media_query_lists, [&](const auto& state) {
+            if (state->context.Get(isolate) != retired_context) return false;
+            invalidate(*state, "webscene.media-query-state");
+            state->listeners.clear();
+            return true;
+        });
+    }
+
+    static void update_resize_observer_lifetime(resize_observer_state& state)
+    {
+        if (state.wrapper.IsEmpty()) return;
+        if (state.nodes.empty()) state.wrapper.SetWeak();
+        else state.wrapper.ClearWeak();
+    }
+
     static resize_observer_state* resize_observer(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        return info.Data()->IsExternal()
-            ? static_cast<resize_observer_state*>(info.Data().As<v8::External>()->Value(
-                v8::kExternalPointerTypeTagDefault))
-            : nullptr;
+        return browser_resource_state<resize_observer_state>(info.GetIsolate(),
+            info.Data(), "webscene.resize-observer-state");
     }
 
     static void resize_observer_observe(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -941,6 +1054,7 @@
         // Re-observing with another box replaces the delivery criterion.
         // Device-pixel changes can occur with no CSS layout-size change.
         observer->delivered_sizes.erase(node->id);
+        update_resize_observer_lifetime(*observer);
         current(info.GetIsolate())->resize_observers_pending = true;
     }
 
@@ -954,6 +1068,7 @@
             std::erase(observer->nodes, node);
             observer->observed_boxes.erase(node->id);
             observer->delivered_sizes.erase(node->id);
+            update_resize_observer_lifetime(*observer);
         }
     }
 
@@ -964,6 +1079,7 @@
             observer->nodes.clear();
             observer->observed_boxes.clear();
             observer->delivered_sizes.clear();
+            update_resize_observer_lifetime(*observer);
         }
     }
 
@@ -982,15 +1098,24 @@
             info.GetReturnValue().Set(object);
             return;
         }
-        auto observer = std::make_unique<resize_observer_state>();
+        self->retire_collected_browser_resources();
+        auto observer = std::make_shared<resize_observer_state>();
         observer->context.Reset(info.GetIsolate(), local_context);
+        observer->context.SetWeak();
         observer->callback.Reset(info.GetIsolate(), info[0].As<v8::Function>());
+        observer->callback.SetWeak();
+        object->SetPrivate(local_context, v8::Private::ForApi(info.GetIsolate(),
+            js_string(info.GetIsolate(), "webscene.resize-observer-callback")), info[0]).Check();
+        observer->wrapper.Reset(info.GetIsolate(), object);
+        observer->wrapper.SetWeak();
         auto* state = observer.get();
         self->resize_observers.push_back(std::move(observer));
-        auto data = v8::External::New(
-            info.GetIsolate(),
-            state,
-            v8::kExternalPointerTypeTagDefault);
+        object->SetPrivate(local_context, v8::Private::ForApi(info.GetIsolate(),
+            js_string(info.GetIsolate(), "webscene.resize-observer-state")),
+            v8::External::New(info.GetIsolate(), state, v8::kExternalPointerTypeTagDefault)).Check();
+        // Extracted methods retain their owner too, so their native state cannot
+        // be retired while a script can still invoke them.
+        auto data = object;
         object->Set(
             local_context,
             js_string(info.GetIsolate(), "observe"),
@@ -1085,8 +1210,7 @@
                 if (registration.signal.IsEmpty()) continue;
                 auto registered_signal = registration.signal.Get(info.GetIsolate());
                 if (!registered_signal->StrictEquals(signal)) continue;
-                registration.callback.Reset();
-                registration.signal.Reset();
+                self->clear_event_listener(registration);
             }
         };
         for (auto& [type, registrations] : self->frame_event_listeners) {
@@ -1161,14 +1285,48 @@
         info.GetReturnValue().Set(controller);
     }
 
+    static void update_media_query_list_lifetime(media_query_list_state& state,
+        v8::Isolate* isolate)
+    {
+        if (state.wrapper.IsEmpty()) return;
+        v8::Local<v8::Value> onchange;
+        const auto has_onchange = state.wrapper.Get(isolate)->GetPrivate(
+            isolate->GetCurrentContext(), v8::Private::ForApi(isolate,
+                js_string(isolate, "webscene.media-query-onchange"))).ToLocal(&onchange)
+            && onchange->IsFunction();
+        const auto has_listeners = std::any_of(state.listeners.begin(), state.listeners.end(),
+            [](const auto& listener) { return !listener.callback.IsEmpty(); });
+        if (has_onchange || has_listeners) state.wrapper.ClearWeak();
+        else state.wrapper.SetWeak();
+    }
+
+    static void get_media_query_onchange(v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        v8::Local<v8::Value> value;
+        if (info.Holder()->GetPrivate(info.GetIsolate()->GetCurrentContext(),
+                v8::Private::ForApi(info.GetIsolate(), js_string(info.GetIsolate(),
+                    "webscene.media-query-onchange"))).ToLocal(&value))
+            info.GetReturnValue().Set(value->IsUndefined() ? v8::Local<v8::Value>(v8::Null(info.GetIsolate())) : value);
+    }
+
+    static void set_media_query_onchange(v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* state = browser_resource_state<media_query_list_state>(info.GetIsolate(),
+            info.Holder(), "webscene.media-query-state");
+        if (state == nullptr) return;
+        info.Holder()->SetPrivate(info.GetIsolate()->GetCurrentContext(),
+            v8::Private::ForApi(info.GetIsolate(), js_string(info.GetIsolate(),
+                "webscene.media-query-onchange")), value->IsFunction() ? value : v8::Local<v8::Value>(v8::Null(info.GetIsolate()))).Check();
+        update_media_query_list_lifetime(*state, info.GetIsolate());
+    }
+
     static media_query_list_state* media_query_list(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        return info.Data()->IsExternal()
-            ? static_cast<media_query_list_state*>(
-                info.Data().As<v8::External>()->Value(
-                    v8::kExternalPointerTypeTagDefault))
-            : nullptr;
+        return browser_resource_state<media_query_list_state>(info.GetIsolate(),
+            info.Data(), "webscene.media-query-state");
     }
 
     static void add_media_query_list_listener(
@@ -1214,7 +1372,10 @@
             false,
             once,
             false,
+            {},
+            {},
             {}});
+        update_media_query_list_lifetime(*state, isolate);
     }
 
     static void media_query_list_add_event_listener(
@@ -1250,6 +1411,9 @@
             registration.signal.Reset();
             break;
         }
+        if (state->dispatch_depth == 0)
+            std::erase_if(state->listeners, [](const auto& listener) { return listener.callback.IsEmpty(); });
+        update_media_query_list_lifetime(*state, info.GetIsolate());
     }
 
     static void media_query_list_remove_event_listener(
@@ -1280,15 +1444,17 @@
                 ? "live matches with modern and legacy change-event delivery"
                 : "query contains an unsupported media type or condition",
             "web-api-binding");
-        auto state = std::make_unique<media_query_list_state>();
+        self->retire_collected_browser_resources();
+        auto state = std::make_shared<media_query_list_state>();
         state->query = query;
         state->matches = self->media_query_matches(query);
         state->context.Reset(isolate, local_context);
+        state->context.SetWeak();
         auto* state_pointer = state.get();
-        auto data = v8::External::New(
-            isolate,
-            state_pointer,
-            v8::kExternalPointerTypeTagDefault);
+        result->SetPrivate(local_context, v8::Private::ForApi(isolate,
+            js_string(isolate, "webscene.media-query-state")),
+            v8::External::New(isolate, state_pointer, v8::kExternalPointerTypeTagDefault)).Check();
+        auto data = result;
         result->Set(
             local_context,
             js_string(isolate, "matches"),
@@ -1322,11 +1488,10 @@
                 local_context,
                 media_query_list_remove_listener,
                 data).ToLocalChecked()).Check();
-        result->Set(
-            local_context,
-            js_string(isolate, "onchange"),
-            v8::Null(isolate)).Check();
+        result->SetNativeDataProperty(local_context, js_string(isolate, "onchange"),
+            get_media_query_onchange, set_media_query_onchange).Check();
         state->wrapper.Reset(isolate, result);
+        state->wrapper.SetWeak();
         self->media_query_lists.push_back(std::move(state));
         info.GetReturnValue().Set(result);
     }
@@ -1597,15 +1762,13 @@
                             local_context,
                             js_string(info.GetIsolate(), "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(info.GetIsolate())) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        self->clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    self->clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,
@@ -1661,15 +1824,13 @@
                             local_context,
                             js_string(info.GetIsolate(), "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(info.GetIsolate())) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        self->clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    self->clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,

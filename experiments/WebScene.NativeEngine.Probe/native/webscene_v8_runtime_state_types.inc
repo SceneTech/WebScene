@@ -236,6 +236,8 @@ using css_index_string_set = std::unordered_set<std::string>;
     enum class resize_observer_box { content, border, device_pixel_content };
 
     struct resize_observer_state final {
+        // The wrapper owns the callback. Root it only while observing targets.
+        v8::Global<v8::Object> wrapper;
         v8::Global<v8::Context> context;
         v8::Global<v8::Function> callback;
         std::vector<dom_node*> nodes;
@@ -323,9 +325,14 @@ using css_index_string_set = std::unordered_set<std::string>;
         bool once{false};
         bool passive{false};
         v8::Global<v8::Object> signal;
+        // DOM targets own callbacks through their JS wrapper graph. Native
+        // dispatch indexes must not turn callback -> target cycles into roots.
+        v8::Global<v8::Object> node_owner;
+        v8::Global<v8::Object> node_entry;
     };
 
     struct media_query_list_state final {
+        unsigned dispatch_depth{0};
         std::string query;
         bool matches{false};
         v8::Global<v8::Context> context;

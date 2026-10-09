@@ -91,6 +91,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_resize_observer_tests.inc"
 #include "native_v8_runtime_rendering_metrics_tests.inc"
 #include "native_v8_runtime_websocket_tests.inc"
+#include "native_browser_resource_lifetime_tests.inc"
 int main()
 {
 #if defined(_WIN32)
@@ -134,6 +135,7 @@ int main()
         if (selected == "youtube-embed") { test_youtube_embed_fallback(); return 0; }
         if (selected == "table-cell-copy") { test_table_cell_click_copies_text_to_host(); return 0; }
         if (selected == "resource-failure-diagnostics") { test_resource_failure_diagnostics(); return 0; }
+        if (selected == "browser-resource-lifetime") { test_browser_resource_lifetime(); return 0; }
         if (selected == "media-query-reentrant") { test_media_query_callback_can_create_more_queries(); return 0; }
         if (selected == "runtime-diagnostics") {
             test_runtime_diagnostics();
@@ -606,6 +608,7 @@ int main()
     test_engine_memory_metrics_are_worker_snapshots(engine);
     test_hidden_engine_reclamation_is_debounced_and_cancelable(engine);
     test_native_websocket_browser_api();
+    test_browser_resource_lifetime();
     execute(
         engine,
         "if (typeof IntersectionObserver !== 'function' || "

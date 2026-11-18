@@ -1,0 +1,43 @@
+[package]
+name = "webscene"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+description = "FerroUI presenter for the WebScene native web UI runtime"
+repository = "https://github.com/SceneTech/WebScene"
+readme = "README.md"
+keywords = ["ferroui", "gui", "html", "canvas", "webscene"]
+categories = ["gui", "rendering"]
+include = [
+    "Cargo.toml", "Cargo.lock", "build.rs", "LICENSE", "README.md",
+    "src/**", "include/**", "examples/**", "tests/**", "tool/fetch_runtime.py",
+]
+
+[dependencies]
+ferroui-base = "=0.5.0"
+ferroui-controls = "=0.5.0"
+ferroui-skia = "=0.5.0"
+skia-safe = "=0.153.3"
+resvg = "0.45.1"
+libloading = "0.8"
+url = "2"
+ureq = "3"
+csscolorparser = "0.7"
+base64 = "0.22"
+harfbuzz-sys = { version = "0.8", default-features = false, features = ["bundled"] }
+unicode-bidi = "0.3"
+
+[build-dependencies]
+bindgen = "0.72"
+
+[dev-dependencies]
+ferroui-desktop = "=0.5.0"
+ferroui-headless = "=0.5.0"
+ferroui-themes-simple = "=0.5.0"
+ferroui-base = { version = "=0.5.0", features = ["testing"] }
+ferroui-controls = { version = "=0.5.0", features = ["testing"] }
+
+[[example]]
+name = "showcase"
+path = "examples/showcase.rs"

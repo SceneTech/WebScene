@@ -58,6 +58,10 @@ Current reference applications include:
 - `samples/NativeTradingViewTerminal` — a Canvas/SVG-heavy application workload;
 - `samples/NativeRuntimeShowcase.Uno` — the Uno Skia component and runtime showcase.
 
+The Rust `webscene` crate uses FerroUI 0.5.0 from crates.io and the
+WebScene 1.0.37 native runtime. See the [FerroUI setup guide](src/WebScene.Backend.FerroUI/README.md)
+for the desktop example and platform validation status.
+
 Avalonia is the reference presenter. Uno Platform is a first-class supported presenter
 for Skia desktop applications on the published native RIDs. Both hosts expose the same
 packaged component lifecycle through framework-specific SDK controls. WPF, WinUI,

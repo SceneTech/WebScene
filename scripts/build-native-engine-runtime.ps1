@@ -141,6 +141,9 @@ if ([string]::IsNullOrWhiteSpace($V8Root)) {
         # WebScene owns the JavaScript console bindings. The inspector bridge keeps
         # the original V8 values so CDP clients receive object ids and previews.
         Apply-PatchOnce $V8Root (Join-Path $repoRoot "third-party/v8-patches/V8InspectorConsolePatch.txt")
+        if ($v8Revision -eq "15.3.10") {
+            Apply-PatchOnce $V8Root (Join-Path $repoRoot "third-party/v8-patches/V8StructuredClonePropertiesPatch.txt")
+        }
         if (-not $UpstreamV8 -and $v8Revision -ne "15.3.10") {
             Apply-PatchOnce $V8Root (Join-Path $repoRoot "third-party/v8-patches/V8Patch.txt")
             Apply-PatchOnce $V8Root (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/patches/V8ToolchainPatch.txt")

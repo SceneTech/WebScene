@@ -1,0 +1,52 @@
+diff --git a/src/objects/value-serializer.cc b/src/objects/value-serializer.cc
+index 3120ca86..163b2c3e 100644
+--- a/src/objects/value-serializer.cc
++++ b/src/objects/value-serializer.cc
+@@ -2689,9 +2689,9 @@ Maybe<uint32_t> ValueDeserializer::ReadJSObjectProperties(
+         if (IsString(*key)) {
+           key = isolate_->factory()->InternalizeString(Cast<String>(key));
+           // Don't reuse |transitions| because it could be stale.
+-          transitioning = TransitionsAccessor(isolate_, *map)
+-                              .FindTransitionToField(Cast<String>(key))
+-                              .ToHandle(&target);
++          TransitionsAccessor(isolate_, *map)
++              .FindTransitionToField(Cast<String>(key))
++              .ToHandle(&target);
+         } else {
+           transitioning = false;
+         }
+@@ -2707,8 +2707,32 @@ Maybe<uint32_t> ValueDeserializer::ReadJSObjectProperties(
+       if (transitioning) {
+         // Deserializaton of |value| might have deprecated current |target|,
+         // ensure we are working with the up-to-date version.
+-        target = Map::Update(isolate_, target);
+-        if (!target->is_dictionary_map()) {
++        // Build a new plain-object shape before committing its properties.
++        // Indexed and duplicate keys still use the ordinary property path.
++        if (target.is_null()) {
++          auto name = Cast<String>(key);
++          PropertyKey lookup_key(isolate_, name);
++          DirectHandle<Map> updated_map = Map::Update(isolate_, map);
++          if (!lookup_key.is_element() && !updated_map->is_dictionary_map() &&
++              updated_map->instance_descriptors()
++                  ->SearchWithCache(isolate_, *name, *updated_map)
++                  .is_not_found()) {
++            target = Map::TransitionToDataProperty(
++                isolate_, updated_map, name, value, NONE, PropertyConstness::kConst,
++                StoreOrigin::kNamed);
++          }
++        } else {
++          target = Map::Update(isolate_, target);
++          InternalIndex descriptor(properties.size());
++          if (!target->is_dictionary_map() &&
++              !Object::FitsRepresentation(
++                  *value, target->instance_descriptors()->GetDetails(descriptor)
++                              .representation())) {
++            target = Map::PrepareForDataProperty(
++                isolate_, target, descriptor, PropertyConstness::kConst, value);
++          }
++        }
++        if (!target.is_null() && !target->is_dictionary_map()) {
+           InternalIndex descriptor(properties.size());
+           PropertyDetails details =
+               target->instance_descriptors()->GetDetails(descriptor);

@@ -35,6 +35,8 @@ webscene_restore_v8_patches() {
   webscene_restore_patch_if_applied \
     "$v8_root" "$repo_root/third-party/v8-patches/V8InspectorConsolePatch.txt"
   webscene_restore_patch_if_applied \
+    "$v8_root" "$repo_root/third-party/v8-patches/V8StructuredClonePropertiesPatch.txt"
+  webscene_restore_patch_if_applied \
     "$v8_root" "$repo_root/third-party/v8-patches/V8Patch.txt"
   webscene_restore_patch_if_applied \
     "$v8_root" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8ToolchainPatch.txt"

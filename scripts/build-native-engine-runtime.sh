@@ -195,6 +195,9 @@ if [[ -z "$v8_root" ]]; then
   # WebScene owns the JavaScript console bindings. The inspector bridge keeps
   # the original V8 values so CDP clients receive object ids and previews.
   webscene_apply_patch_once "$v8_root" "$repo_root/third-party/v8-patches/V8InspectorConsolePatch.txt"
+  if [[ "$v8_revision" == 15.3.10 ]]; then
+    webscene_apply_patch_once "$v8_root" "$repo_root/third-party/v8-patches/V8StructuredClonePropertiesPatch.txt"
+  fi
   if [[ "$upstream_v8" == false && "$v8_revision" != 15.3.10 ]]; then
     webscene_apply_patch_once "$v8_root" "$repo_root/third-party/v8-patches/V8Patch.txt"
     webscene_apply_patch_once "$v8_root" "$repo_root/packaging/WebScene.NativeEngine.Runtime/patches/V8ToolchainPatch.txt"

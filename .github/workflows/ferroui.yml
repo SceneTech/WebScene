@@ -1,0 +1,56 @@
+name: FerroUI presenter
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/WebScene.Backend.FerroUI/**'
+      - 'experiments/WebScene.NativeEngine.Probe/native/webscene_native_engine.h'
+      - '.github/workflows/ferroui.yml'
+  push:
+    branches: [main, 'release/*']
+    paths:
+      - 'src/WebScene.Backend.FerroUI/**'
+      - 'experiments/WebScene.NativeEngine.Probe/native/webscene_native_engine.h'
+      - '.github/workflows/ferroui.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: src/WebScene.Backend.FerroUI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install Skia build prerequisites
+        run: brew install ninja
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Build and unit tests
+        run: cargo test --locked --all-targets
+      - name: Public API documentation
+        run: cargo test --locked --doc
+      - name: Verify Cargo package
+        run: cargo package --locked
+      - name: Lints
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Fetch the released native runtime
+        run: |
+          python3 tool/fetch_runtime.py > runtime-path.txt
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('WEBSCENE_NATIVE_ENGINE_LIBRARY=' + Path('runtime-path.txt').read_text().strip() + '\n')
+          PY
+      - name: Native runtime and FerroUI headless integration
+        run: cargo test --locked --lib --tests -- --include-ignored --test-threads=1

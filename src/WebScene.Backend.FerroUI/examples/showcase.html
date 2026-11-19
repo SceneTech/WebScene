@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>WebScene FerroUI</title>
+<style>
+body { margin: 0; padding: 40px; background: #101827; color: #edf3ff; font-family: sans-serif; }
+h1 { font-size: 36px; margin: 12px 0; }
+p { color: #b7c6dc; font-size: 18px; }
+.card { padding: 24px; background: #1c2940; border-radius: 16px; margin-top: 24px; }
+.controls { display: flex; flex-direction: row; gap: 16px; }
+button { width: 220px; padding: 12px 24px; border: 0; border-radius: 8px; background: #62d4af; color: #0b2822; cursor: pointer; font-size: 18px; }
+input { padding: 12px; width: 260px; background: #fff; color: #162238; font-size: 18px; }
+canvas { display: block; margin-top: 24px; width: 760px; height: 220px; }
+</style></head><body>
+<p>RUST HOST · NATIVE WEB RUNTIME</p><h1>WebScene + FerroUI</h1>
+<p>HTML, CSS and JavaScript composed inside a native FerroUI window.</p>
+<div class="card"><div class="controls"><button id="counter">Clicked 0 times</button><input id="editor" type="text" value="Edit this text" aria-label="Text input"></div>
+<canvas id="chart" width="760" height="220"></canvas></div>
+<script>
+let clicks = 0;
+document.getElementById('counter').addEventListener('click', () => {
+  document.getElementById('counter').textContent = 'Clicked ' + (++clicks) + ' times';
+  draw(clicks);
+});
+function draw(phase) {
+  const c = document.getElementById('chart').getContext('2d');
+  c.clearRect(0, 0, 760, 220);
+  c.fillStyle = '#142137'; c.fillRect(0, 0, 760, 220);
+  c.strokeStyle = '#2b405e'; c.lineWidth = 1;
+  for (let y = 40; y < 220; y += 40) { c.beginPath(); c.moveTo(0, y); c.lineTo(760, y); c.stroke(); }
+  c.strokeStyle = '#62d4af'; c.lineWidth = 3; c.beginPath();
+  for (let x = 0; x <= 760; x += 4) { const y = 110 + Math.sin(x / 75 + phase) * 55 + Math.cos(x / 31) * 12; if (x === 0) c.moveTo(x, y); else c.lineTo(x, y); }
+  c.stroke(); c.fillStyle = '#b7c6dc'; c.font = '14px sans-serif'; c.fillText('Canvas2D · retained native scene', 16, 24);
+}
+draw(0);
+window.__webSceneComponentReady = true;
+</script></body></html>

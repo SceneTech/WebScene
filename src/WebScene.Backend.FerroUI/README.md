@@ -116,10 +116,18 @@ switch between runtime builds.
 - The focusable control forwards pointer buttons and modifiers, capture and
   capture loss, wheel, keys, Unicode scalar text, surface exit, logical viewport
   size and device scale. It exposes native cursors and color-scheme selection.
-- A 16ms FerroUI dispatcher timer services frame demand and publication signals.
-  It repaints only after scene changes and stops while detached. This first
-  implementation compiles scenes on the UI thread; it does not port Avalonia's
-  compositor-clock mailbox optimizations.
+- The composited control submits animation frames and consumes published scenes
+  on FerroUI's render clock. It invalidates the composition visual when the
+  retained frame changes. Layout size changes enqueue a paired resize and
+  animation frame immediately. While the worker lays out the new viewport, the
+  compositor clips the previous frame at its original scale. A completed resize
+  also wakes the compositor during a native window drag. The dispatcher timer
+  handles scale, cursor, and diagnostics, and drives presentation when a
+  composition visual is unavailable.
+  It stops while detached.
+- The showcase uses a persistent per-user cache for assets and compiled scripts.
+  Set `WEBSCENE_CACHE_DIR` to override its location. The HTTP loader honors
+  freshness and revalidates cached assets using ETag or Last-Modified.
 
 This is not feature parity with `WebScene.Sdk.Avalonia`. Packaged Component Profile
 validation/lifecycle, typed interop and Inspector/CDP wrappers, web-font

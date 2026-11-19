@@ -1,18 +1,24 @@
-use crate::{input, render::Frame, Engine, Error, RuntimeOptions};
+use crate::{
+    composition::{draw_frame, SceneVisual, SceneVisualMessage},
+    input,
+    render::Frame,
+    Engine, Error, RuntimeOptions,
+};
 use ferroui_base::input::*;
 use ferroui_base::interactivity::InteractiveImpl;
 use ferroui_base::layout::LayoutableImpl;
 use ferroui_base::media::{DrawingContext, ImmediateDrawingContext};
+use ferroui_base::rendering::composition::{
+    CompositionCustomVisual, ElementComposition, ICompositionCustomVisualHandler,
+};
 use ferroui_base::rendering::scene_graph::ICustomDrawOperation;
 use ferroui_base::threading::{DispatcherPriority, DispatcherTimer};
 use ferroui_base::{
     ferro_class, ferro_class_info, ferro_impl_classes, instantiate, FerroObjectImpl, Point, Rect,
-    Ref, StyledElementImpl, VisualImpl, VisualImplExt, VisualTreeAttachmentEventArgs,
+    Ref, StyledElementImpl, Vector, VisualImpl, VisualImplExt, VisualTreeAttachmentEventArgs,
 };
-use ferroui_controls::{Control, ControlImpl, TopLevel};
-use ferroui_skia::ISkiaApiLeaseFeature;
+use ferroui_controls::{Control, ControlImpl, ControlImplExt, SizeChangedEventArgs, TopLevel};
 use std::{
-    any::TypeId,
     cell::{Cell, RefCell},
     rc::Rc,
     sync::Arc,
@@ -31,6 +37,7 @@ type ErrorHandler = Rc<dyn Fn(&Error)>;
 pub struct WebSceneView {
     base: Control,
     engine: RefCell<Option<Engine>>,
+    composition: RefCell<Option<CompositionCustomVisual>>,
     timer: RefCell<Option<Rc<DispatcherTimer>>>,
     viewport: Cell<(f64, f64, f64)>,
     visible: Cell<bool>,
@@ -47,12 +54,13 @@ ferro_class!(WebSceneView:Control);
 ferro_class_info!(WebSceneView {
     new: WebSceneView::new
 });
-ferro_impl_classes!(WebSceneView:FerroObjectImpl,StyledElementImpl,LayoutableImpl,InteractiveImpl,ControlImpl);
+ferro_impl_classes!(WebSceneView:FerroObjectImpl,StyledElementImpl,LayoutableImpl,InteractiveImpl);
 impl WebSceneView {
     pub fn construct() -> Self {
         Self {
             base: Control::construct(),
             engine: RefCell::new(None),
+            composition: RefCell::new(None),
             timer: RefCell::new(None),
             viewport: Cell::new((0.0, 0.0, 0.0)),
             visible: Cell::new(false),
@@ -88,11 +96,15 @@ impl WebSceneView {
         if let Some(timer) = self.timer.borrow_mut().take() {
             timer.stop();
         }
+        self.detach_composition();
         self.engine.borrow_mut().take();
         self.invalidate_visual();
     }
     pub fn load_url(&self, url: &str) -> Result<(), Error> {
         self.with_engine(|e| e.load_url(url))?;
+        // Navigation may replace the native runtime and revoke its mailbox.
+        self.detach_composition();
+        self.attach_composition();
         self.failed.set(false);
         self.last_error.borrow_mut().take();
         self.invalidate_visual();
@@ -125,6 +137,9 @@ impl WebSceneView {
     }
     fn report(&self, error: Error) {
         self.failed.set(true);
+        if let Some(visual) = self.composition.borrow().as_ref() {
+            visual.send_handler_message(Arc::new(SceneVisualMessage::SetRunning(false)));
+        }
         *self.last_error.borrow_mut() = Some(error.clone());
         let handler = self.error.borrow().clone();
         if let Some(handler) = handler {
@@ -135,6 +150,7 @@ impl WebSceneView {
         if self.timer.borrow().is_some() || self.engine.borrow().is_none() {
             return;
         }
+        self.attach_composition();
         let weak = self.to_ref().downgrade();
         let timer = DispatcherTimer::with_callback(
             Duration::from_millis(16),
@@ -152,21 +168,31 @@ impl WebSceneView {
         if self.failed.get() {
             return;
         }
+        self.attach_composition();
         let result = self.with_engine(|engine| {
             let visible = self.is_effectively_visible();
             if visible != self.visible.replace(visible) {
                 engine.set_visible(visible)?;
+                if let Some(visual) = self.composition.borrow().as_ref() {
+                    visual.send_handler_message(Arc::new(SceneVisualMessage::SetRunning(visible)));
+                }
             }
             let bounds = self.bounds();
-            let scale = TopLevel::get_top_level(Some(self))
-                .map(|t| t.render_scaling())
-                .unwrap_or(1.0);
-            let viewport = (bounds.width, bounds.height, scale);
-            if viewport != self.viewport.get() && bounds.width > 0.0 && bounds.height > 0.0 {
-                engine.resize(viewport.0, viewport.1, viewport.2)?;
-                self.viewport.set(viewport);
-            }
-            let changed = if visible { engine.update()? } else { false };
+            self.update_viewport(engine, bounds.width, bounds.height)?;
+            let changed = if self.composition.borrow().is_some() {
+                if let Some(error) = engine.mailbox().take_error() {
+                    return Err(error);
+                }
+                let failure = engine.runtime_failure();
+                if !failure.is_empty() {
+                    return Err(Error(failure));
+                }
+                false
+            } else if visible {
+                engine.update()?
+            } else {
+                false
+            };
             let cursor = engine.cursor();
             let mut diagnostics = vec![];
             let mut requests = vec![];
@@ -223,6 +249,63 @@ impl WebSceneView {
             }
         }
     }
+
+    fn update_viewport(&self, engine: &mut Engine, width: f64, height: f64) -> Result<(), Error> {
+        let scale = TopLevel::get_top_level(Some(self))
+            .map(|top_level| top_level.render_scaling())
+            .unwrap_or(1.0);
+        let viewport = (width, height, scale);
+        if viewport != self.viewport.get() && width > 0.0 && height > 0.0 {
+            engine.resize(width, height, scale)?;
+            self.viewport.set(viewport);
+            if let Some(visual) = self.composition.borrow().as_ref() {
+                visual.set_size(Vector::new(width, height));
+                visual.send_handler_message(Arc::new(SceneVisualMessage::Resize));
+            }
+        }
+        Ok(())
+    }
+
+    fn attach_composition(&self) {
+        if self.composition.borrow().is_some() {
+            return;
+        }
+        let Some(parent) = ElementComposition::get_element_visual(self) else {
+            return;
+        };
+        let Some(mailbox) = self.engine.borrow().as_ref().map(Engine::mailbox) else {
+            return;
+        };
+        let compositor = parent.compositor();
+        let Some(consumer) = mailbox.attach(compositor.render_loop()) else {
+            return;
+        };
+        let visual = compositor.create_custom_visual(move || {
+            Rc::new(SceneVisual::new(mailbox, consumer)) as Rc<dyn ICompositionCustomVisualHandler>
+        });
+        let bounds = self.bounds();
+        visual.set_size(Vector::new(bounds.width, bounds.height));
+        visual.set_clip_to_bounds(true);
+        visual.set_is_hit_test_visible(false);
+        ElementComposition::set_element_child_visual(self, Some((*visual).clone()));
+        visual.send_handler_message(Arc::new(SceneVisualMessage::SetRunning(
+            self.is_effectively_visible(),
+        )));
+        *self.composition.borrow_mut() = Some(visual);
+        self.invalidate_visual();
+    }
+
+    fn detach_composition(&self) {
+        if let Some(visual) = self.composition.borrow_mut().take() {
+            if let Some(engine) = self.engine.borrow().as_ref() {
+                engine.mailbox().detach();
+            }
+            visual.send_handler_message(Arc::new(SceneVisualMessage::SetRunning(false)));
+            ElementComposition::set_element_child_visual(self, None);
+            visual.dispose();
+        }
+    }
+
     fn pointer(&self, e: &PointerEventArgs, kind: u32, changed: MouseButton, dx: f64, dy: f64) {
         if self.engine.borrow().is_none() {
             return;
@@ -254,6 +337,24 @@ impl WebSceneView {
         }
     }
 }
+impl ControlImpl for WebSceneView {
+    fn on_size_changed(this: &Self, e: &SizeChangedEventArgs) {
+        Self::parent_on_size_changed(this, e);
+        if !this.is_attached_to_visual_tree() || this.failed.get() {
+            return;
+        }
+        let size = e.new_size();
+        let result = {
+            let mut engine = this.engine.borrow_mut();
+            engine
+                .as_mut()
+                .map(|engine| this.update_viewport(engine, size.width, size.height))
+        };
+        if let Some(Err(error)) = result {
+            this.report(error);
+        }
+    }
+}
 impl VisualImpl for WebSceneView {
     fn on_attached_to_visual_tree(this: &Self, e: &VisualTreeAttachmentEventArgs) {
         Self::parent_on_attached_to_visual_tree(this, e);
@@ -263,13 +364,26 @@ impl VisualImpl for WebSceneView {
         if let Some(timer) = this.timer.borrow_mut().take() {
             timer.stop();
         }
+        this.detach_composition();
         if let Some(engine) = this.engine.borrow().as_ref() {
             let _ = engine.set_visible(false);
         }
         this.visible.set(false);
         Self::parent_on_detached_from_visual_tree(this, e);
     }
+    fn custom_hit_test(this: &Self, point: Point) -> Option<bool> {
+        // The composition child draws the document. Hit testing still routes to
+        // the owning control so its input handlers and pointer capture work.
+        let bounds = this.bounds();
+        Some(
+            this.engine.borrow().is_some()
+                && Rect::new(0.0, 0.0, bounds.width, bounds.height).contains(point),
+        )
+    }
     fn render(this: &Self, context: &mut DrawingContext) {
+        if this.composition.borrow().is_some() {
+            return;
+        }
         let slot = this.engine.borrow();
         let Some(engine) = slot.as_ref() else {
             return;
@@ -357,23 +471,7 @@ impl ICustomDrawOperation for Draw {
         false
     }
     fn render(&self, context: &mut ImmediateDrawingContext<'_>) {
-        if let Some(feature) = context
-            .try_get_feature(TypeId::of::<dyn ISkiaApiLeaseFeature>())
-            .and_then(|f| f.downcast_ref::<Rc<dyn ISkiaApiLeaseFeature>>().cloned())
-        {
-            let lease = feature.lease();
-            lease.with_sk_canvas(&mut |canvas| {
-                let save = canvas.save();
-                canvas.clip_rect(
-                    skia_safe::Rect::from_wh(self.bounds.width as f32, self.bounds.height as f32),
-                    skia_safe::ClipOp::Intersect,
-                    false,
-                );
-                self.frame.draw(canvas);
-                canvas.restore_to_count(save);
-            });
-            lease.dispose();
-        }
+        draw_frame(context, self.bounds, &self.frame, None);
     }
 }
 
@@ -432,42 +530,43 @@ mod tests {
         window.set_height(680.0);
         window.set_content(Some(Rc::new(view.clone().upcast::<Control>()) as BoxedValue));
         window.show();
+        assert!(view.composition.borrow().is_some());
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        loop {
-            window.capture_rendered_frame();
+        let png = loop {
+            let frame = window.capture_rendered_frame();
             view.tick();
             assert!(view.last_error().is_none(), "{:?}", view.last_error());
-            if view
-                .engine
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .scene()
-                .is_some_and(|s| s.is_ready())
-            {
-                break;
+            if let Some(frame) = frame {
+                let mut png = Vec::new();
+                frame
+                    .save(
+                        &mut png,
+                        &ferroui_base::media::imaging::BitmapEncoderOptions::Png(Default::default()),
+                    )
+                    .unwrap();
+                if png.len() > 5000 {
+                    break png;
+                }
             }
-            assert!(std::time::Instant::now() < deadline);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "compositor should paint the document into the window"
+            );
             std::thread::sleep(Duration::from_millis(16));
-        }
-        let frame = window
-            .capture_rendered_frame()
-            .expect("Skia frame from FerroUI custom draw operation");
-        let mut png = vec![];
-        frame
-            .save(
-                &mut png,
-                &ferroui_base::media::imaging::BitmapEncoderOptions::Png(Default::default()),
-            )
-            .unwrap();
-        assert!(
-            png.len() > 5000,
-            "control should paint text and chart into the window"
-        );
+        };
         if let Ok(path) = std::env::var("WEBSCENE_CONTROL_SCREENSHOT") {
             std::fs::write(path, &png).unwrap();
         }
-        view.execute_script("document.addEventListener('pointerdown',()=>console.log('CONTROL_POINTER_OK')); document.addEventListener('keydown',()=>console.log('CONTROL_KEY_OK')); document.addEventListener('input',e=>console.log('CONTROL_TEXT_OK',e.target.value));console.log('CONTROL_LISTENERS_READY');").unwrap();
+        view.execute_script(
+            "document.elementFromPoint(60, 60).style.cursor = 'crosshair';
+             document.addEventListener('pointerdown', () => console.log('CONTROL_POINTER_OK'));
+             document.addEventListener('keydown', () => console.log('CONTROL_KEY_OK'));
+             document.addEventListener('input', e => console.log('CONTROL_TEXT_OK', e.target.value));
+             document.addEventListener('wheel', e => console.log('CONTROL_WHEEL', e.deltaX, e.deltaY));
+             window.addEventListener('resize', () => console.log('CONTROL_RESIZE', innerWidth, innerHeight));
+             console.log('CONTROL_LISTENERS_READY');",
+        )
+        .unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !messages
             .borrow()
@@ -541,12 +640,44 @@ mod tests {
             drop(m);
             std::thread::sleep(Duration::from_millis(10));
         }
+
+        let point = Point::new(60.0, 60.0);
+        window.mouse_move(point, RawInputModifiers::empty());
+        window.mouse_wheel(point, Vector::new(0.5, -1.0), RawInputModifiers::empty());
+        window.set_width(800.0);
+        window.set_height(560.0);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            window.capture_rendered_frame();
+            view.tick();
+            let m = messages.borrow();
+            let cursor = window
+                .input_root()
+                .cursor_element()
+                .and_then(|element| element.cursor())
+                .map(|cursor| cursor.to_string());
+            let wheel = m.iter().any(|s| s.contains("CONTROL_WHEEL | -25 | 50"));
+            let resize = m.iter().any(|s| s.contains("CONTROL_RESIZE | 800 | 560"));
+            if cursor.as_deref() == Some("Cross") && wheel && resize {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "cursor={cursor:?}, bounds={:?}, error={:?}, diagnostics={m:?}",
+                view.bounds(),
+                view.last_error()
+            );
+            drop(m);
+            std::thread::sleep(Duration::from_millis(16));
+        }
         window.set_content(None);
         window.capture_rendered_frame();
         assert!(view.timer.borrow().is_none());
+        assert!(view.composition.borrow().is_none());
         window.set_content(Some(Rc::new(view.clone().upcast::<Control>())));
         window.capture_rendered_frame();
         assert!(view.timer.borrow().is_some());
+        assert!(view.composition.borrow().is_some());
         view.close();
         assert!(view.engine.borrow().is_none());
         assert!(view.timer.borrow().is_none());

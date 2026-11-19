@@ -1,7 +1,7 @@
 use ferroui_base::threading::{DispatcherPriority, DispatcherTimer};
 use ferroui_controls::{AppBuilder, Application, Control, Window};
 use ferroui_desktop::AppBuilderDesktopExtensions;
-use std::rc::Rc;
+use std::{path::PathBuf, rc::Rc};
 use webscene::{RuntimeOptions, WebSceneView};
 
 fn main() {
@@ -21,6 +21,7 @@ fn main() {
                 view.on_diagnostic(|message| eprintln!("WebScene diagnostic: {message}"));
                 view.on_host_request(|message| eprintln!("WebScene host request: {message}"));
                 let mut options = RuntimeOptions::new(&args[0]);
+                options.cache_directory = Some(cache_directory());
                 options.capture_console = true;
                 view.open(options).expect("open native runtime");
                 let default_url = url::Url::from_file_path(
@@ -55,4 +56,22 @@ fn main() {
             },
             &args,
         );
+}
+
+fn cache_directory() -> PathBuf {
+    if let Some(directory) = std::env::var_os("WEBSCENE_CACHE_DIR") {
+        return PathBuf::from(directory);
+    }
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Caches"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")));
+    base.unwrap_or_else(std::env::temp_dir)
+        .join("WebScene")
+        .join("FerroUI")
+        .join("showcase")
 }

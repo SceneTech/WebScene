@@ -2,13 +2,13 @@
 //! tables supplied by Skia. No dispatcher or thread-local FerroUI services are used.
 use harfbuzz_sys as hb;
 use skia_safe::{
-    Canvas, Color, Font, FontMgr, FontStyle, Paint, Point, TextBlob, TextBlobBuilder, Typeface,
+    Canvas, Font, FontMgr, FontStyle, Paint, Point, TextBlob, TextBlobBuilder, Typeface,
 };
-use std::ffi::c_void;
+use std::{cell::RefCell, collections::HashMap, ffi::c_void};
 
+#[derive(Clone)]
 pub(crate) struct ShapedText {
     blob: Option<TextBlob>,
-    paint: Paint,
     width: f32,
     ascent: f32,
     descent: f32,
@@ -23,11 +23,25 @@ impl ShapedText {
     pub fn height(&self) -> f32 {
         self.ascent + self.descent
     }
-    pub fn paint(&self, canvas: &Canvas, position: (f32, f32)) {
+    pub fn paint(&self, canvas: &Canvas, position: (f32, f32), paint: &Paint) {
         if let Some(blob) = &self.blob {
-            canvas.draw_text_blob(blob, (position.0, position.1 + self.ascent), &self.paint);
+            canvas.draw_text_blob(blob, (position.0, position.1 + self.ascent), paint);
         }
     }
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct TextKey {
+    text: String,
+    family: String,
+    size: u32,
+    weight: i32,
+    letter: u32,
+    word: u32,
+}
+
+thread_local! {
+    static SHAPED_TEXT: RefCell<HashMap<TextKey, ShapedText>> = RefCell::default();
 }
 
 pub(crate) fn paragraph(
@@ -37,20 +51,39 @@ pub(crate) fn paragraph(
     weight: i32,
     letter: f32,
     word: f32,
-    color: Color,
 ) -> ShapedText {
-    let mut paint = Paint::default();
-    paint.set_color(color).set_anti_alias(true);
-    paragraph_with_paint(text, family, size, weight, letter, word, &paint)
+    // Chart labels repeat across revisions. Limit both the number and size of cached runs.
+    if text.len().saturating_add(family.len()) > 512 {
+        return shape_paragraph(text, family, size, weight, letter, word);
+    }
+    let key = TextKey {
+        text: text.into(),
+        family: family.into(),
+        size: size.to_bits(),
+        weight,
+        letter: letter.to_bits(),
+        word: word.to_bits(),
+    };
+    SHAPED_TEXT.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(shaped) = cache.get(&key) {
+            return shaped.clone();
+        }
+        let shaped = shape_paragraph(text, family, size, weight, letter, word);
+        if cache.len() >= 1024 {
+            cache.clear();
+        }
+        cache.insert(key, shaped.clone());
+        shaped
+    })
 }
-pub(crate) fn paragraph_with_paint(
+fn shape_paragraph(
     text: &str,
     family: &str,
     size: f32,
     weight: i32,
     letter: f32,
     word: f32,
-    paint: &Paint,
 ) -> ShapedText {
     let manager = FontMgr::default();
     let style = FontStyle::new(
@@ -69,7 +102,6 @@ pub(crate) fn paragraph_with_paint(
     let Some(primary) = primary else {
         return ShapedText {
             blob: None,
-            paint: paint.clone(),
             width: 0.0,
             ascent: 0.0,
             descent: 0.0,
@@ -129,7 +161,6 @@ pub(crate) fn paragraph_with_paint(
     }
     ShapedText {
         blob: builder.make(),
-        paint: paint.clone(),
         width: x,
         ascent,
         descent,
@@ -309,8 +340,8 @@ mod tests {
     #[test]
     fn shaping_shares_metrics_with_painted_glyphs_and_handles_fallback() {
         let text = "AV e\u{301} שלום 🙂";
-        let normal = paragraph(text, "sans-serif", 24.0, 400, 0.0, 0.0, Color::BLACK);
-        let spaced = paragraph(text, "sans-serif", 24.0, 400, 2.0, 3.0, Color::BLACK);
+        let normal = paragraph(text, "sans-serif", 24.0, 400, 0.0, 0.0);
+        let spaced = paragraph(text, "sans-serif", 24.0, 400, 2.0, 3.0);
         assert!(normal.max_intrinsic_width() > 80.0);
         assert!(spaced.max_intrinsic_width() > normal.max_intrinsic_width());
         assert!(normal.height() > 20.0);

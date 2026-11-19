@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+mod composition;
 mod engine;
 mod input;
 mod render;
@@ -19,6 +20,9 @@ mod ffi {
 }
 
 pub use engine::{Engine, Error, RuntimeOptions};
-pub use resources::{FileHttpLoader, ResourceLoader, ResourceRequest, ResourceResponse};
+pub use resources::{
+    CacheValidators, CachedResource, FileHttpLoader, ResourceLoader, ResourceRequest,
+    ResourceResponse,
+};
 pub use scene::Scene;
 pub use view::WebSceneView;

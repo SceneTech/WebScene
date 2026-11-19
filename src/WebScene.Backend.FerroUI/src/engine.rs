@@ -2,15 +2,17 @@ use crate::{
     ffi,
     render::{Frame, Renderer},
     resources::Resources,
-    FileHttpLoader, ResourceLoader, ResourceRequest, Scene,
+    CacheValidators, FileHttpLoader, ResourceLoader, ResourceRequest, Scene,
 };
+use ferroui_base::rendering::IRenderLoop;
 use std::{
     cell::Cell,
     ffi::{c_char, c_void},
+    ops::Deref,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, OnceLock, Weak,
     },
     time::Instant,
 };
@@ -37,25 +39,180 @@ impl RuntimeOptions {
         Self {
             library_path: library_path.into(),
             cache_directory: None,
-            resource_loader: Arc::new(FileHttpLoader),
+            resource_loader: Arc::new(FileHttpLoader::pooled()),
             capture_console: false,
         }
     }
 }
 struct Callbacks {
     resources: Resources,
+    publication: Arc<ScenePublication>,
+}
+
+struct ScenePublication {
     changed: AtomicBool,
+    resize: Mutex<ResizePublication>,
+}
+
+#[derive(Default)]
+struct ResizePublication {
+    published_sequence: u64,
+    pending_sequence: Option<u64>,
+    render_loop: Option<Weak<dyn IRenderLoop>>,
+}
+
+impl ScenePublication {
+    fn notify_resize(&self, update: impl FnOnce(&mut ResizePublication)) {
+        let render_loop = {
+            let mut resize = self.resize.lock().unwrap();
+            update(&mut resize);
+            if !resize
+                .pending_sequence
+                .is_some_and(|pending| pending <= resize.published_sequence)
+            {
+                return;
+            }
+            resize.pending_sequence = None;
+            resize.render_loop.as_ref().and_then(Weak::upgrade)
+        };
+        if let Some(render_loop) = render_loop {
+            // The matching scene may arrive in the OS's nested resize loop.
+            // Wake FerroUI directly, without posting through the UI queue.
+            render_loop.wakeup();
+            render_loop.request_frame_out_of_turn();
+        }
+    }
+}
+
+type ObserveCompositorFrame = unsafe extern "C" fn(*mut ffi::webscene_engine, f64);
+
+struct RuntimeApi {
+    bindings: ffi::NativeApi,
+    observe_compositor_frame: Option<ObserveCompositorFrame>,
+}
+impl Deref for RuntimeApi {
+    type Target = ffi::NativeApi;
+
+    fn deref(&self) -> &Self::Target {
+        &self.bindings
+    }
+}
+
+/// The native endpoint lives in this mailbox until the UI owner revokes it.
+/// Ordinary publications set an atomic edge for the compositor's render clock.
+/// A completed resize can also wake an out-of-turn paint.
+pub(crate) struct SceneMailbox {
+    endpoint: Mutex<Option<SceneEndpoint>>,
+    publication: Arc<ScenePublication>,
+    error: Mutex<Option<Error>>,
+    resize_frame_deadline_us: AtomicU64,
+}
+
+struct SceneEndpoint {
+    api: Arc<RuntimeApi>,
+    handle: *mut ffi::webscene_engine,
+    clock: Instant,
+    consumer: u64,
+}
+
+// SAFETY: acquisition, acknowledgement and frame enqueue are native
+// compositor-thread APIs. The mailbox gate excludes close from these calls.
+unsafe impl Send for SceneEndpoint {}
+
+impl SceneMailbox {
+    pub fn attach(&self, render_loop: &Arc<dyn IRenderLoop>) -> Option<u64> {
+        let mut guard = self.endpoint.lock().unwrap();
+        let endpoint = guard.as_mut()?;
+        endpoint.consumer += 1;
+        self.publication.resize.lock().unwrap().render_loop = Some(Arc::downgrade(render_loop));
+        unsafe {
+            endpoint
+                .api
+                .webscene_engine_request_scene_checkpoint(endpoint.handle)
+        };
+        Some(endpoint.consumer)
+    }
+
+    pub fn detach(&self) {
+        let mut resize = self.publication.resize.lock().unwrap();
+        resize.render_loop = None;
+        resize.pending_sequence = None;
+    }
+
+    pub fn update(
+        &self,
+        consumer: u64,
+        renderer: &mut Renderer,
+        drive_animation: bool,
+    ) -> Result<Option<bool>, Error> {
+        let guard = self.endpoint.lock().unwrap();
+        let Some(endpoint) = guard
+            .as_ref()
+            .filter(|endpoint| endpoint.consumer == consumer)
+        else {
+            return Ok(None);
+        };
+        if drive_animation {
+            let elapsed = endpoint.clock.elapsed();
+            let timestamp = elapsed.as_secs_f64() * 1000.0;
+            // SAFETY: the mailbox gate keeps the native endpoint alive.
+            unsafe {
+                if let Some(observe) = endpoint.api.observe_compositor_frame {
+                    observe(endpoint.handle, timestamp);
+                }
+                if elapsed.as_micros()
+                    >= self.resize_frame_deadline_us.load(Ordering::Acquire) as u128
+                    && endpoint
+                        .api
+                        .webscene_engine_requires_animation_frame(endpoint.handle)
+                        != 0
+                {
+                    // Animation frames carry a timestamp only. The UI keeps its
+                    // own sequence for input and resize pairs.
+                    let frame = ffi::webscene_input_event {
+                        kind: 5,
+                        x: timestamp,
+                        ..Default::default()
+                    };
+                    // If the native queue is full, the next display opportunity
+                    // can supply a timestamp without shutting down presentation.
+                    endpoint
+                        .api
+                        .webscene_engine_enqueue(endpoint.handle, &frame);
+                }
+            }
+        }
+        let previous = renderer.frame.clone();
+        consume_scenes(
+            &endpoint.api,
+            endpoint.handle,
+            &self.publication.changed,
+            renderer,
+            None,
+            2,
+        )?;
+        Ok(Some(!Arc::ptr_eq(&previous, &renderer.frame)))
+    }
+
+    pub fn report(&self, error: Error) {
+        *self.error.lock().unwrap() = Some(error);
+    }
+
+    pub fn take_error(&self) -> Option<Error> {
+        self.error.lock().unwrap().take()
+    }
 }
 
 /// Owns the worker and all callback state. Use on one host thread; native callbacks never
 /// reference FerroUI objects. Dropping the engine joins its worker before freeing callbacks.
 pub struct Engine {
-    api: Arc<ffi::NativeApi>,
+    api: Arc<RuntimeApi>,
     handle: *mut ffi::webscene_engine,
     callbacks: Box<Callbacks>,
     renderer: Renderer,
     sequence: u64,
     clock: Instant,
+    mailbox: Arc<SceneMailbox>,
     scene: Option<Scene>,
     options: RuntimeOptions,
     loaded: bool,
@@ -84,7 +241,10 @@ impl Engine {
         }
         let mut callbacks = Box::new(Callbacks {
             resources: Resources::new(options.resource_loader.clone()),
-            changed: AtomicBool::new(true),
+            publication: Arc::new(ScenePublication {
+                changed: AtomicBool::new(true),
+                resize: Mutex::new(ResizePublication::default()),
+            }),
         });
         let user = (&mut *callbacks as *mut Callbacks).cast();
         let native = ffi::webscene_engine_options {
@@ -117,13 +277,26 @@ impl Engine {
                 user,
             );
         }
+        let clock = Instant::now();
+        let mailbox = Arc::new(SceneMailbox {
+            publication: callbacks.publication.clone(),
+            endpoint: Mutex::new(Some(SceneEndpoint {
+                api: api.clone(),
+                handle,
+                clock,
+                consumer: 0,
+            })),
+            error: Mutex::new(None),
+            resize_frame_deadline_us: AtomicU64::new(0),
+        });
         Ok(Self {
             api,
             handle,
             callbacks,
             renderer: Renderer::default(),
             sequence: 0,
-            clock: Instant::now(),
+            clock,
+            mailbox,
             scene: None,
             options,
             loaded: false,
@@ -156,7 +329,10 @@ impl Engine {
         self.loaded = true;
         self.renderer = Renderer::default();
         self.scene = None;
-        self.callbacks.changed.store(true, Ordering::Release);
+        self.callbacks
+            .publication
+            .changed
+            .store(true, Ordering::Release);
         Ok(())
     }
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
@@ -200,10 +376,21 @@ impl Engine {
             0.0,
             0.0,
         );
+        // Each live resize already includes a frame. Give the paired input a
+        // short window to publish before resuming standalone animation frames.
+        self.mailbox.resize_frame_deadline_us.store(
+            (self.clock.elapsed().as_micros() as u64).saturating_add(50_000),
+            Ordering::Release,
+        );
         self.check(unsafe {
             self.api
                 .webscene_engine_enqueue_resize_frame(self.handle, &resize, &frame)
         })?;
+        // Recheck the last publication after enqueue. A fast worker can finish
+        // the resize before enqueue returns and its sequence becomes visible here.
+        self.callbacks.publication.notify_resize(|publication| {
+            publication.pending_sequence = Some(resize.sequence);
+        });
         self.viewport = Some((width, height, scale));
         Ok(())
     }
@@ -290,41 +477,14 @@ impl Engine {
         if !failure.is_empty() {
             return Err(Error(failure));
         }
-        if !self.callbacks.changed.swap(false, Ordering::AcqRel) {
-            return Ok(false);
-        }
-        let mut changed = false;
-        // Bound work per host tick; keep the edge set when more work may be queued.
-        for i in 0..16 {
-            let ptr = unsafe { self.api.webscene_engine_acquire_next_scene(self.handle) };
-            if ptr.is_null() {
-                break;
-            }
-            struct Lease<'a>(&'a ffi::NativeApi, *const ffi::webscene_scene_view);
-            impl Drop for Lease<'_> {
-                fn drop(&mut self) {
-                    unsafe { self.0.webscene_scene_release(self.1) }
-                }
-            }
-            let lease = Lease(&self.api, ptr);
-            let scene = unsafe { Scene::copy(&*ptr) }?;
-            if !self.renderer.accepts(&scene) {
-                unsafe {
-                    self.api
-                        .webscene_engine_request_scene_checkpoint(self.handle);
-                }
-                break;
-            }
-            self.renderer.apply(&scene)?;
-            self.check(unsafe { self.api.webscene_scene_acknowledge(ptr) })?;
-            self.scene = Some(scene);
-            changed = true;
-            drop(lease);
-            if i == 15 {
-                self.callbacks.changed.store(true, Ordering::Release);
-            }
-        }
-        Ok(changed)
+        consume_scenes(
+            &self.api,
+            self.handle,
+            &self.callbacks.publication.changed,
+            &mut self.renderer,
+            Some(&mut self.scene),
+            16,
+        )
     }
     pub fn scene(&self) -> Option<&Scene> {
         self.scene.as_ref()
@@ -334,6 +494,9 @@ impl Engine {
     }
     pub(crate) fn frame(&self) -> Arc<Frame> {
         self.renderer.frame.clone()
+    }
+    pub(crate) fn mailbox(&self) -> Arc<SceneMailbox> {
+        self.mailbox.clone()
     }
     pub fn cursor(&self) -> u32 {
         unsafe { self.api.webscene_engine_get_cursor(self.handle) }
@@ -370,34 +533,94 @@ impl Engine {
         self.copy(|h, p, n| unsafe { (self.api.webscene_engine_copy_runtime_failure)(h, p, n) })
     }
     fn copy(&self, f: impl Fn(*mut ffi::webscene_engine, *mut c_char, usize) -> usize) -> String {
-        let length = f(self.handle, std::ptr::null_mut(), 0);
-        if length == 0 {
-            return String::new();
-        }
-        let mut bytes = vec![0u8; length];
-        let written = f(self.handle, bytes.as_mut_ptr().cast(), length);
-        bytes.truncate(written.min(length));
-        if bytes.last() == Some(&0) {
-            bytes.pop();
-        }
-        String::from_utf8_lossy(&bytes).into_owned()
+        copy_native(self.handle, f)
     }
     fn check(&self, result: u8) -> Result<(), Error> {
-        if result != 0 {
-            Ok(())
-        } else {
-            let message =
-                self.copy(|h, p, n| unsafe { (self.api.webscene_engine_copy_last_error)(h, p, n) });
-            Err(Error(if message.is_empty() {
-                "Native operation failed".into()
-            } else {
-                message
-            }))
-        }
+        check_native(&self.api, self.handle, result)
     }
 }
+
+fn consume_scenes(
+    api: &ffi::NativeApi,
+    handle: *mut ffi::webscene_engine,
+    available: &AtomicBool,
+    renderer: &mut Renderer,
+    mut last_scene: Option<&mut Option<Scene>>,
+    limit: usize,
+) -> Result<bool, Error> {
+    if !available.swap(false, Ordering::AcqRel) {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for i in 0..limit {
+        let ptr = unsafe { api.webscene_engine_acquire_next_scene(handle) };
+        if ptr.is_null() {
+            break;
+        }
+        struct Lease<'a>(&'a ffi::NativeApi, *const ffi::webscene_scene_view);
+        impl Drop for Lease<'_> {
+            fn drop(&mut self) {
+                unsafe { self.0.webscene_scene_release(self.1) }
+            }
+        }
+        let _lease = Lease(api, ptr);
+        let scene = unsafe { Scene::copy(&*ptr) }?;
+        if !renderer.accepts(&scene) {
+            unsafe { api.webscene_engine_request_scene_checkpoint(handle) };
+            break;
+        }
+        renderer.apply(&scene)?;
+        check_native(api, handle, unsafe { api.webscene_scene_acknowledge(ptr) })?;
+        if let Some(slot) = last_scene.as_deref_mut() {
+            *slot = Some(scene);
+        }
+        changed = true;
+        if i + 1 == limit {
+            // A publication may race the last acknowledgement.
+            available.store(true, Ordering::Release);
+        }
+    }
+    Ok(changed)
+}
+
+fn check_native(
+    api: &ffi::NativeApi,
+    handle: *mut ffi::webscene_engine,
+    result: u8,
+) -> Result<(), Error> {
+    if result != 0 {
+        return Ok(());
+    }
+    let message = copy_native(handle, |h, p, n| unsafe {
+        api.webscene_engine_copy_last_error(h, p, n)
+    });
+    Err(Error(if message.is_empty() {
+        "Native operation failed".into()
+    } else {
+        message
+    }))
+}
+
+fn copy_native(
+    handle: *mut ffi::webscene_engine,
+    f: impl Fn(*mut ffi::webscene_engine, *mut c_char, usize) -> usize,
+) -> String {
+    let length = f(handle, std::ptr::null_mut(), 0);
+    if length == 0 {
+        return String::new();
+    }
+    let mut bytes = vec![0u8; length];
+    let written = f(handle, bytes.as_mut_ptr().cast(), length);
+    bytes.truncate(written.min(length));
+    if bytes.last() == Some(&0) {
+        bytes.pop();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
+        self.mailbox.endpoint.lock().unwrap().take();
         unsafe {
             self.api.webscene_engine_destroy(self.handle);
         }
@@ -412,11 +635,16 @@ unsafe fn utf8<'a>(ptr: *const c_char, len: usize) -> &'a str {
 }
 unsafe extern "C" fn wake(user: *mut c_void) {
     if let Some(state) = (user as *const Callbacks).as_ref() {
-        state.changed.store(true, Ordering::Release);
+        state.publication.changed.store(true, Ordering::Release);
     }
 }
-unsafe extern "C" fn published(user: *mut c_void, _: u64, _: u64, _: f32, _: f32) {
-    wake(user);
+unsafe extern "C" fn published(user: *mut c_void, _: u64, sequence: u64, _: f32, _: f32) {
+    if let Some(state) = (user as *const Callbacks).as_ref() {
+        state.publication.changed.store(true, Ordering::Release);
+        state.publication.notify_resize(|publication| {
+            publication.published_sequence = publication.published_sequence.max(sequence);
+        });
+    }
 }
 unsafe extern "C" fn load(
     user: *mut c_void,
@@ -447,9 +675,9 @@ unsafe extern "C" fn load_v3(
     kind: u32,
     url: *const c_char,
     len: usize,
-    _: *const c_char,
-    _: usize,
-    _: i64,
+    tag: *const c_char,
+    tag_len: usize,
+    modified: i64,
     context: *const ffi::webscene_resource_request_context_v3,
     destination: *mut c_char,
     capacity: usize,
@@ -481,7 +709,13 @@ unsafe extern "C" fn load_v3(
                     utf8(context.content_type, context.content_type_length).into();
             }
         }
-        state.resources.copy(request, destination, capacity)
+        let validators = CacheValidators {
+            entity_tag: utf8(tag, tag_len).into(),
+            last_modified_unix_seconds: modified,
+        };
+        state
+            .resources
+            .copy(request, validators, destination, capacity)
     }))
     .unwrap_or(0)
 }
@@ -511,7 +745,6 @@ unsafe extern "C" fn measure(
             weight,
             letter,
             word,
-            skia_safe::Color::BLACK,
         );
         metrics.advance_width = p.max_intrinsic_width();
         metrics.ascent = p.alphabetic_baseline();
@@ -528,8 +761,8 @@ unsafe extern "C" fn measure(
 
 // V8 has process-wide state and background workers. Keep its module loaded until process
 // exit, even after the last view closes. Mixing two V8 runtime builds in one process is unsafe.
-fn runtime_api(path: &Path) -> Result<Arc<ffi::NativeApi>, Error> {
-    type LoadedRuntime = Option<(PathBuf, Arc<ffi::NativeApi>)>;
+fn runtime_api(path: &Path) -> Result<Arc<RuntimeApi>, Error> {
+    type LoadedRuntime = Option<(PathBuf, Arc<RuntimeApi>)>;
     static API: OnceLock<Mutex<LoadedRuntime>> = OnceLock::new();
     let path = path.canonicalize().map_err(|e| Error(e.to_string()))?;
     let mut slot = API
@@ -544,10 +777,55 @@ fn runtime_api(path: &Path) -> Result<Arc<ffi::NativeApi>, Error> {
         }
         return Ok(api.clone());
     }
-    let api = Arc::new(unsafe { ffi::NativeApi::new(&path) }.map_err(|e| Error(e.to_string()))?);
+    let library = unsafe { libloading::Library::new(&path) }.map_err(|e| Error(e.to_string()))?;
+    // This export arrived after 1.0.37. Older engines can still accept the
+    // corresponding animation frame input.
+    let observe_compositor_frame = unsafe {
+        library
+            .get::<ObserveCompositorFrame>(b"webscene_engine_observe_compositor_frame\0")
+            .ok()
+            .map(|symbol| *symbol)
+    };
+    let bindings =
+        unsafe { ffi::NativeApi::from_library(library) }.map_err(|e| Error(e.to_string()))?;
+    let api = Arc::new(RuntimeApi {
+        bindings,
+        observe_compositor_frame,
+    });
     if unsafe { api.webscene_engine_get_abi_version() } != 3 {
         return Err(Error("WebScene ABI 3 is required".into()));
     }
     *slot = Some((path, api.clone()));
     Ok(api)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferroui_base::rendering::testing::ManualRenderLoop;
+
+    #[test]
+    fn wakes_once_for_each_completed_resize_in_either_order() {
+        let render_loop = ManualRenderLoop::new();
+        let render_loop_ref: Arc<dyn IRenderLoop> = render_loop.clone();
+        let publication = ScenePublication {
+            changed: AtomicBool::new(false),
+            resize: Mutex::new(ResizePublication {
+                render_loop: Some(Arc::downgrade(&render_loop_ref)),
+                ..ResizePublication::default()
+            }),
+        };
+
+        publication.notify_resize(|state| state.pending_sequence = Some(4));
+        publication.notify_resize(|state| state.published_sequence = 3);
+        assert_eq!(render_loop.frames_requested_out_of_turn(), 0);
+        publication.notify_resize(|state| state.published_sequence = 4);
+        publication.notify_resize(|state| state.published_sequence = 5);
+        assert_eq!(render_loop.frames_requested_out_of_turn(), 1);
+
+        publication.notify_resize(|state| state.published_sequence = 8);
+        assert_eq!(render_loop.frames_requested_out_of_turn(), 1);
+        publication.notify_resize(|state| state.pending_sequence = Some(8));
+        assert_eq!(render_loop.frames_requested_out_of_turn(), 2);
+    }
 }

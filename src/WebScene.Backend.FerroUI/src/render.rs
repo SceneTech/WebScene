@@ -3,10 +3,13 @@ use crate::{
     Error, Scene,
 };
 use skia_safe::{
-    BlendMode, Canvas, ClipOp, Color, Matrix, Paint, Path, PathBuilder, PathFillType, Picture,
-    PictureRecorder, Point, RRect, Rect, M44,
+    BlendMode, Canvas, ClipOp, Color, Image, Matrix, Paint, Path, PathBuilder, PathFillType,
+    Picture, PictureRecorder, Point, RRect, Rect, M44,
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, OnceLock},
+};
 
 #[derive(Default)]
 pub(crate) struct Frame {
@@ -56,7 +59,9 @@ struct RetainedLayer {
 pub(crate) struct Renderer {
     revision: u64,
     layers: BTreeMap<u32, RetainedLayer>,
+    svg: SvgCache,
     pub frame: Arc<Frame>,
+    pub viewport: (f32, f32),
 }
 impl Renderer {
     pub fn accepts(&self, scene: &Scene) -> bool {
@@ -76,7 +81,10 @@ impl Renderer {
             self.layers.clone()
         };
         let (background, foreground) = if scene.header.flags & 2 != 0 {
-            (Some(dom(scene, false)?), Some(dom(scene, true)?))
+            (
+                Some(dom(scene, false, &mut self.svg)?),
+                Some(dom(scene, true, &mut self.svg)?),
+            )
         } else if checkpoint {
             (None, None)
         } else {
@@ -93,7 +101,7 @@ impl Renderer {
         // source layers first. Cycles and self-copies see the previous retained version.
         let mut states = vec![0u8; scene.layers.len()];
         for i in 0..scene.layers.len() {
-            compile_layer(i, scene, &mut layers, &mut states)?;
+            compile_layer(i, scene, &mut layers, &mut states, &mut self.svg)?;
         }
         let mut ordered: Vec<_> = layers.values().cloned().collect();
         ordered.sort_by_key(|l| (l.meta.reserved as i32, l.meta.node_id));
@@ -104,6 +112,7 @@ impl Renderer {
         });
         self.layers = layers;
         self.revision = scene.header.revision;
+        self.viewport = (scene.header.viewport_width, scene.header.viewport_height);
         Ok(())
     }
 }
@@ -123,7 +132,7 @@ fn unsupported(what: &str, kind: u32) -> Error {
         "FerroUI presenter does not support {what} command {kind}"
     ))
 }
-fn dom(scene: &Scene, foreground: bool) -> Result<Picture, Error> {
+fn dom(scene: &Scene, foreground: bool, svg: &mut SvgCache) -> Result<Picture, Error> {
     let mut recorder = PictureRecorder::new();
     let canvas = recorder.begin_recording(
         Rect::from_wh(
@@ -176,7 +185,7 @@ fn dom(scene: &Scene, foreground: bool) -> Result<Picture, Error> {
                     } else {
                         (c.flags & 0xffff) as f32 / 100.0
                     });
-                canvas.draw_rrect(rounded, &p);
+                draw_rounded_border(canvas, &rounded, c.flags, &p);
             }
             17 | 18 if (c.kind == 18) == foreground => {
                 if c.stroke_width > 0.0 {
@@ -202,7 +211,6 @@ fn dom(scene: &Scene, foreground: bool) -> Result<Picture, Error> {
                     parts[2].parse().unwrap_or(400),
                     c.radius_top_left,
                     c.radius_top_right,
-                    rgba(c.rgba),
                 );
                 let width = para.max_intrinsic_width();
                 let x = c.x
@@ -214,6 +222,7 @@ fn dom(scene: &Scene, foreground: bool) -> Result<Picture, Error> {
                 para.paint(
                     canvas,
                     (x, c.y + ((c.height - para.height()) * 0.5).max(0.0)),
+                    &p,
                 );
             }
             4 | 5 if foreground => {
@@ -247,7 +256,7 @@ fn dom(scene: &Scene, foreground: bool) -> Result<Picture, Error> {
                 }
             }
             6 if foreground => {
-                svg(canvas, scene.string(c.flags), rect(c), c.stroke_width)?;
+                svg.draw(canvas, scene.string(c.flags), rect(c), c.stroke_width)?;
             }
             21 | 22 if (c.kind == 22) == foreground => {
                 let resource = scene.string(c.flags);
@@ -284,24 +293,78 @@ fn numbers(s: &str) -> Vec<f32> {
 fn matrix(v: &[f32]) -> Matrix {
     Matrix::new_all(v[0], v[2], v[4], v[1], v[3], v[5], 0.0, 0.0, 1.0)
 }
-fn svg(canvas: &Canvas, resource: &str, destination: Rect, rotation: f32) -> Result<(), Error> {
-    let Some(start) = resource.find('<') else {
-        return Ok(());
-    };
-    if destination.width() <= 0.0 || destination.height() <= 0.0 {
-        return Ok(());
+#[derive(Default)]
+struct SvgCache {
+    images: HashMap<String, HashMap<(u32, u32), Image>>,
+    bytes: usize,
+}
+
+impl SvgCache {
+    fn draw(
+        &mut self,
+        canvas: &Canvas,
+        resource: &str,
+        destination: Rect,
+        rotation: f32,
+    ) -> Result<(), Error> {
+        let Some(start) = resource.find('<') else {
+            return Ok(());
+        };
+        if destination.width() <= 0.0 || destination.height() <= 0.0 {
+            return Ok(());
+        }
+        let markup = &resource[start..];
+        let width = (destination.width() * 2.0).ceil() as u32;
+        let height = (destination.height() * 2.0).ceil() as u32;
+        if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 16 * 1024 * 1024 {
+            return Err(Error("SVG raster exceeds 16 megapixels".into()));
+        }
+        let size = (width, height);
+        let image = match self.images.get(markup).and_then(|sizes| sizes.get(&size)) {
+            Some(image) => image.clone(),
+            None => {
+                let image = rasterize_svg(markup, width, height)?;
+                const CACHE_BYTES: usize = 32 * 1024 * 1024;
+                let bytes = (width as usize * height as usize * 4).saturating_add(markup.len());
+                if bytes <= CACHE_BYTES {
+                    if self.bytes + bytes > CACHE_BYTES {
+                        self.images.clear();
+                        self.bytes = 0;
+                    }
+                    self.images
+                        .entry(markup.to_owned())
+                        .or_default()
+                        .insert(size, image.clone());
+                    self.bytes += bytes;
+                }
+                image
+            }
+        };
+        let save = canvas.save();
+        canvas.rotate(rotation, Some(destination.center()));
+        canvas.draw_image_rect(&image, None, destination, &Paint::default());
+        canvas.restore_to_count(save);
+        Ok(())
     }
+}
+
+fn rasterize_svg(markup: &str, width: u32, height: u32) -> Result<Image, Error> {
     // rust-skia's SVG feature pulls in a second HarfBuzz, which conflicts with FerroUI.
     // Rasterize SVG with resvg instead, then retain the image in the Skia picture.
-    let mut options = resvg::usvg::Options::default();
-    options.fontdb_mut().load_system_fonts();
-    let tree = resvg::usvg::Tree::from_str(&resource[start..], &options)
+    // SVG commands occur in every document update. Share the system font scan
+    // across them so compiling a scene does not block the UI on repeated disk I/O.
+    static SYSTEM_FONTS: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
+    let fontdb = SYSTEM_FONTS.get_or_init(|| {
+        let mut fonts = resvg::usvg::fontdb::Database::new();
+        fonts.load_system_fonts();
+        Arc::new(fonts)
+    });
+    let options = resvg::usvg::Options {
+        fontdb: Arc::clone(fontdb),
+        ..Default::default()
+    };
+    let tree = resvg::usvg::Tree::from_str(markup, &options)
         .map_err(|e| Error(format!("Invalid SVG: {e}")))?;
-    let width = (destination.width() * 2.0).ceil() as u32;
-    let height = (destination.height() * 2.0).ceil() as u32;
-    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 16 * 1024 * 1024 {
-        return Err(Error("SVG raster exceeds 16 megapixels".into()));
-    }
     let mut pixels = resvg::tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| Error("Could not allocate SVG raster".into()))?;
     let size = tree.size();
@@ -321,17 +384,12 @@ fn svg(canvas: &Canvas, resource: &str, destination: Rect, rotation: f32) -> Res
         skia_safe::AlphaType::Premul,
         None,
     );
-    let image = skia_safe::images::raster_from_data(
+    skia_safe::images::raster_from_data(
         &info,
         skia_safe::Data::new_copy(pixels.data()),
         width as usize * 4,
     )
-    .ok_or_else(|| Error("Could not create SVG image".into()))?;
-    let save = canvas.save();
-    canvas.rotate(rotation, Some(destination.center()));
-    canvas.draw_image_rect(&image, None, destination, &Paint::default());
-    canvas.restore_to_count(save);
-    Ok(())
+    .ok_or_else(|| Error("Could not create SVG image".into()))
 }
 fn color(s: &str) -> Color {
     s.parse::<csscolorparser::Color>()
@@ -493,6 +551,7 @@ fn canvas_layer(
     scene: &Scene,
     l: &Layer,
     layers: &BTreeMap<u32, RetainedLayer>,
+    svg: &mut SvgCache,
 ) -> Result<Picture, Error> {
     let mut recorder = PictureRecorder::new();
     let canvas = recorder.begin_recording(
@@ -596,8 +655,7 @@ fn canvas_layer(
             25 | 26 => {
                 let (size, family) = font(&state.font);
                 let p = state.paint(c.kind == 25);
-                let para =
-                    crate::text::paragraph_with_paint(resource, &family, size, 400, 0.0, 0.0, &p);
+                let para = crate::text::paragraph(resource, &family, size, 400, 0.0, 0.0);
                 let width = para.max_intrinsic_width();
                 let x = v[0]
                     + match state.align.as_str() {
@@ -618,7 +676,7 @@ fn canvas_layer(
                     canvas.scale((v[2] / width, 1.0));
                     canvas.translate((-v[0], 0.0));
                 }
-                para.paint(canvas, (x, y));
+                para.paint(canvas, (x, y), &p);
                 canvas.restore_to_count(save);
             }
             27 => {
@@ -659,7 +717,7 @@ fn canvas_layer(
                     canvas.translate((-v[0], -v[1]));
                     let vb = numbers(resource.split('\t').next().unwrap_or(""));
                     if vb.len() >= 4 {
-                        svg(canvas, resource, Rect::from_wh(vb[2], vb[3]), 0.0)?;
+                        svg.draw(canvas, resource, Rect::from_wh(vb[2], vb[3]), 0.0)?;
                     }
                     canvas.restore_to_count(save);
                 }
@@ -783,6 +841,41 @@ fn blend(s: &str) -> Result<BlendMode, Error> {
     })
 }
 
+const ROUNDED_BORDER_COLOR_PARTITION: u32 = 1 << 27;
+const ROUNDED_BORDER_SIDE_SHIFT: u32 = 28;
+
+fn draw_rounded_border(canvas: &Canvas, rounded: &RRect, flags: u32, paint: &Paint) {
+    let sides = flags >> ROUNDED_BORDER_SIDE_SHIFT;
+    if sides == 0 || flags & ROUNDED_BORDER_COLOR_PARTITION == 0 {
+        canvas.draw_rrect(rounded, paint);
+        return;
+    }
+
+    // The native scene emits one rounded stroke per color. Clip each stroke
+    // to its assigned sides, as in the Avalonia presenter.
+    let half_stroke = paint.stroke_width() * 0.5;
+    let outer = rounded.rect().with_outset((half_stroke, half_stroke));
+    let corners = [
+        (outer.left, outer.top),
+        (outer.right, outer.top),
+        (outer.right, outer.bottom),
+        (outer.left, outer.bottom),
+    ];
+    let mut wedges = PathBuilder::new();
+    for (index, &corner) in corners.iter().enumerate() {
+        if sides & (1 << index) != 0 {
+            wedges.move_to(corner);
+            wedges.line_to(corners[(index + 1) % corners.len()]);
+            wedges.line_to(outer.center());
+            wedges.close();
+        }
+    }
+    let save = canvas.save();
+    canvas.clip_path(&wedges.snapshot(), ClipOp::Intersect, true);
+    canvas.draw_rrect(rounded, paint);
+    canvas.restore_to_count(save);
+}
+
 fn rounded_at(scene: &Scene, index: usize) -> RRect {
     let c = &scene.commands[index];
     let mut x = [
@@ -862,6 +955,7 @@ fn compile_layer(
     scene: &Scene,
     layers: &mut BTreeMap<u32, RetainedLayer>,
     states: &mut [u8],
+    svg: &mut SvgCache,
 ) -> Result<(), Error> {
     let l = &scene.layers[index];
     if states[index] != 0 || l.flags & 2 != 0 {
@@ -876,11 +970,11 @@ fn compile_layer(
                 .iter()
                 .position(|other| other.node_id == c.resource_id)
             {
-                compile_layer(source, scene, layers, states)?;
+                compile_layer(source, scene, layers, states, svg)?;
             }
         }
     }
-    let picture = canvas_layer(scene, l, layers)?;
+    let picture = canvas_layer(scene, l, layers, svg)?;
     layers.insert(l.node_id, RetainedLayer { meta: *l, picture });
     states[index] = 2;
     Ok(())
@@ -931,6 +1025,34 @@ mod tests {
         s.canvas().clear(Color::TRANSPARENT);
         renderer.frame.draw(s.canvas());
         s.peek_pixels().unwrap().get_color((x, y))
+    }
+    #[test]
+    fn rounded_border_colors_paint_only_their_assigned_sides() {
+        let mut s = scene(1, 0, 3);
+        for (sides, color) in [(0b1001, 0x2962ffff), (0b0110, 0xf0f3faff)] {
+            s.commands.push(Command {
+                kind: 8,
+                flags: ROUNDED_BORDER_COLOR_PARTITION | (sides << ROUNDED_BORDER_SIDE_SHIFT),
+                x: 10.0,
+                y: 10.0,
+                width: 20.0,
+                height: 20.0,
+                rgba: color,
+                radius_top_left: 10.0,
+                radius_top_right: 10.0,
+                radius_bottom_right: 10.0,
+                radius_bottom_left: 10.0,
+                stroke_width: 4.0,
+                ..Default::default()
+            });
+        }
+        let mut renderer = Renderer::default();
+        renderer.apply(&s).unwrap();
+        assert_eq!(pixel(&renderer, 20, 10), rgba(0x2962ffff));
+        assert_eq!(pixel(&renderer, 10, 20), rgba(0x2962ffff));
+        assert_eq!(pixel(&renderer, 30, 20), rgba(0xf0f3faff));
+        assert_eq!(pixel(&renderer, 20, 30), rgba(0xf0f3faff));
+        assert_eq!(pixel(&renderer, 20, 20), Color::TRANSPARENT);
     }
     #[test]
     fn clear_rect_is_isolated_from_dom_and_layer_removals_preserve_background() {

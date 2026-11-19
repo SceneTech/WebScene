@@ -23,6 +23,7 @@ resvg = "0.45.1"
 libloading = "0.8"
 url = "2"
 ureq = "3"
+httpdate = "1"
 csscolorparser = "0.7"
 base64 = "0.22"
 harfbuzz-sys = { version = "0.8", default-features = false, features = ["bundled"] }

@@ -1,5 +1,5 @@
 #[test]
-fn packaged_header_matches_release_native_abi() {
+fn packaged_header_matches_native_source() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../experiments/WebScene.NativeEngine.Probe/native/webscene_native_engine.h");
     if source.exists() {

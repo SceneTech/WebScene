@@ -11,7 +11,7 @@ fn main() {
         .dynamic_link_require_all(true)
         .derive_default(true)
         .generate()
-        .expect("generate bindings to the WebScene 1.0.37 ABI")
+        .expect("generate bindings to WebScene ABI 3")
         .write_to_file(std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("bindings.rs"))
         .unwrap();
 }

@@ -503,7 +503,15 @@
     std::string current_security_origin()
     {
         if (!inherited_worker_origin.empty()) return inherited_worker_origin;
-        return resource_origin(current_navigation_address());
+        const auto& navigation_address = current_navigation_address();
+        if (navigation_address.starts_with("blob:")) {
+            if (auto* frame = active_nested_frame_for_context(isolate->GetCurrentContext());
+                frame != nullptr) {
+                auto origin = active_iframe_security_origin(*frame);
+                if (!origin.empty() && origin != "null") return origin;
+            }
+        }
+        return resource_origin(navigation_address);
     }
 
     std::optional<binary_object_url> find_binary_object_url(

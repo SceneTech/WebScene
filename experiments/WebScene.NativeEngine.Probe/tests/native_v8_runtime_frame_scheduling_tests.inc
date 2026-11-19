@@ -2711,6 +2711,39 @@ void test_window_post_message_coalesces_style_recascade(webscene_engine* engine)
     )JS", "native-window-post-message-style-cleanup.js");
 }
 
+void test_inline_dimension_updates_keep_dependent_styles_current(
+    webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const style = document.createElement('style');
+          style.textContent = `
+            #test-dimension-root { width: 40px; height: 25px; container-type: size; }
+            #test-dimension-child { width: inherit; height: inherit; }
+            #test-dimension-query { width: 10px; height: 10px; }
+            @container (min-width: 70px) {
+              #test-dimension-query { width: 30px; }
+            }
+          `;
+          document.head.appendChild(style);
+          const root = document.createElement('div');
+          root.id = 'test-dimension-root';
+          root.innerHTML = '<div id="test-dimension-child"></div><div id="test-dimension-query"></div>';
+          document.body.appendChild(root);
+          const [child, query] = root.children;
+          const before = [child.offsetWidth, child.offsetHeight, query.offsetWidth];
+          root.style.width = '90px';
+          root.style.setProperty('height', '50px');
+          const after = [child.offsetWidth, child.offsetHeight, query.offsetWidth];
+          root.remove();
+          style.remove();
+          return [before, after];
+        })()
+    )JS", "native-inline-dimension-dependencies.js");
+    require(result == "[[40,25,10],[90,50,30]]",
+        "inline dimensions did not update dependent styles: " + result);
+}
+
 void test_resize_event_coalesces_attribute_selector_recascades(
     webscene_engine* engine)
 {

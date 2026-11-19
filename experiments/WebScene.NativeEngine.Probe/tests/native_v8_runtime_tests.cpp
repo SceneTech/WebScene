@@ -304,6 +304,10 @@ int main()
             test_resource_cache_policy_matrix();
             return 0;
         }
+        if (selected == "blob-iframe-realm") {
+            test_blob_iframe_realm_contract();
+            return 0;
+        }
         if (selected == "service-worker-cross-origin") {
             test_service_worker_cross_origin_iframe_visibility_gate();
             return 0;
@@ -576,6 +580,10 @@ int main()
         if (selected == "table-cell-copy") { test_table_cell_click_copies_text_to_host(); return 0; }
         if (selected == "primary-middle-paste") { test_primary_selection_middle_paste(nullptr); return 0; }
         if (selected == "resource-failure-diagnostics") { test_resource_failure_diagnostics(); return 0; }
+        if (selected == "connected-resource-animation") {
+            test_connected_resource_does_not_block_animation();
+            return 0;
+        }
         if (selected == "connected-http-status") {
             test_connected_resources_reject_unsuccessful_http_status();
             return 0;
@@ -1072,6 +1080,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "inline-dimension-dependencies") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_inline_dimension_updates_keep_dependent_styles_current(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "dimension-variable-compatibility") {
             const std::array tests{
                 test_dimension_custom_property_recascade,
@@ -1453,6 +1469,7 @@ int main()
     test_tradingview_switch_repeated_transitions_publish_dense_scenes();
     test_loaded_document_keeps_html_and_body_cascade_distinct();
     test_relative_stylesheet_background_uses_stylesheet_address();
+    test_connected_resource_does_not_block_animation();
     test_resource_cache_reuse_across_engine_generations();
     test_parser_resource_cache_partitioning();
     test_parsed_css_rule_payloads_are_shared_across_live_engines();
@@ -1792,6 +1809,8 @@ int main()
     test_url_static_helpers_contract();
     test_abort_signal_composition_contract();
     test_origin_partitioned_broadcast_channel_contract();
+    test_blob_iframe_realm_contract();
+    test_inline_dimension_updates_keep_dependent_styles_current(engine);
     test_resize_event_coalesces_attribute_selector_recascades(engine);
     test_cross_frame_post_message_and_window_frames(engine);
     test_frame_resize_preserves_outer_percentage_height(engine);

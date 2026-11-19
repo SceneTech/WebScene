@@ -523,6 +523,8 @@
         std::string css_image_property;
         uint64_t document_generation{};
         uint64_t css_image_generation{};
+        std::string host_prefetch_value{};
+        std::string host_prefetch_key{};
     };
 
     enum class resize_observer_box { content, border, device_pixel_content };

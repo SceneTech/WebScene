@@ -1070,6 +1070,8 @@ struct node_style final {
     bool margin_right_auto{false};
     bool margin_bottom_auto{false};
     bool table_layout_fixed : 1 {false};
+    bool width_inherits : 1 {false};
+    bool height_inherits : 1 {false};
     uint64_t inline_property_mask{0};
     uint64_t important_property_mask{0};
     bool aspect_ratio_inline{false};

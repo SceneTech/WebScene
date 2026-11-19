@@ -2162,6 +2162,10 @@
 
     std::string security_origin_for_realm(v8::Local<v8::Context> realm)
     {
+        if (auto* frame = active_nested_frame_for_context(realm); frame != nullptr) {
+            auto origin = active_iframe_security_origin(*frame);
+            return origin.empty() ? std::string("null") : origin;
+        }
         v8::Context::Scope scope(realm);
         v8::Local<v8::Value> location;
         v8::Local<v8::Value> origin;

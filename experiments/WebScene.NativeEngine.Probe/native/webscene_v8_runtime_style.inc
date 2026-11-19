@@ -143,9 +143,11 @@
             node.style.inline_property_mask &= ~inline_border;
         } else if (name == "width") {
             node.style.width = {};
+            node.style.width_inherits = false;
             node.style.inline_property_mask &= ~inline_width;
         } else if (name == "height") {
             node.style.height = {};
+            node.style.height_inherits = false;
             node.style.inline_property_mask &= ~inline_height;
         } else if (name == "minWidth" || name == "min-width") {
             node.style.min_width = {};
@@ -613,6 +615,49 @@
         return std::nullopt;
     }
 
+    bool dimension_change_needs_recascade(dom_node& node, bool width)
+    {
+        // A concrete dimension normally only affects layout. Descendant
+        // inherit, size queries and selectors observing inline style still
+        // need the full cascade before a synchronous geometry read.
+        auto* root = css_cascade_root_for_node(node);
+        if (root == nullptr || root != active_css_cascade_root
+            || css_attribute_dependencies.contains("style")
+            || node.style.has_pseudo_elements()) {
+            return true;
+        }
+        if (std::any_of(node.children.begin(), node.children.end(), [width](const auto* child) {
+                return child != nullptr
+                    && (width ? child->style.width_inherits : child->style.height_inherits);
+            })) {
+            return true;
+        }
+        // The current ruleset's selector index does not decode CSS escapes.
+        if (std::any_of(css_rules.begin(), css_rules.end(), [](const auto& rule) {
+                return rule.selector().find('[') != std::string::npos
+                    && rule.selector().find('\\') != std::string::npos;
+            })) {
+            return true;
+        }
+        const auto has_size_queries = std::any_of(css_rules.begin(), css_rules.end(), [](const auto& rule) {
+            return std::any_of(rule.media_queries().begin(), rule.media_queries().end(),
+                [](const auto& query) { return css::is_container_query(query); });
+        });
+        std::vector<const dom_node*> pending{&node};
+        while (!pending.empty()) {
+            const auto* current = pending.back();
+            pending.pop_back();
+            if (current->tag == "iframe" || document.shadow_dom(*current) != nullptr
+                || (has_size_queries && css::is_query_container(*current))) {
+                return true;
+            }
+            for (const auto* child : current->children) {
+                if (child != nullptr) pending.push_back(child);
+            }
+        }
+        return false;
+    }
+
     static void sync_style_attribute(dom_node& node)
     {
         node.attributes["style"] = serialized_inline_style(node);
@@ -839,6 +884,7 @@
             node->style.inline_property_mask |= inline_border;
         } else if (name == "width" || name == "inline-size") {
             css::retain_anchor_function(node->style, "width", value);
+            node->style.width_inherits = value == "inherit";
             node->style.width = value == "inherit" && node->parent != nullptr
                 ? node->parent->style.width
                 : value == "initial" || value == "unset" || value == "revert"
@@ -848,6 +894,7 @@
             node->style.inline_property_mask |= inline_width;
         } else if (name == "height" || name == "block-size") {
             css::retain_anchor_function(node->style, "height", value);
+            node->style.height_inherits = value == "inherit";
             node->style.height = value == "inherit" && node->parent != nullptr
                 ? node->parent->style.height
                 : value == "initial" || value == "unset" || value == "revert"
@@ -1249,7 +1296,11 @@
             self->document.mark_dirty();
             return;
         }
-        if (canonical_name == "width" || canonical_name == "height"
+        const auto writes_width = canonical_name == "width";
+        const auto writes_dimension = writes_width || canonical_name == "height";
+        const auto dimension = writes_width ? node->style.width : node->style.height;
+        if ((writes_dimension && (dimension.unit != length_unit::pixels || value == "inherit"
+                || self->dimension_change_needs_recascade(*node, writes_width)))
             || canonical_name == "container" || canonical_name == "container-type"
             || canonical_name == "container-name" || canonical_name == "content-visibility"
             || canonical_name == "contain-intrinsic-size") {
@@ -2634,10 +2685,12 @@
             node->style.inline_property_mask |= inline_border;
         } else if (name == "width") {
             css::retain_anchor_function(node->style, "width", value);
+            node->style.width_inherits = value == "inherit";
             node->style.width = native_document::parse_length(value);
             node->style.inline_property_mask |= inline_width;
         } else if (name == "height") {
             css::retain_anchor_function(node->style, "height", value);
+            node->style.height_inherits = value == "inherit";
             node->style.height = native_document::parse_length(value);
             node->style.inline_property_mask |= inline_height;
         } else if (name == "minWidth") {
@@ -3076,7 +3129,11 @@
             self->document.mark_dirty();
             return;
         }
-        if (canonical_name == "width" || canonical_name == "height"
+        const auto writes_width = canonical_name == "width";
+        const auto writes_dimension = writes_width || canonical_name == "height";
+        const auto dimension = writes_width ? node->style.width : node->style.height;
+        if ((writes_dimension && (dimension.unit != length_unit::pixels || value == "inherit"
+                || self->dimension_change_needs_recascade(*node, writes_width)))
             || canonical_name == "container" || canonical_name == "container-type"
             || canonical_name == "container-name" || canonical_name == "content-visibility"
             || canonical_name == "contain-intrinsic-size") {

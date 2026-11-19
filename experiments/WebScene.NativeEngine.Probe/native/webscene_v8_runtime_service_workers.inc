@@ -1733,15 +1733,9 @@
         return result;
     }
 
-    static void service_worker_control(
-        const v8::FunctionCallbackInfo<v8::Value>& info)
+    std::string service_worker_client_url(v8::Local<v8::Context> local_context)
     {
-        auto* self = current(info.GetIsolate());
-        if (self == nullptr || info.Length() < 1) return;
-        auto* isolate = info.GetIsolate();
-        auto local_context = isolate->GetCurrentContext();
-        const auto operation = to_utf8(isolate, info[0]);
-        auto client_url = self->current_navigation_address();
+        auto client_url = current_navigation_address();
         if (client_url.empty()) {
             v8::Local<v8::Value> location_value;
             v8::Local<v8::Value> href_value;
@@ -1755,6 +1749,18 @@
                 client_url = to_utf8(isolate, href_value);
             }
         }
+        return client_url;
+    }
+
+    static void service_worker_control(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || info.Length() < 1) return;
+        auto* isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        const auto operation = to_utf8(isolate, info[0]);
+        const auto client_url = self->service_worker_client_url(local_context);
         const auto client_origin = service_worker_origin(client_url);
         if (!is_service_worker_secure_origin(client_origin)) {
             throw_dom_exception(
@@ -2530,6 +2536,12 @@
                 && !iframe_sandbox_allows(*ancestor, "allow-same-origin")) {
                 return;
             }
+        }
+        // Bootstrap calls the bridge immediately. Only install it in a realm
+        // the bridge can admit, including when an iframe has a non-HTTP URL.
+        if (!is_service_worker_secure_origin(
+                service_worker_origin(service_worker_client_url(local_context)))) {
+            return;
         }
         global->Set(
             local_context,

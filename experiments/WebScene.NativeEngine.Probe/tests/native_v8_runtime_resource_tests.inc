@@ -4471,6 +4471,61 @@ void test_relative_stylesheet_background_uses_stylesheet_address()
     webscene_engine_destroy(engine);
 }
 
+void test_connected_resource_does_not_block_animation()
+{
+    resource_server server{.content = {
+        {"https://animation-resource.test/index.html", "<!doctype html><body></body>"},
+        {"https://animation-resource.test/blocked-script.js", "globalThis.resourceLoaded = true;"}
+    }};
+    server.block_named_resource.store(true, std::memory_order_release);
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "connected-resource animation engine creation failed");
+    webscene_engine_configure_diagnostics(engine, WEBSCENE_DIAGNOSTIC_CONSOLE, nullptr, nullptr);
+    constexpr std::string_view address{"https://animation-resource.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0,
+        "connected-resource animation navigation failed");
+    require(evaluate_until_equals(engine, "location.href", "resource-animation-ready.js",
+        R"("https://animation-resource.test/index.html")", 500)
+            == R"("https://animation-resource.test/index.html")",
+        "connected-resource animation document did not load");
+
+    execute(engine, R"JS(
+        const script = document.createElement('script');
+        script.src = 'blocked-script.js';
+        document.body.appendChild(script);
+        requestAnimationFrame(() => console.log('rendered-with-pending-resource'));
+    )JS", "resource-animation-start.js");
+    for (int i = 0; i < 500 && server.active.load(std::memory_order_acquire) == 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto resource_pending = server.active.load(std::memory_order_acquire) != 0;
+    webscene_input_event frame{};
+    frame.kind = WEBSCENE_INPUT_FRAME;
+    frame.x = 16.67;
+    const auto enqueued = webscene_engine_enqueue(engine, &frame) != 0;
+    auto animated_while_blocked = false;
+    for (int i = 0; i < 250 && !animated_while_blocked; ++i) {
+        const auto size = webscene_engine_take_diagnostic(engine, nullptr, 0);
+        if (size == 0U) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+        std::string record(size, '\0');
+        webscene_engine_take_diagnostic(engine, record.data(), record.size());
+        animated_while_blocked = record.find("rendered-with-pending-resource") != std::string::npos;
+    }
+    server.release_blocked_resource.store(true, std::memory_order_release);
+    require(evaluate_until_equals(engine, "Boolean(globalThis.resourceLoaded)",
+        "resource-animation-result.js", "true", 500) == "true", "deferred script did not execute");
+    webscene_engine_destroy(engine);
+    require(resource_pending && enqueued && animated_while_blocked,
+        "waiting for a connected script blocked the animation frame");
+}
+
 void test_resource_cache_reuse_across_engine_generations()
 {
     const auto cache_directory = std::filesystem::temp_directory_path()

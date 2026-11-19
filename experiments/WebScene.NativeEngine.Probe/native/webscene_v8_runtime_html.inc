@@ -668,13 +668,25 @@
         dom_node& frame,
         const std::string& navigation_address)
     {
-        frame_security_origins.insert_or_assign(
-            frame.id,
-            iframe_sandbox_allows(frame, "allow-same-origin")
-                ? (navigation_address == "about:blank"
-                    ? iframe_owner_security_origin(frame)
-                    : resource_origin(navigation_address))
-                : std::string("null"));
+        std::string origin = "null";
+        if (iframe_sandbox_allows(frame, "allow-same-origin")) {
+            origin = navigation_address == "about:blank"
+                ? iframe_owner_security_origin(frame)
+                : resource_origin(navigation_address);
+            if (navigation_address.starts_with("blob:")) {
+                const auto owner_origin = resource_origin(navigation_address_for_root(
+                    css_cascade_root_for_node(frame)));
+                std::lock_guard lock(object_url_registry->mutex);
+                const auto entry = object_url_registry->binary.find(navigation_address);
+                // Use the recorded creator origin for a same-origin object URL.
+                // The synthetic blob URL itself carries no origin authority.
+                if (!owner_origin.empty() && entry != object_url_registry->binary.end()
+                    && entry->second.origin == owner_origin) {
+                    origin = entry->second.origin;
+                }
+            }
+        }
+        frame_security_origins.insert_or_assign(frame.id, std::move(origin));
     }
 
     std::string iframe_owner_security_origin(dom_node& frame)

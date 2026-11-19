@@ -1043,14 +1043,14 @@
             + "\ncookie:" + cookie;
     }
 
-    void start_resource_prefetch(
+    std::string start_resource_prefetch(
         const std::string& value,
         const std::string& base,
         uint32_t kind)
     {
-        if (!load_resource_callback) return;
+        if (!load_resource_callback) return {};
         const auto resolved_name = resolve_resource_url(value, base);
-        if (resolved_name.empty()) return;
+        if (resolved_name.empty()) return {};
         resource_request_context request_context{
             WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
             resource_origin(base),
@@ -1066,8 +1066,8 @@
             kind, resolved_name, request_context.origin, request_context.cookie);
         {
             std::lock_guard lock(resource_prefetch_mutex);
-            if (prefetched_resources.size() >= maximum_resource_prefetches
-                || prefetched_resources.contains(key)) return;
+            if (prefetched_resources.contains(key)) return key;
+            if (prefetched_resources.size() >= maximum_resource_prefetches) return {};
         }
 
         cached_text_resource cached;
@@ -1085,16 +1085,15 @@
             auto future = promise.get_future().share();
             promise.set_value(std::move(result));
             std::lock_guard lock(resource_prefetch_mutex);
-            if (prefetched_resources.size() < maximum_resource_prefetches
-                && !prefetched_resources.contains(key)) {
-                prefetched_resources.emplace(key, std::move(future));
-            }
-            return;
+            if (prefetched_resources.contains(key)) return key;
+            if (prefetched_resources.size() >= maximum_resource_prefetches) return {};
+            prefetched_resources.emplace(key, std::move(future));
+            return key;
         }
 
         std::lock_guard lock(resource_prefetch_mutex);
-        if (prefetched_resources.size() >= maximum_resource_prefetches
-            || prefetched_resources.contains(key)) return;
+        if (prefetched_resources.contains(key)) return key;
+        if (prefetched_resources.size() >= maximum_resource_prefetches) return {};
         auto entity_tag = has_cached ? cached.entity_tag : std::string{};
         const auto last_modified = has_cached ? cached.last_modified_unix_seconds : 0;
         prefetched_resources.emplace(
@@ -1116,11 +1115,19 @@
                         result.loaded);
                     return result;
                 }).share());
+        return key;
+    }
+
+    static const std::string* connected_host_resource(const dom_node& node)
+    {
+        if (node.tag != "link" && node.tag != "script" && node.tag != "img")
+            return nullptr;
+        const auto attribute = node.attributes.find(node.tag == "link" ? "href" : "src");
+        return attribute == node.attributes.end() ? nullptr : &attribute->second;
     }
 
     void prefetch_connected_resources()
     {
-        if (connected_resources.empty()) return;
         for (auto& task : connected_resources) {
             if (task.node == nullptr) continue;
             auto task_context = task.context.Get(isolate);
@@ -1128,35 +1135,28 @@
             activate_css_cascade(task_context);
             v8::Context::Scope task_context_scope(task_context);
             if (begin_connected_resource_interception(task)) continue;
-            if (!load_resource_callback) continue;
-            const auto& base = current_base_address();
-            if (task.node->tag == "link") {
-                const auto href = task.node->attributes.find("href");
-                if (href != task.node->attributes.end()
-                    && !object_urls.contains(href->second)) {
-                    start_resource_prefetch(
-                        href->second,
-                        base,
-                        WEBSCENE_RESOURCE_STYLESHEET);
-                }
-            } else if (task.node->tag == "script") {
-                const auto source = task.node->attributes.find("src");
-                if (source != task.node->attributes.end() && !source->second.empty()) {
-                    start_resource_prefetch(
-                        source->second,
-                        base,
-                        WEBSCENE_RESOURCE_SCRIPT);
-                }
-            } else if (task.node->tag == "img") {
-                const auto source = task.node->attributes.find("src");
-                if (source != task.node->attributes.end() && !source->second.empty()) {
-                    start_resource_prefetch(
-                        source->second,
-                        base,
-                        WEBSCENE_RESOURCE_IMAGE);
-                }
+            const auto* value = connected_host_resource(*task.node);
+            if (value == nullptr || value->empty() || value->starts_with("data:")
+                || value->starts_with("blob:") || object_urls.contains(*value)) {
+                continue;
             }
+            if (!task.host_prefetch_key.empty() && task.host_prefetch_value == *value)
+                continue;
+            task.host_prefetch_value = *value;
+            task.host_prefetch_key = start_resource_prefetch(
+                *value, current_base_address(), connected_resource_kind(*task.node));
         }
+    }
+
+    bool connected_host_prefetch_ready(const connected_resource_task& task)
+    {
+        if (task.host_prefetch_key.empty() || task.node == nullptr) return true;
+        const auto* value = connected_host_resource(*task.node);
+        if (value == nullptr || *value != task.host_prefetch_value) return true;
+        std::lock_guard lock(resource_prefetch_mutex);
+        const auto entry = prefetched_resources.find(task.host_prefetch_key);
+        return entry == prefetched_resources.end()
+            || entry->second.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
     }
 
     std::filesystem::path resolve_resource_path(std::string value) const
@@ -1441,16 +1441,16 @@
         document.mark_dirty();
     }
 
-    bool has_ready_connected_resource_task() const
+    bool has_ready_connected_resource_task()
     {
         if (connected_resources.empty()) return false;
-        const auto now = std::chrono::steady_clock::now();
         const auto& task = connected_resources.front();
-        return !task.interception_started || !task.controlled_fetch.valid()
-            || task.controlled_fetch.wait_for(std::chrono::seconds(0))
-                == std::future_status::ready
-            || (task.controlled_deadline != std::chrono::steady_clock::time_point{}
-                && now >= task.controlled_deadline);
+        if (task.controlled_fetch.valid()) {
+            return task.controlled_fetch.wait_for(std::chrono::seconds(0))
+                    == std::future_status::ready
+                || std::chrono::steady_clock::now() >= task.controlled_deadline;
+        }
+        return connected_host_prefetch_ready(task);
     }
 
     bool load_connected_text_resource(

@@ -11,6 +11,7 @@ bool apply_box_metrics(dom_node& node,const std::string& name,
 {
     if ((name == "width" || name == "inline-size") && !is_inline(inline_width)) {
         retain_anchor_function(node.style, "width", value);
+        node.style.width_inherits = value == "inherit";
         node.style.width = value == "inherit" && node.parent != nullptr
             ? node.parent->style.width
             : value == "initial" || value == "unset" || value == "revert"
@@ -19,6 +20,7 @@ bool apply_box_metrics(dom_node& node,const std::string& name,
                 : native_document::parse_length(value);
     } else if ((name == "height" || name == "block-size") && !is_inline(inline_height)) {
         retain_anchor_function(node.style, "height", value);
+        node.style.height_inherits = value == "inherit";
         node.style.height = value == "inherit" && node.parent != nullptr
             ? node.parent->style.height
             : value == "initial" || value == "unset" || value == "revert"

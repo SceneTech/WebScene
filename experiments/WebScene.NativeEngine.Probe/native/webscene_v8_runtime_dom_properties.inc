@@ -2341,6 +2341,48 @@
         return range_bindings.size() < maximum_live_ranges;
     }
 
+    void install_range_constructor(
+        v8::Local<v8::Context> local_context, v8::Local<v8::Object> global)
+    {
+        auto range_template = v8::FunctionTemplate::New(isolate, range_constructor);
+        range_template->SetClassName(js_string(isolate, "Range"));
+        range_template->InstanceTemplate()->SetInternalFieldCount(1);
+        range_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "startContainer"), range_container_get);
+        range_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "startOffset"), range_offset_get);
+        range_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "endContainer"), range_container_get);
+        range_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "endOffset"), range_offset_get);
+        range_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "collapsed"), range_collapsed_get);
+        range_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "commonAncestorContainer"), range_container_get);
+        range_template->PrototypeTemplate()->Set(
+            js_string(isolate, "setStart"),
+            v8::FunctionTemplate::New(isolate, range_set_start));
+        range_template->PrototypeTemplate()->Set(
+            js_string(isolate, "setEnd"),
+            v8::FunctionTemplate::New(isolate, range_set_end));
+        range_template->PrototypeTemplate()->Set(
+            js_string(isolate, "setStartAfter"),
+            v8::FunctionTemplate::New(isolate, range_set_start_after));
+        range_template->PrototypeTemplate()->Set(
+            js_string(isolate, "setEndBefore"),
+            v8::FunctionTemplate::New(isolate, range_set_end_before));
+        range_template->PrototypeTemplate()->Set(
+            js_string(isolate, "selectNodeContents"),
+            v8::FunctionTemplate::New(isolate, range_select_node_contents));
+        range_template->PrototypeTemplate()->Set(
+            js_string(isolate, "createContextualFragment"),
+            v8::FunctionTemplate::New(isolate, range_create_contextual_fragment));
+        global->Set(
+            local_context,
+            js_string(isolate, "Range"),
+            range_template->GetFunction(local_context).ToLocalChecked()).Check();
+    }
+
     v8::MaybeLocal<v8::Object> construct_range(
         v8::Local<v8::Context> local_context,
         dom_node* creating_document_root = nullptr)

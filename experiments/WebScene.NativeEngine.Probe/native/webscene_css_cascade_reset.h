@@ -59,8 +59,14 @@ inline void reset_cascaded_style(dom_node& node,
         if ((node.style.inline_property_mask & inline_grid) == 0U) {
             node.style.clear_grid();
         }
-        if ((node.style.inline_property_mask & inline_width) == 0U) node.style.width = {};
-        if ((node.style.inline_property_mask & inline_height) == 0U) node.style.height = {};
+        if ((node.style.inline_property_mask & inline_width) == 0U) {
+            node.style.width = {};
+            node.style.width_inherits = false;
+        }
+        if ((node.style.inline_property_mask & inline_height) == 0U) {
+            node.style.height = {};
+            node.style.height_inherits = false;
+        }
         if ((node.style.inline_property_mask & inline_min_width) == 0U) node.style.min_width = {};
         if ((node.style.inline_property_mask & inline_min_height) == 0U) node.style.min_height = {};
         if ((node.style.inline_property_mask & inline_max_width) == 0U) node.style.max_width = {};

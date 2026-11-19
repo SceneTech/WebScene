@@ -1412,6 +1412,7 @@
         global->Set(local_context, js_string(isolate, "focus"), v8::Function::New(local_context, window_focus).ToLocalChecked()).Check();
 #if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
         install_generated_dom_constructors(local_context, global);
+        install_range_constructor(local_context, global);
 #else
         auto element_constructor = element_template.Get(isolate)->GetFunction(local_context).ToLocalChecked();
         element_constructor->Set(

@@ -666,13 +666,21 @@
     bool dispatch_worker_message(v8::Local<v8::Context> realm,
         v8::Local<v8::Object> target, const clone_packet* packet, const std::string& error = {}) {
         v8::Context::Scope scope(realm);
+        // As with timers and window messages, DOM changes made by one
+        // Worker callback and its microtasks share a style checkpoint.
+        style_recascade_batch_scope style_batch(*this);
+        webscene_frame_trace::scope trace(frame_trace, "worker-delivery-start", "worker-delivery-end", 0);
         v8::TryCatch caught(isolate);
         auto event = v8::Object::New(isolate);
         event->Set(realm, js_string(isolate,"type"), js_string(isolate, packet ? "message" : "error")).Check();
         if (packet) {
             v8::Local<v8::Value> value;
             std::vector<v8::Local<v8::Object>> ports;
-            if (!deserialize_clone(isolate, realm, *packet, &ports).ToLocal(&value)) {
+            const auto decoded = [&] {
+                webscene_frame_trace::scope trace(frame_trace, "worker-clone-start", "worker-clone-end", packet->bytes.size());
+                return deserialize_clone(isolate, realm, *packet, &ports).ToLocal(&value);
+            }();
+            if (!decoded) {
                 caught.Reset();
                 event->Set(realm,js_string(isolate,"type"),js_string(isolate,"messageerror")).Check();
             } else {
@@ -686,10 +694,18 @@
         v8::Local<v8::Value> dispatch;
         if (!target->Get(realm, js_string(isolate,"dispatchEvent")).ToLocal(&dispatch) || !dispatch->IsFunction()) return false;
         v8::Local<v8::Value> args[]{event};
-        if (dispatch.As<v8::Function>()->Call(realm,target,1,args).IsEmpty()) {
+        const auto delivered = [&] {
+            webscene_frame_trace::scope trace(frame_trace, "worker-handler-start", "worker-handler-end", 0);
+            return !dispatch.As<v8::Function>()->Call(realm,target,1,args).IsEmpty();
+        }();
+        if (!delivered) {
             last_error = describe_reported_exception(caught,realm); return false;
         }
-        perform_microtask_checkpoint();
+        {
+            webscene_frame_trace::scope trace(frame_trace, "worker-microtasks-start", "worker-microtasks-end", 0);
+            perform_microtask_checkpoint();
+        }
+        style_batch.finish();
         return true;
     }
     bool has_worker_messages() const {

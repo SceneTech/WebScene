@@ -289,27 +289,9 @@
             connected_resources.erase(connected_resources.begin());
             return true;
         }
-        activate_css_cascade(pending_context);
-        v8::Context::Scope pending_scope(pending_context);
-        if (!pending.interception_started) {
-            const auto intercepted = begin_connected_resource_interception(pending);
-            if (!intercepted) {
-                const auto attribute_name = pending.node->tag == "link" ? "href" : "src";
-                if (const auto authored = pending.node->attributes.find(attribute_name);
-                    authored != pending.node->attributes.end() && !authored->second.empty()) {
-                    start_resource_prefetch(
-                        authored->second,
-                        current_base_address(),
-                        connected_resource_kind(*pending.node));
-                }
-            }
-        }
-        if (pending.controlled_fetch.valid()
-            && pending.controlled_fetch.wait_for(std::chrono::seconds(0))
-                != std::future_status::ready
-            && std::chrono::steady_clock::now() < pending.controlled_deadline) {
-            return true;
-        }
+        // The host prefetch stays on its loader thread. A slow stylesheet or
+        // script must leave this isolate free to run animation and input tasks.
+        if (!has_ready_connected_resource_task()) return true;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (profile_startup) ++startup_connected_resources;
 #endif
